@@ -40,8 +40,8 @@ logs/
 *.log
 
 # ===== Neo4j =====
-dependencies/neo4j/
-dependencies/redis/
+dependencies/neo4j/extracted/
+dependencies/redis/extracted/
 
 # ===== Temp & Test Data =====
 backend/temp/
