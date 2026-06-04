@@ -1,0 +1,24 @@
+[project]
+name = "OpenPalantir"
+version = "1.0.0"
+description = "AI-Powered Data Analysis & Knowledge Graph System"
+requires-python = ">=3.10"
+readme = "../README.md"
+license = { text = "MIT" }
+
+[tool.pytest.ini_options]
+testpaths = ["../tests"]
+pythonpath = ["."]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true

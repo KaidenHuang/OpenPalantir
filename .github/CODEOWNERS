@@ -1,0 +1,14 @@
+# OpenPalantir 项目维护者
+# 当 PR 涉及对应模块时，自动请求审核
+
+# 后端核心
+backend/** @your-org/backend-maintainers
+
+# 前端
+frontend/** @your-org/frontend-maintainers
+
+# 文档
+*.md @your-org/docs-maintainers
+
+# CI/CD
+.github/** @your-org/devops-maintainers

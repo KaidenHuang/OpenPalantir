@@ -1,0 +1,27 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.env
+*.env.local
+
+# ===== Node =====
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# ===== IDE =====
+.idea/
+.vscode/
+.git/
+
+# ===== Runtime Data =====
+backend/data/
+logs/
+
+# ===== Dependencies =====
+dependencies/
+
+# ===== Temp =====
+backend/temp/

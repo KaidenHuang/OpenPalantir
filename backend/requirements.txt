@@ -1,0 +1,43 @@
+# 核心依赖
+fastapi>=0.104.1
+uvicorn[standard]>=0.24.0
+
+# 文档处理
+PyPDF2>=3.0.1
+python-docx>=0.8.11
+Pillow>=10.1.0
+markdown>=3.5.1
+
+# 自然语言处理
+jieba>=0.42.1
+
+# 图数据库
+neo4j==4.4.8
+numpy>=2.0
+pydantic-settings>=2.1.0
+
+# 图计算
+networkx>=3.2.1
+scikit-learn>=1.3.2
+
+# 其他
+python-dotenv>=1.0.0
+requests>=2.31.0
+python-louvain>=0.16
+python-multipart>=0.0.24
+
+# 监控和任务队列
+prometheus_client>=0.25.0
+celery>=5.6.3
+
+# 缓存
+redis>=7.4.0
+
+# 数据可视化
+matplotlib>=3.10.8
+
+# OCR
+pytesseract>=0.3.13
+
+# 数据库
+SQLAlchemy>=2.0.0

@@ -1,0 +1,60 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install *)",
+      "Bash(pip list *)",
+      "Bash(python -c *)",
+      "Bash(cd *)",
+      "Bash(cat *)",
+      "Bash(curl *)",
+      "Bash(netstat *)",
+      "Bash(cmd.exe *)",
+      "Bash(powershell *)",
+      "Bash(echo *)",
+      "WebSearch",
+      "WebFetch(*)",
+      "Bash(awk *)",
+      "Bash(python3 -c *)",
+      "Bash(read pid *)",
+      "Bash(nohup python *)",
+      "Bash(pip show *)",
+      "Bash(npx tsc *)",
+      "Read(//d/d/OpenPalantir/**)",
+      "Edit(//d/d/OpenPalantir/**)",
+      "Bash(taskkill *)",
+      "Bash(npm run *)",
+      "Bash(npx vite *)",
+      "Bash(uvicorn main:app --reload --port *)",
+      "Bash(python -m *)",
+      "Bash(sed *)",
+      "Bash(ps -W)",
+      "Bash(tasklist)",
+      "Bash(python *)",
+      "Bash(read d *)",
+      "Bash(gawk)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(rm -r *)",
+      "Bash(rm --recursive *)",
+      "Bash(rmdir /s *)",
+      "Bash(del /f /s *)",
+      "Bash(Remove-Item -Recurse *)",
+      "Bash(Remove-Item -Force *)",
+      "Edit(//c/c/Windows/**)"
+    ],
+    "ask": [
+      "Bash(rm *)",
+      "Bash(del *)",
+      "Bash(rmdir *)",
+      "Bash(rd *)",
+      "Bash(Remove-Item *)",
+      "Bash(git branch -D *)",
+      "Bash(git reset --hard *)",
+      "Bash(git checkout -- *)",
+      "Bash(git restore *)",
+      "Bash(git clean *)",
+      "Bash(npm publish:*)"
+    ]
+  }
+}

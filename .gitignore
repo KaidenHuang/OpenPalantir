@@ -1,0 +1,61 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+*.whl
+.pytest_cache/
+*.pyo
+
+# ===== Virtual Environment =====
+venv/
+.venv/
+env/
+.env
+*.env.local
+*.env.production
+
+# ===== Node / Frontend =====
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ===== Runtime Data =====
+backend/data/
+logs/
+*.log
+
+# ===== Neo4j =====
+dependencies/neo4j/
+dependencies/redis/
+
+# ===== Temp & Test Data =====
+backend/temp/
+tests/*-test-results.json
+tests/test-report.json
+
+# ===== Environment =====
+.env
+.env.*
+!.env.example
+
+# ===== Docker =====
+docker-compose.override.yml
+
+# ===== OS =====
+Desktop.ini
+$RECYCLE.BIN/
