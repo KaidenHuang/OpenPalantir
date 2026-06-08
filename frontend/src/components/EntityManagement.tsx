@@ -11,7 +11,7 @@ interface Entity {
   confidence: number;
   count?: number;
   description?: string;
-  byname?: string[];
+  byname?: string | string[];
   properties?: Record<string, string>;
   datasource?: string;
   relationships?: Relationship[];
@@ -263,10 +263,10 @@ const EntityManagement: React.FC = () => {
                       <span style={{ display: 'block', whiteSpace: 'pre-wrap' }}>{selectedEntity.description}</span>
                     </div>
                   )}
-                  {selectedEntity.byname && selectedEntity.byname.length > 0 && (
+                  {selectedEntity.byname && (
                     <div style={{ marginBottom: 5, fontSize: 12 }}>
                       <span style={{ fontWeight: 'bold', display: 'block', marginBottom: 3 }}>别名:</span>
-                      <span>{selectedEntity.byname.join('、')}</span>
+                      <span>{Array.isArray(selectedEntity.byname) ? selectedEntity.byname.join('、') : selectedEntity.byname}</span>
                     </div>
                   )}
                   {selectedEntity.properties && Object.entries(selectedEntity.properties).map(([key, value]) => (

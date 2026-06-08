@@ -118,7 +118,14 @@ OpenPalantir/
 
 ## 文档
 
+- [效果展示](docs/screenshots.md)
 - [安装指南](INSTALL.md)
+- [用户指南](docs/user-guide.md)
+- [架构设计](docs/architecture.md)
+- [API 参考](docs/api-reference.md)
+- [数据流说明](docs/data-flow.md)
+- [开发指南](docs/development-guide.md)
+- [部署指南](docs/deployment.md)
 - [贡献指南](CONTRIBUTING.md)
 - [行为准则](CODE_OF_CONDUCT.md)
 - [安全政策](SECURITY.md)
