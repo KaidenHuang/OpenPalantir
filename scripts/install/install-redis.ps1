@@ -5,6 +5,10 @@ Installs Redis from local package
 .DESCRIPTION
 This script installs Redis from local package and configures it as a service
 #>
+# Force UTF-8 output encoding to prevent garbled text
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
 
 # Set error handling
 $ErrorActionPreference = "Stop"

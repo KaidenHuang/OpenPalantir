@@ -5,6 +5,10 @@ Cleans up back-end dependencies and stops back-end service
 .DESCRIPTION
 This script stops back-end service and cleans up back-end dependencies and environment files
 #>
+# Force UTF-8 output encoding to prevent garbled text
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
 
 # Set error handling
 $ErrorActionPreference = "Stop"

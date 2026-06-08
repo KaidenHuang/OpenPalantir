@@ -5,6 +5,10 @@ Uninstalls Neo4j
 .DESCRIPTION
 This script uninstalls Neo4j by stopping the service, uninstalling it, and removing the installation directory
 #>
+# Force UTF-8 output encoding to prevent garbled text
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
 
 # Set error handling
 $ErrorActionPreference = "Stop"

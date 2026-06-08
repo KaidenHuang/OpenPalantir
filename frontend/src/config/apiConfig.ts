@@ -2,7 +2,7 @@
 // 可以根据环境变量或其他方式动态调整API基础URL
 
 // 使用Vite的环境变量机制
-const API_BASE_URL = (import.meta as any).env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_BASE_URL = (import.meta as any).env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 
 export const API_CONFIG = {
   baseUrl: API_BASE_URL,

@@ -6,6 +6,10 @@ Installs all components including Redis, Neo4j, front-end and back-end dependenc
 This script calls individual installation scripts for each component
 #>
 
+# Force UTF-8 output encoding to prevent garbled text
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
 # Set error handling
 $ErrorActionPreference = "Stop"
 
@@ -62,13 +66,13 @@ if ($allSuccess -eq 0) {
     Write-Host ""
     Write-Host "Please follow these steps to start the system:" -ForegroundColor Yellow
     Write-Host "1. Run .\scripts\service\start-services.ps1 to start Neo4j and Redis services"
-    Write-Host "2. Navigate to backend directory and run：python -m uvicorn main:app --reload to start back-end service"
-    Write-Host "3. Navigate to frontend directory and run： npm run dev to start front-end service"
+    Write-Host "2. Navigate to backend directory and run:python -m uvicorn main:app --reload to start back-end service"
+    Write-Host "3. Navigate to frontend directory and run: npm run dev to start front-end service"
     Write-Host ""
     Write-Host "Default access addresses:" -ForegroundColor Yellow
-    Write-Host "- Frontend App: http://localhost:5175"
-    Write-Host "- API Docs: http://localhost:8000/docs"
-    Write-Host "- Neo4j Browser: http://localhost:7474"
+    Write-Host "- Frontend App: http://127.0.0.1:5175"
+    Write-Host "- API Docs: http://127.0.0.1:8000/docs"
+    Write-Host "- Neo4j Browser: http://127.0.0.1:7474"
 } else {
     Write-Host "=== Installation Complete with Errors ===" -ForegroundColor Red
     Write-Host "Some components failed to install. Please check the output above for details." -ForegroundColor Yellow

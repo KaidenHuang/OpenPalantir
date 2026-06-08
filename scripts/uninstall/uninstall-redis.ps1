@@ -5,6 +5,10 @@ Uninstalls Redis service and cleans up extracted files
 .DESCRIPTION
 This script stops and uninstalls Redis service and removes extracted files
 #>
+# Force UTF-8 output encoding to prevent garbled text
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
 
 # Set error handling
 $ErrorActionPreference = "Stop"

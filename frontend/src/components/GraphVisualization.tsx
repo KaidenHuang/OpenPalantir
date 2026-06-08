@@ -75,7 +75,7 @@ const GraphVisualization: React.FC = () => {
         setLoading(true);
         
         const [nodesResponse, edgesResponse] = await Promise.all([
-          fetch(`${API_CONFIG.endpoints.graph.nodes}?limit=10000`),
+          fetch(`${API_CONFIG.endpoints.graph.nodes}?limit=1000`),
           fetch(API_CONFIG.endpoints.graph.edges)
         ]);
         

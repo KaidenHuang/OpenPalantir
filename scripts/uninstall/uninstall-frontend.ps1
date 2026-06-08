@@ -5,6 +5,10 @@ Cleans up front-end dependencies and stops front-end service
 .DESCRIPTION
 This script stops front-end service and cleans up front-end dependencies
 #>
+# Force UTF-8 output encoding to prevent garbled text
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
 
 # Set error handling
 $ErrorActionPreference = "Stop"

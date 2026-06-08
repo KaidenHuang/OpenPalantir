@@ -5,6 +5,10 @@ Starts OpenPalantir services including Neo4j and Redis
 .DESCRIPTION
 This script starts the Neo4j and Redis services required for OpenPalantir
 #>
+# Force UTF-8 output encoding to prevent garbled text
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
 
 # Set error handling
 $ErrorActionPreference = "Stop"

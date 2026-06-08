@@ -5,6 +5,10 @@ Uninstalls all components including Redis, Neo4j, front-end and back-end depende
 .DESCRIPTION
 This script calls individual uninstallation scripts for each component
 #>
+# Force UTF-8 output encoding to prevent garbled text
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
 
 # Set error handling
 $ErrorActionPreference = "Stop"
