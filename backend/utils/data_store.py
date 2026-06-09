@@ -1,18 +1,57 @@
 import hashlib
+import os
 from typing import List, Dict, Any, Tuple
 from system.logger import logger
 from knowledge_graph.graph_manager import graph_manager
+
+# 关系分批写入大小（可通过环境变量 NEO4J_REL_BATCH_SIZE 配置，默认 5000）
+_NEO4J_REL_BATCH_SIZE = int(os.getenv('NEO4J_REL_BATCH_SIZE', '5000'))
+
 
 class EntityDataStore:
     """实体和关系数据存储工具类"""
 
     @staticmethod
+    def _save_relationships_batched(
+        prepared_relationships: List[Dict[str, Any]],
+        use_create: bool = False
+    ) -> int:
+        """分批写入关系，避免单次 UNWIND 过大导致 Neo4j 内存压力和锁竞争"""
+        if not prepared_relationships:
+            return 0
+
+        total = 0
+        batch_size = _NEO4J_REL_BATCH_SIZE
+        total_batches = (len(prepared_relationships) + batch_size - 1) // batch_size
+
+        for i in range(0, len(prepared_relationships), batch_size):
+            batch = prepared_relationships[i:i + batch_size]
+            batch_num = i // batch_size + 1
+            logger.info(f"[save_relationships] 写入第 {batch_num}/{total_batches} 批 ({len(batch)} 条)")
+            try:
+                result = graph_manager.add_relationships(batch, use_create=use_create)
+                total += result.get('count', 0)
+            except Exception as e:
+                logger.error(f"[save_relationships] 第 {batch_num} 批写入失败: {e}")
+                # 继续尝试后续批次，而非全部放弃
+
+        return total
+
+    @staticmethod
     def save_all(
         entities: List[Dict[str, Any]],
         relationships: List[Dict[str, Any]] = None,
-        datasource: str = None
+        datasource: str = None,
+        use_create: bool = False
     ) -> Tuple[int, int]:
-        """一次性保存实体和关系到图谱存储"""
+        """一次性保存实体和关系到图谱存储
+
+        Args:
+            entities: 实体列表
+            relationships: 关系列表
+            datasource: 数据源标识
+            use_create: True=关系使用 CREATE（首次导入更快）；False=使用 MERGE（默认，幂等安全）
+        """
         entity_count = 0
         rel_count = 0
 
@@ -90,12 +129,8 @@ class EntityDataStore:
             if skipped:
                 logger.warning(f"跳过了 {skipped} 条关系（主体或客体实体不存在）")
 
-            try:
-                rel_result = graph_manager.add_relationships(prepared_relationships)
-                rel_count = rel_result.get('count', 0)
-                logger.info(f"关系保存成功，数量: {rel_count}")
-            except Exception as e:
-                logger.error(f"批量保存关系时出错: {e}")
+            rel_count = EntityDataStore._save_relationships_batched(prepared_relationships, use_create=use_create)
+            logger.info(f"关系保存成功，数量: {rel_count}")
 
         logger.info(f"数据存储完成，实体: {entity_count}, 关系: {rel_count}")
         return entity_count, rel_count
@@ -135,9 +170,16 @@ class EntityDataStore:
     @staticmethod
     def save_relationships_only(
         relationships: List[Dict[str, Any]],
-        entity_name_map: Dict[str, Dict[str, Any]]
+        entity_name_map: Dict[str, Dict[str, Any]],
+        use_create: bool = False
     ) -> int:
-        """仅保存关系，使用提供的 entity_name_map 解析 subject/object ID"""
+        """仅保存关系，使用提供的 entity_name_map 解析 subject/object ID
+
+        Args:
+            relationships: 关系列表
+            entity_name_map: 实体名 → entity 字典映射（含 entity_id）
+            use_create: True=使用 CREATE（首次导入更快）；False=使用 MERGE（默认，幂等安全）
+        """
         if not relationships:
             return 0
 
@@ -162,9 +204,4 @@ class EntityDataStore:
             }
             prepared_relationships.append(prepared)
 
-        try:
-            result = graph_manager.add_relationships(prepared_relationships)
-            return result.get('count', 0)
-        except Exception as e:
-            logger.error(f"批量保存关系时出错: {e}")
-            return 0
+        return EntityDataStore._save_relationships_batched(prepared_relationships, use_create=use_create)

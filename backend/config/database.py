@@ -2,17 +2,21 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 # 加载环境变量
 load_dotenv()
 
-# 数据库配置
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/sqlite/database.db")
+# 后端项目根目录（config/ 的父目录）
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+
+# 数据库配置 — 路径始终相对于 backend/ 目录，避免从根目录启动时误创建 data/sqlite
+_default_db_path = BACKEND_DIR / "data" / "sqlite" / "database.db"
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{_default_db_path}")
 
 # 确保SQLite数据库目录存在
 if "sqlite" in DATABASE_URL:
-    import os
     db_path = DATABASE_URL.replace("sqlite:///", "")
     db_dir = os.path.dirname(db_path)
     os.makedirs(db_dir, exist_ok=True)

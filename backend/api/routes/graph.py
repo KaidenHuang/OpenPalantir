@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Body, Query
 from pydantic import BaseModel
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from knowledge_graph.graph_manager import graph_manager
 from system.logger import logger
 
@@ -37,7 +37,7 @@ def _get_entity_or_404(entity_id: str) -> dict:
 @router.get("/nodes")
 async def list_nodes(
     page: int = Query(1, ge=1, description="页码"),
-    limit: int = Query(10, ge=1, le=1000, description="每页条数"),
+    limit: int = Query(50000, ge=1, le=50000, description="每页条数"),
     entity_type: Optional[str] = Query(None, description="实体类型"),
     query: Optional[str] = Query(None, description="搜索关键词")
 ):
@@ -150,6 +150,7 @@ async def batch_add_nodes(entities: list = Body(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
 @router.put("/nodes/{entity_id}")
 async def update_node(entity_id: str, request: EntityUpdateRequest):
     """更新节点/实体"""
@@ -217,15 +218,43 @@ async def get_node_relationships(entity_id: str):
 # ═══════════════════════════════════════════
 
 @router.get("/edges")
-async def get_edges():
-    """获取图谱边"""
+async def get_edges(limit: int = Query(50000, ge=1, le=50000, description="返回边数上限")):
+    """获取图谱边（支持 limit 限制，默认 50000=全量，最大 50000）"""
     try:
-        logger.debug("接收获取图谱边请求")
-        edges = graph_manager.get_edges()
-        logger.info(f"获取图谱边成功: 共 {len(edges)} 条边")
-        return {"edges": edges}
+        logger.debug(f"接收获取图谱边请求, limit={limit}")
+        edges = graph_manager.get_edges(limit=limit)
+        total_count = graph_manager.get_edge_count()
+        logger.info(f"获取图谱边成功: 返回 {len(edges)} 条, 总计 {total_count} 条")
+        return {"edges": edges, "total_count": total_count}
     except Exception as e:
         logger.error(f"获取图谱边失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/graph-data")
+async def get_graph_visualization_data(
+    entity_types: Optional[str] = Query(None, description="逗号分隔的实体类型，如 person,organization。不传=所有类型"),
+    min_edges: int = Query(1, ge=0, le=20, description="最少关联边数，0=含孤立点，默认1=过滤孤立点"),
+    max_nodes: int = Query(5000, ge=100, le=10000, description="最大返回节点数")
+):
+    """获取图谱可视化数据 — 服务端类型过滤 + 边数过滤 + 关联点补齐 + 分层抽样"""
+    try:
+        types_list = None
+        if entity_types:
+            types_list = [t.strip() for t in entity_types.split(',') if t.strip()]
+
+        result = graph_manager.get_graph_visualization_data(
+            entity_types=types_list,
+            min_edges=min_edges,
+            max_nodes=max_nodes,
+        )
+        logger.info(
+            f"图谱可视化数据: {len(result['data']['nodes'])} 节点, "
+            f"{len(result['data']['edges'])} 边, truncated={result['data']['truncated']}"
+        )
+        return result
+    except Exception as e:
+        logger.error(f"获取图谱可视化数据失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -251,12 +280,17 @@ async def add_relationship(relationship: dict = Body(...)):
 
 
 @router.post("/relationships/batch")
-async def batch_add_relationships(relationships: list = Body(...)):
-    """批量添加关系"""
-    try:
-        logger.debug(f"接收批量添加关系请求: count={len(relationships)}")
+async def batch_add_relationships(relationships: list = Body(...), use_create: bool = False):
+    """批量添加关系
 
-        result = graph_manager.batch_add_relationships(relationships)
+    Args:
+        relationships: 关系列表
+        use_create: True=使用 CREATE（首次导入更快）；False=使用 MERGE（默认，幂等安全）
+    """
+    try:
+        logger.debug(f"接收批量添加关系请求: count={len(relationships)}, use_create={use_create}")
+
+        result = graph_manager.batch_add_relationships(relationships, use_create=use_create)
         logger.info(f"批量添加关系成功: count={len(relationships)}")
         return result
     except Exception as e:

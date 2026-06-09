@@ -19,6 +19,7 @@ export const API_CONFIG = {
       stop: (taskId: string) => `${API_BASE_URL}/api/task/${taskId}/stop`
     },
     graph: {
+      graphData: `${API_BASE_URL}/api/graph/graph-data`,
       nodes: `${API_BASE_URL}/api/graph/nodes`,
       node: (entityId: string) => `${API_BASE_URL}/api/graph/nodes/${entityId}`,
       searchNodes: `${API_BASE_URL}/api/graph/nodes/search`,

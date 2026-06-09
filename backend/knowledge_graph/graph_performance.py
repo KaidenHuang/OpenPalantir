@@ -34,6 +34,16 @@ class GraphPerformanceOptimizer:
         try:
             logger.info("[create_indexes] 开始创建Neo4j索引")
 
+            # 实体 ID 唯一约束（MATCH {id} 的核心索引，必须存在！）
+            try:
+                neo4j_conn.execute_query(
+                    "CREATE CONSTRAINT entity_id_unique IF NOT EXISTS "
+                    "FOR (e:Entity) REQUIRE e.id IS UNIQUE"
+                )
+                logger.info("[create_indexes] 实体 ID 唯一约束已就绪")
+            except Exception as e:
+                logger.warning(f"创建实体 ID 约束失败（可能已存在重复 ID）: {e}")
+
             # 实体属性索引
             indexes = [
                 "CREATE INDEX IF NOT EXISTS FOR (e:Entity) ON (e.name)",
@@ -54,6 +64,16 @@ class GraphPerformanceOptimizer:
                 )
             except Exception as e:
                 logger.warning(f"创建全文索引失败: {e}")
+
+            # 关系属性索引（加速 MERGE 中 relationship_id 的存在性检查）
+            try:
+                neo4j_conn.execute_query(
+                    "CREATE INDEX rel_relationship_id IF NOT EXISTS "
+                    "FOR ()-[r:RELATED_TO]-() ON (r.relationship_id)"
+                )
+                logger.info("[create_indexes] 关系属性索引创建成功")
+            except Exception as e:
+                logger.warning(f"创建关系属性索引失败: {e}")
 
             logger.info("[create_indexes] 索引创建成功")
             return {"status": "success", "message": "索引创建成功"}

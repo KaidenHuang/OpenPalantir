@@ -694,7 +694,7 @@ class TaskManager:
 
                 # 为每张表创建 AnalyzedTable 记录（含 URI）
                 from models.database import AnalyzedTable
-                table_list = annotated_schema.get("tables", [])
+                table_list = [{k.lower(): v for k, v in t.items()} for t in annotated_schema.get("tables", [])]
                 for tbl in table_list:
                     table_uri = f"DBS://{connection_id}/{analyzed_db_name}/{tbl['table_name']}"
                     existing_table = db.query(AnalyzedTable).filter(
@@ -717,41 +717,45 @@ class TaskManager:
             # 步骤4: 保存数据库概要到本地文件
             if db_summary and db_summary.get("overview"):
                 try:
-                    table_list = annotated_schema.get("tables", [])
-                    columns_list = annotated_schema.get("columns", [])
+                    # 统一规范化键名（兼容不同数据库驱动的大小写差异）
+                    table_list = [{k.lower(): v for k, v in t.items()} for t in annotated_schema.get("tables", [])]
+                    columns_list = [{k.lower(): v for k, v in c.items()} for c in annotated_schema.get("columns", [])]
+                    raw_columns = [{k.lower(): v for k, v in c.items()} for c in schema.get("columns", [])]
+                    raw_fks = [{k.lower(): v for k, v in fk.items()} for fk in schema.get("foreign_keys", [])]
+
                     columns_by_table = {}
                     for col in columns_list:
                         columns_by_table.setdefault(col["table_name"], []).append(col)
 
-                    # 从原始 schema 构建列类型映射（兼容大小写 key）
+                    # 从原始 schema 构建列类型映射
                     col_types = {}
-                    for col in schema.get("columns", []):
-                        tn = col.get("table_name", "") or col.get("TABLE_NAME", "")
-                        cn = col.get("column_name", "") or col.get("COLUMN_NAME", "")
-                        dt = col.get("data_type", "") or col.get("DATA_TYPE", "")
+                    for col in raw_columns:
+                        tn = col.get("table_name", "")
+                        cn = col.get("column_name", "")
+                        dt = col.get("data_type", "")
                         if tn and cn:
                             col_types[(tn, cn)] = dt
 
-                    # 从原始 schema 构建外键映射（兼容大小写 key）
+                    # 从原始 schema 构建外键映射
                     fk_by_table = {}
-                    for fk in schema.get("foreign_keys", []):
-                        table = fk.get("table_name", "") or fk.get("TABLE_NAME", "")
-                        col = fk.get("column_name", "") or fk.get("COLUMN_NAME", "")
-                        ref_table = fk.get("referenced_table_name", "") or fk.get("REFERENCED_TABLE_NAME", "")
-                        ref_col = fk.get("referenced_column_name", "") or fk.get("REFERENCED_COLUMN_NAME", "")
+                    for fk in raw_fks:
+                        table = fk.get("table_name", "")
+                        col = fk.get("column_name", "")
+                        ref_table = fk.get("referenced_table_name", "")
+                        ref_col = fk.get("referenced_column_name", "")
                         if table:
                             fk_by_table.setdefault(table, []).append({
                                 "column": col,
                                 "references": f"{ref_table}.{ref_col}"
                             })
 
-                    # 从原始 schema 构建主键/唯一键映射（兼容大小写 key）
+                    # 从原始 schema 构建主键/唯一键映射
                     pk_columns = {}   # {table_name: [column_name, ...]}
                     uk_columns = {}   # {table_name: [column_name, ...]}
-                    for col in schema.get("columns", []):
-                        tn = col.get("table_name", "") or col.get("TABLE_NAME", "")
-                        cn = col.get("column_name", "") or col.get("COLUMN_NAME", "")
-                        ck = col.get("column_key", "") or col.get("COLUMN_KEY", "")
+                    for col in raw_columns:
+                        tn = col.get("table_name", "")
+                        cn = col.get("column_name", "")
+                        ck = col.get("column_key", "")
                         if tn and cn:
                             if ck == "PRI":
                                 pk_columns.setdefault(tn, []).append(cn)
@@ -843,9 +847,10 @@ class TaskManager:
             batch_size = task.payload.get("batch_size", 5000)
             row_limit = task.payload.get("row_limit", 0)
             neo4j_batch_size = task.payload.get("neo4j_batch_size", 20000)  # Neo4j 写入批大小
+            use_merge = task.payload.get("use_merge", False)  # 默认使用 CREATE（更快）
 
             logger.info(f"开始执行数据库行级导入任务，连接ID: {connection_id}, "
-                        f"源批量大小: {batch_size}, Neo4j写入批大小: {neo4j_batch_size}")
+                        f"源批量大小: {batch_size}, Neo4j写入批大小: {neo4j_batch_size}, use_merge={use_merge}")
 
             if not connection_id:
                 raise ValueError("缺少connection_id")
@@ -1089,7 +1094,7 @@ class TaskManager:
                         entity_name_map[name.lower()] = ent
                 del all_saved_entities
 
-                rel_count = EntityDataStore.save_relationships_only(relationships, entity_name_map)
+                rel_count = EntityDataStore.save_relationships_only(relationships, entity_name_map, use_create=not use_merge)
                 logger.info(f"关系保存完成: {rel_count} 条")
             else:
                 del all_saved_entities

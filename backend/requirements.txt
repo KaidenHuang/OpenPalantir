@@ -41,3 +41,4 @@ pytesseract>=0.3.13
 
 # 数据库
 SQLAlchemy>=2.0.0
+pymysql>=1.1.0

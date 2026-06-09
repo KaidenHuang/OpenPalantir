@@ -77,23 +77,30 @@ class GraphManager:
             logger.error(f"[get_nodes] 获取节点失败: {str(e)}")
             raise
 
-    def get_edges(self) -> List[Dict[str, Any]]:
-        """获取图谱边"""
+    def get_edges(self, limit: int = 5000) -> List[Dict[str, Any]]:
+        """获取图谱边
+
+        Args:
+            limit: 返回边数上限，默认 5000，最大 50000
+        """
         try:
-            logger.info("[get_edges] 开始获取图谱边")
+            safe_limit = min(max(1, limit), 50000)
+            logger.info(f"[get_edges] 开始获取图谱边, limit={safe_limit}")
 
-            # 尝试从缓存获取
-            cached_edges = self.performance.get_cached_graph_data("edges:all")
-            if cached_edges:
-                logger.info(f"[get_edges] 从缓存获取边: {len(cached_edges)} 条")
-                return cached_edges
+            # 尝试从缓存获取（仅当请求全量默认值 5000 时使用缓存）
+            if safe_limit == 5000:
+                cached_edges = self.performance.get_cached_graph_data("edges:all")
+                if cached_edges:
+                    logger.info(f"[get_edges] 从缓存获取边: {len(cached_edges)} 条")
+                    return cached_edges
 
-            # 从数据库获取
+            # 从数据库获取（带 LIMIT 防止大结果集 OOM）
             query = """
             MATCH (s)-[r]->(t)
             RETURN s.name as source, t.name as target, r.predicate as type, r.confidence as confidence, r.subject_id as subject_id, r.object_id as object_id, r.occurrence_time as occurrence_time, r.description as description, r.relationship_id as relationship_id
+            LIMIT $limit
             """
-            result = neo4j_conn.execute_query(query)
+            result = neo4j_conn.execute_query(query, {"limit": safe_limit})
 
             edges = []
             for record in result:
@@ -110,14 +117,25 @@ class GraphManager:
                 }
                 edges.append(edge)
 
-            # 缓存结果
-            self.performance.cache_graph_data("edges:all", edges)
+            # 仅默认请求时缓存
+            if safe_limit == 5000:
+                self.performance.cache_graph_data("edges:all", edges)
 
             logger.info(f"[get_edges] 获取边成功: {len(edges)} 条")
             return edges
         except Exception as e:
             logger.error(f"[get_edges] 获取边失败: {str(e)}")
             raise
+
+    def get_edge_count(self) -> int:
+        """获取图谱边的总数（轻量 COUNT 查询）"""
+        try:
+            query = "MATCH (s)-[r]->(t) RETURN count(r) as total"
+            result = neo4j_conn.execute_query(query)
+            return result[0]['total'] if result else 0
+        except Exception as e:
+            logger.error(f"[get_edge_count] 获取边总数失败: {str(e)}")
+            return 0
 
     def query_graph(self, query: str, params: Dict = None) -> List[Dict[str, Any]]:
         """查询图谱"""
@@ -284,10 +302,16 @@ class GraphManager:
             logger.error(f"[add_relationship] 添加关系失败: {str(e)}")
             raise
 
-    def add_relationships(self, relationships: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """批量添加关系（UNWIND 批量写入，:Entity 标签命中索引）"""
+    def add_relationships(self, relationships: List[Dict[str, Any]], use_create: bool = False) -> Dict[str, Any]:
+        """批量添加关系（UNWIND 批量写入，:Entity 标签命中 id 唯一约束索引）
+
+        Args:
+            relationships: 关系列表，每条需含 subject_id/object_id（实体 UUID）
+            use_create: True=使用 CREATE（首次导入，跳过存在性检查，更快）；
+                        False=使用 MERGE（默认，幂等安全）
+        """
         try:
-            logger.info(f"[add_relationships] 开始批量添加关系，数量: {len(relationships)}")
+            logger.info(f"[add_relationships] 开始批量添加关系，数量: {len(relationships)}, use_create={use_create}")
 
             if not relationships:
                 logger.info("[add_relationships] 没有需要添加的关系")
@@ -296,27 +320,34 @@ class GraphManager:
             rel_list = []
             for rel in relationships:
                 rel_list.append({
-                    'source': rel.get("subject", ""),
-                    'target': rel.get("object", ""),
+                    'subject_id': rel.get('subject_id', ''),
+                    'object_id': rel.get('object_id', ''),
                     'predicate': rel.get("predicate", "RELATES_TO"),
                     'relationship_id': rel.get("relationship_id", ""),
                     'confidence': rel.get('confidence', 0.5),
-                    'subject_id': rel.get('subject_id', ''),
-                    'object_id': rel.get('object_id', ''),
                     'occurrence_time': rel.get('occurrence_time'),
                     'description': rel.get('description')
                 })
 
-            # UNWIND 单次 round-trip 写入所有关系
-            query = """
-            UNWIND $relationships AS r
-            MATCH (s:Entity {name: r.source})
-            MATCH (t:Entity {name: r.target})
-            MERGE (s)-[rel:RELATED_TO {relationship_id: r.relationship_id}]->(t)
-            SET rel.predicate = r.predicate, rel.confidence = r.confidence,
-                rel.subject_id = r.subject_id, rel.object_id = r.object_id,
-                rel.occurrence_time = r.occurrence_time, rel.description = r.description
-            """
+            # 使用实体 UUID (id) 匹配，命中 HASH 唯一约束索引，远快于 name 的 BTREE 索引
+            if use_create:
+                query = """
+                UNWIND $relationships AS r
+                MATCH (s:Entity {id: r.subject_id})
+                MATCH (t:Entity {id: r.object_id})
+                CREATE (s)-[rel:RELATED_TO {relationship_id: r.relationship_id}]->(t)
+                SET rel.predicate = r.predicate, rel.confidence = r.confidence,
+                    rel.occurrence_time = r.occurrence_time, rel.description = r.description
+                """
+            else:
+                query = """
+                UNWIND $relationships AS r
+                MATCH (s:Entity {id: r.subject_id})
+                MATCH (t:Entity {id: r.object_id})
+                MERGE (s)-[rel:RELATED_TO {relationship_id: r.relationship_id}]->(t)
+                SET rel.predicate = r.predicate, rel.confidence = r.confidence,
+                    rel.occurrence_time = r.occurrence_time, rel.description = r.description
+                """
             neo4j_conn.execute_query(query, {"relationships": rel_list})
 
             self._maybe_clear_cache("graph:edges:*")
@@ -491,10 +522,15 @@ class GraphManager:
         logger.info(f"[batch_add_entities] 开始批量添加实体: {len(entities)} 个")
         return self.add_entities(entities)
 
-    def batch_add_relationships(self, relationships: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """批量添加关系（直接调用 add_relationships UNWIND 批量写入）"""
-        logger.info(f"[batch_add_relationships] 开始批量添加关系: {len(relationships)} 条")
-        return self.add_relationships(relationships)
+    def batch_add_relationships(self, relationships: List[Dict[str, Any]], use_create: bool = False) -> Dict[str, Any]:
+        """批量添加关系（直接调用 add_relationships UNWIND 批量写入）
+
+        Args:
+            relationships: 关系列表
+            use_create: True=使用 CREATE（首次导入更快）；False=使用 MERGE（默认，幂等安全）
+        """
+        logger.info(f"[batch_add_relationships] 开始批量添加关系: {len(relationships)} 条, use_create={use_create}")
+        return self.add_relationships(relationships, use_create=use_create)
 
     def optimize_schema(self) -> Dict[str, Any]:
         """优化图谱schema"""
@@ -754,7 +790,7 @@ class GraphManager:
         offset: int = 0,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """分页列出/搜索实体，支持类型过滤和关键词搜索，返回 (entities, total_count)"""
-        # 无搜索关键词 + 无类型过滤：纯分页
+        # 无搜索关键词 + 无类型过滤：按类型比例分层抽样
         if not query and not entity_type:
             try:
                 count_result = neo4j_conn.execute_query(
@@ -762,11 +798,67 @@ class GraphManager:
                     {}
                 )
                 total = count_result[0]['total'] if count_result else 0
-                result = neo4j_conn.execute_query(
-                    "MATCH (n:Entity) RETURN n{.*} as node SKIP $offset LIMIT $limit",
-                    {"offset": offset, "limit": limit}
-                )
-                entities = [{'entity_id': r['node'].get('id', ''), **r['node']} for r in result]
+
+                # 当 limit 较大且类型可能偏斜时，按类型比例分层抽样
+                # 确保每种实体类型在前 limit 条中都有公平的展示机会
+                if limit >= 1000 and total > limit:
+                    # 获取各类型的数量分布
+                    type_dist = neo4j_conn.execute_query(
+                        "MATCH (n:Entity) "
+                        "RETURN n.type as t, count(n) as c ORDER BY c DESC"
+                    )
+                    type_counts = {r['t']: r['c'] for r in type_dist}
+                    type_names = list(type_counts.keys())
+
+                    # 每个类型至少分配 min_per_type 个名额，其余按比例
+                    min_per_type = max(1, limit // (len(type_names) * 5))
+                    reserved = min_per_type * len(type_names)
+                    remaining_budget = max(0, limit - reserved)
+
+                    entities = []
+                    for t in type_names:
+                        type_share = min_per_type
+                        if remaining_budget > 0:
+                            extra = int(remaining_budget * type_counts[t] / total)
+                            type_share += extra
+
+                        # 跳过首页 offset（仅第一页 offset=0）
+                        skip = max(0, offset - sum(
+                            type_counts[tt] for tt in type_names
+                            if type_names.index(tt) < type_names.index(t)
+                        ))
+                        if skip >= type_counts[t]:
+                            continue
+
+                        type_result = neo4j_conn.execute_query(
+                            "MATCH (n:Entity) WHERE n.type = $type "
+                            "RETURN n{.*} as node SKIP $skip LIMIT $l",
+                            {"type": t, "skip": skip % type_counts[t] if skip > 0 else 0, "l": type_share}
+                        )
+                        for r in type_result:
+                            node = r['node']
+                            node['entity_id'] = node.get('id', '')
+                            entities.append(node)
+
+                    # 如果不足 limit（某些类型数量不足），补足
+                    if len(entities) < limit and offset == 0:
+                        got_ids = {e.get('id', '') for e in entities}
+                        fill_result = neo4j_conn.execute_query(
+                            "MATCH (n:Entity) RETURN n{.*} as node LIMIT $l",
+                            {"l": limit}
+                        )
+                        for r in fill_result:
+                            node = r['node']
+                            if node.get('id', '') not in got_ids and len(entities) < limit:
+                                node['entity_id'] = node.get('id', '')
+                                entities.append(node)
+                else:
+                    result = neo4j_conn.execute_query(
+                        "MATCH (n:Entity) RETURN n{.*} as node SKIP $offset LIMIT $limit",
+                        {"offset": offset, "limit": limit}
+                    )
+                    entities = [{'entity_id': r['node'].get('id', ''), **r['node']} for r in result]
+
                 return entities, total
             except Exception as e:
                 logger.error(f"分页列出实体失败: {e}")
@@ -907,6 +999,181 @@ class GraphManager:
         except Exception as e:
             logger.error(f"根据数据源获取实体失败: {e}")
             return []
+
+
+    def get_graph_visualization_data(
+        self,
+        entity_types: Optional[List[str]] = None,
+        min_edges: int = 1,
+        max_nodes: int = 5000,
+    ) -> Dict[str, Any]:
+        """获取图谱可视化数据 — 服务端类型过滤 + 边数过滤 + 关联点补齐 + 分层抽样
+
+        Args:
+            entity_types: 选中的实体类型列表，None 表示所有类型
+            min_edges: 最少关联边数（0=含孤立点, 默认1=过滤孤立点, 最大20）
+            max_nodes: 最大返回节点数（默认 5000），超过则按类型比例分层抽样
+        """
+        try:
+            safe_min_edges = max(0, min(20, min_edges))
+            logger.info(
+                f"[get_graph_visualization_data] entity_types={entity_types}, "
+                f"min_edges={safe_min_edges}, max_nodes={max_nodes}"
+            )
+
+            # ── Step 1: 获取可用类型及计数 ──
+            type_result = neo4j_conn.execute_query(
+                "MATCH (n:Entity) RETURN n.type as type, count(n) as count ORDER BY type"
+            )
+            available_types: Dict[str, int] = {r['type']: r['count'] for r in type_result}
+            total_node_count = sum(available_types.values())
+
+            # 确定要查询的实体类型
+            if entity_types is None:
+                entity_types = list(available_types.keys())
+            if not entity_types:
+                return {
+                    "status": "success",
+                    "data": {
+                        "nodes": [], "edges": [],
+                        "available_types": available_types,
+                        "total_node_count": total_node_count,
+                        "total_edge_count": self.get_edge_count(),
+                        "truncated": False,
+                    }
+                }
+
+            # ── Step 2: 获取核心节点（类型过滤 + 边数过滤）──
+            # 使用 size((n)-[:RELATED_TO]-()) 利用 Neo4j 内部度计数器
+            core_query = """
+            MATCH (n:Entity)
+            WHERE n.type IN $entity_types
+            WITH n, size((n)-[:RELATED_TO]-()) as edge_count
+            WHERE edge_count >= $min_edges
+            RETURN n{.*} as node, edge_count
+            """
+            core_params = {"entity_types": entity_types, "min_edges": safe_min_edges}
+
+            core_result = neo4j_conn.execute_query(core_query, core_params)
+            core_nodes: List[Dict[str, Any]] = [r['node'] for r in core_result]
+
+            # ── Step 3: 分层抽样（核心节点 > max_nodes 时触发）──
+            truncated = False
+            if len(core_nodes) > max_nodes:
+                truncated = True
+                # 按类型分组
+                nodes_by_type: Dict[str, List[Dict[str, Any]]] = {}
+                for node in core_nodes:
+                    t = node.get('type', 'other')
+                    nodes_by_type.setdefault(t, []).append(node)
+
+                type_names = sorted(
+                    nodes_by_type.keys(),
+                    key=lambda t: len(nodes_by_type[t]),
+                    reverse=True
+                )
+
+                min_per_type = max(1, max_nodes // (len(type_names) * 5))
+                reserved = min_per_type * len(type_names)
+                remaining_budget = max(0, max_nodes - reserved)
+
+                sampled: List[Dict[str, Any]] = []
+                for t in type_names:
+                    type_total = len(nodes_by_type[t])
+                    type_share = min_per_type
+                    if remaining_budget > 0:
+                        extra = int(remaining_budget * type_total / len(core_nodes))
+                        type_share += extra
+                    type_share = min(type_share, type_total)
+                    sampled.extend(nodes_by_type[t][:type_share])
+
+                # 不足时从剩余节点补足
+                if len(sampled) < max_nodes:
+                    got_ids = {n.get('id') for n in sampled}
+                    for node in core_nodes:
+                        if node.get('id') not in got_ids and len(sampled) < max_nodes:
+                            got_ids.add(node.get('id'))
+                            sampled.append(node)
+
+                core_nodes = sampled
+                logger.info(
+                    f"[get_graph_visualization_data] 分层抽样: {len(core_nodes)} 个核心节点 "
+                    f"(原始 {len(core_result)} 个, 类型数 {len(type_names)})"
+                )
+
+            # ── Step 4: 补齐关联节点（核心节点的直接邻居）──
+            core_ids: List[str] = [n.get('id') for n in core_nodes if n.get('id')]
+            all_nodes: List[Dict[str, Any]] = list(core_nodes)
+            all_ids_set: set = set(core_ids)
+
+            if safe_min_edges > 0 and core_ids:
+                neighbor_query = """
+                MATCH (n:Entity)
+                WHERE n.id IN $core_ids
+                MATCH (n)-[]-(neighbor:Entity)
+                WHERE NOT neighbor.id IN $core_ids
+                RETURN DISTINCT neighbor{.*} as node
+                """
+                neighbor_result = neo4j_conn.execute_query(
+                    neighbor_query, {"core_ids": core_ids}
+                )
+                for r in neighbor_result:
+                    node = r['node']
+                    nid = node.get('id')
+                    if nid and nid not in all_ids_set:
+                        all_ids_set.add(nid)
+                        all_nodes.append(node)
+                logger.info(
+                    f"[get_graph_visualization_data] 补齐 {len(all_nodes) - len(core_nodes)} 个关联节点"
+                )
+
+            # ── Step 5: 获取边（两端均在合并节点集中）──
+            all_ids = list(all_ids_set)
+            edges: List[Dict[str, Any]] = []
+
+            if all_ids:
+                edge_query = """
+                MATCH (a:Entity)-[r]->(b:Entity)
+                WHERE a.id IN $all_ids AND b.id IN $all_ids
+                RETURN a.name as source, b.name as target,
+                       r.predicate as type, r.confidence as confidence,
+                       r.subject_id as subject_id, r.object_id as object_id,
+                       r.occurrence_time as occurrence_time, r.description as description,
+                       r.relationship_id as relationship_id
+                """
+                edge_result = neo4j_conn.execute_query(edge_query, {"all_ids": all_ids})
+                for record in edge_result:
+                    edges.append({
+                        'source': record['source'],
+                        'target': record['target'],
+                        'type': record.get('type', 'REL'),
+                        'confidence': record.get('confidence', 0.5),
+                        'subject_id': record.get('subject_id'),
+                        'object_id': record.get('object_id'),
+                        'occurrence_time': record.get('occurrence_time'),
+                        'description': record.get('description'),
+                        'relationship_id': record.get('relationship_id'),
+                    })
+
+            logger.info(
+                f"[get_graph_visualization_data] 完成: {len(all_nodes)} 节点, "
+                f"{len(edges)} 边, truncated={truncated}"
+            )
+
+            return {
+                "status": "success",
+                "data": {
+                    "nodes": all_nodes,
+                    "edges": edges,
+                    "available_types": available_types,
+                    "total_node_count": total_node_count,
+                    "total_edge_count": self.get_edge_count(),
+                    "truncated": truncated,
+                }
+            }
+        except Exception as e:
+            logger.error(f"[get_graph_visualization_data] 失败: {str(e)}")
+            raise
 
 
 # 创建全局图谱管理器实例

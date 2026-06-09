@@ -114,7 +114,7 @@ class SchemaAnnotator:
             logger.debug(f"LLM响应内容: {json.dumps(response_json, ensure_ascii=False, indent=2)[:2000]}")
             
             annotated_result = self._parse_annotated_result(response_json)
-            logger.info(f"解析后的标注结果 - 表数量: {len(annotated_result.get('tables', []))}, 字段数量: {len(annotated_result.get('columns', []))}, 关系数量: {len(annotated_result.get('relationships', []))}")
+            logger.debug(f"解析后的标注结果 - 表数量: {len(annotated_result.get('tables', []))}, 字段数量: {len(annotated_result.get('columns', []))}, 关系数量: {len(annotated_result.get('relationships', []))}")
             
             schema = self._merge_annotations(schema, annotated_result)
 
@@ -122,17 +122,17 @@ class SchemaAnnotator:
             db_summary = annotated_result.get("database_summary", {})
             if db_summary:
                 schema["database_summary"] = db_summary
-                logger.info(f"数据库概要: {json.dumps(db_summary, ensure_ascii=False)}")
-            
+                logger.debug(f"数据库概要: {json.dumps(db_summary, ensure_ascii=False)}")
+
             # ===== 标注后日志输出 =====
-            logger.info("===== Schema标注后 =====")
+            logger.debug("===== Schema标注后 =====")
             tables_after = schema.get('tables', [])
             columns_after = schema.get('columns', [])
             inferred_rels = schema.get('inferred_relationships', [])
-            
-            logger.info(f"tables_after: {json.dumps(tables_after, ensure_ascii=False, indent=2)}")
-            logger.info(f"columns_after: {json.dumps(columns_after, ensure_ascii=False, indent=2)}")
-            logger.info(f"inferred_relationships: {json.dumps(inferred_rels, ensure_ascii=False, indent=2)}")
+
+            logger.debug(f"tables_after: {json.dumps(tables_after, ensure_ascii=False, indent=2)}")
+            logger.debug(f"columns_after: {json.dumps(columns_after, ensure_ascii=False, indent=2)}")
+            logger.debug(f"inferred_relationships: {json.dumps(inferred_rels, ensure_ascii=False, indent=2)}")
             
             return schema
         
@@ -142,22 +142,26 @@ class SchemaAnnotator:
             logger.error(f"异常堆栈: {traceback.format_exc()}")
             return schema
     
+    def _normalize_keys(self, d: Dict) -> Dict:
+        """将字典的键统一转为小写，处理不同数据库驱动返回列名大小写不一致的问题"""
+        return {k.lower(): v for k, v in d.items()}
+
     def _build_annotate_prompt(self, schema: Dict) -> str:
         """
         构建标注提示词
-        
+
         Args:
             schema: Schema字典
-            
+
         Returns:
             str: 构建好的提示词
         """
         import os
-        
-        tables = schema.get('tables', [])
-        columns = schema.get('columns', [])
-        foreign_keys = schema.get('foreign_keys', [])
-        
+
+        tables = [self._normalize_keys(t) for t in schema.get('tables', [])]
+        columns = [self._normalize_keys(c) for c in schema.get('columns', [])]
+        foreign_keys = [self._normalize_keys(fk) for fk in schema.get('foreign_keys', [])]
+
         tables_info = "\n".join([f"- {t['table_name']}: {t.get('table_type', 'TABLE')}" for t in tables])
         
         columns_info = []
@@ -167,21 +171,20 @@ class SchemaAnnotator:
             if table_name not in table_columns:
                 table_columns[table_name] = []
             table_columns[table_name].append(col)
-        
+
         for table_name, cols in table_columns.items():
             cols_info = ", ".join([f"{c['column_name']}({c['data_type']})" for c in cols])
             columns_info.append(f"- {table_name}: [{cols_info}]")
-        
+
         columns_text = "\n".join(columns_info)
-        
+
         fk_info = []
         for fk in foreign_keys:
-            # 支持大小写不同的键名
-            table_name = fk.get('table_name') or fk.get('TABLE_NAME')
-            column_name = fk.get('column_name') or fk.get('COLUMN_NAME')
-            ref_table_name = fk.get('referenced_table_name') or fk.get('REFERENCED_TABLE_NAME')
-            ref_column_name = fk.get('referenced_column_name') or fk.get('REFERENCED_COLUMN_NAME')
-            
+            table_name = fk.get('table_name')
+            column_name = fk.get('column_name')
+            ref_table_name = fk.get('referenced_table_name')
+            ref_column_name = fk.get('referenced_column_name')
+
             if table_name and column_name and ref_table_name and ref_column_name:
                 fk_info.append(f"- {table_name}.{column_name} -> {ref_table_name}.{ref_column_name}")
             else:
@@ -273,20 +276,34 @@ class SchemaAnnotator:
         column_annotations = {(c["table_name"], c["column_name"]): c for c in annotated.get("columns", [])}
 
         for table in schema.get("tables", []):
-            table_name = table["table_name"]
-            annotation = table_annotations.get(table_name)
+            name = self._resolve_key(table, 'table_name')
+            if not name:
+                continue
+            annotation = table_annotations.get(name)
             if annotation:
                 table["business_description"] = annotation.get("business_description")
                 table["entity_type"] = annotation.get("entity_type")
 
         for column in schema.get("columns", []):
-            annotation = column_annotations.get((column["table_name"], column["column_name"]))
+            col_name = self._resolve_key(column, 'column_name')
+            tbl_name = self._resolve_key(column, 'table_name')
+            if not col_name or not tbl_name:
+                continue
+            annotation = column_annotations.get((tbl_name, col_name))
             if annotation:
                 column["business_description"] = annotation.get("business_description")
 
         schema["inferred_relationships"] = annotated.get("relationships", [])
 
         return schema
+
+    @staticmethod
+    def _resolve_key(d: Dict, key: str) -> Optional[str]:
+        """不区分大小写从字典中获取键值"""
+        for k, v in d.items():
+            if k.lower() == key.lower():
+                return v
+        return None
 
 
 # 创建默认实例

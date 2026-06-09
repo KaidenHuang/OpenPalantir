@@ -16,6 +16,10 @@ from models import model, task, database, source
 # 创建数据库表
 Base.metadata.create_all(bind=engine)
 
+# 初始化 Neo4j Schema（约束 + 索引）
+from config.neo4j_config import neo4j_conn
+neo4j_conn.initialize_schema()
+
 # 初始化默认模型记录
 from models.model import init_models
 init_models()

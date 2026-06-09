@@ -125,11 +125,12 @@ class DatabaseService:
         """保存Schema信息到数据库"""
         try:
             self.delete_schema(db, connection_id)
-            
-            tables = schema.get("tables", [])
-            columns = schema.get("columns", [])
-            foreign_keys = schema.get("foreign_keys", [])
-            
+
+            # 统一键名大小写（不同数据库驱动返回的列名大小写不一致）
+            tables = [{k.lower(): v for k, v in t.items()} for t in schema.get("tables", [])]
+            columns = [{k.lower(): v for k, v in c.items()} for c in schema.get("columns", [])]
+            foreign_keys = [{k.lower(): v for k, v in fk.items()} for fk in schema.get("foreign_keys", [])]
+
             for table_data in tables:
                 table = DatabaseTable(
                     id=f"{connection_id}_{table_data['table_name']}",
@@ -143,7 +144,7 @@ class DatabaseService:
                     created_at=datetime.now()
                 )
                 db.add(table)
-            
+
             for column_data in columns:
                 column = DatabaseColumn(
                     id=f"{connection_id}_{column_data['table_name']}_{column_data['column_name']}",
@@ -164,15 +165,14 @@ class DatabaseService:
                     created_at=datetime.now()
                 )
                 db.add(column)
-            
+
             for fk_data in foreign_keys:
-                # 支持大小写不同的键名
-                table_name = fk_data.get('table_name') or fk_data.get('TABLE_NAME')
-                column_name = fk_data.get('column_name') or fk_data.get('COLUMN_NAME')
-                ref_table_name = fk_data.get('referenced_table_name') or fk_data.get('REFERENCED_TABLE_NAME')
-                ref_column_name = fk_data.get('referenced_column_name') or fk_data.get('REFERENCED_COLUMN_NAME')
-                constraint_name = fk_data.get('constraint_name') or fk_data.get('CONSTRAINT_NAME')
-                
+                table_name = fk_data.get('table_name')
+                column_name = fk_data.get('column_name')
+                ref_table_name = fk_data.get('referenced_table_name')
+                ref_column_name = fk_data.get('referenced_column_name')
+                constraint_name = fk_data.get('constraint_name')
+
                 if table_name and column_name and ref_table_name and ref_column_name:
                     fk = DatabaseForeignKey(
                         id=f"{connection_id}_{constraint_name or (table_name + '_' + column_name)}",
@@ -187,7 +187,7 @@ class DatabaseService:
                     db.add(fk)
                 else:
                     logger.warning(f"跳过不完整的外键数据: {fk_data}")
-            
+
             inferred_relationships = schema.get("inferred_relationships", [])
             for rel in inferred_relationships:
                 rel_id = f"{connection_id}_{rel.get('source_table')}_{rel.get('target_table')}_{rel.get('relationship_type', 'unknown')}"
