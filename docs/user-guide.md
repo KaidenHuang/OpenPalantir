@@ -27,7 +27,7 @@ docker-compose up -d
 
 # 4. 访问
 # 前端: http://localhost:5175
-# API 文档: http://localhost:8001/docs
+# API 文档: http://localhost:8000/docs
 ```
 
 ### 方式二：手动安装
@@ -41,7 +41,7 @@ docker-compose up -d
 cd backend
 cp .env.example .env
 pip install -r requirements.txt
-uvicorn main:app --reload --port 8001
+uvicorn main:app --reload --port 8000
 
 # 3. 前端
 cd frontend

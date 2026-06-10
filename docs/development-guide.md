@@ -27,7 +27,7 @@ cd backend
 pip install -r requirements.txt
 cp .env.example .env
 # 编辑 .env 中的数据库连接信息
-uvicorn main:app --reload --port 8001
+uvicorn main:app --reload --port 8000
 
 # 前端 (热重载)
 cd frontend
@@ -38,7 +38,7 @@ npm run dev     # 监听 :5175
 ### 运行测试
 
 ```bash
-# 确保后端运行在 localhost:8001
+# 确保后端运行在 localhost:8000
 
 # 方式一：pytest
 cd tests
@@ -261,8 +261,8 @@ logger.info(f"变量值: {some_var}")
 
 ### API 调试
 
-- 访问 `http://localhost:8001/docs` 使用 Swagger UI 交互式测试 API
-- 访问 `http://localhost:8001/redoc` 查看更详细的 API 文档
+- 访问 `http://localhost:8000/docs` 使用 Swagger UI 交互式测试 API
+- 访问 `http://localhost:8000/redoc` 查看更详细的 API 文档
 
 ### 前端调试
 

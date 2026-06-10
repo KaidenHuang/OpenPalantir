@@ -1,8 +1,34 @@
 import os
 import logging
 import inspect
+import sys
 from logging.handlers import TimedRotatingFileHandler
 import datetime
+
+
+class WindowsSafeRotatingFileHandler(TimedRotatingFileHandler):
+    """在 Windows 多进程环境下安全轮转日志的处理器。
+
+    Windows 不允许重命名被其他进程打开的文件。uvicorn --reload 会 fork
+    出 reloader + worker 两个进程同时持有日志文件句柄，导致 TimedRotatingFileHandler
+    的 os.rename() 失败。本处理器捕获该错误并回退为原地继续写入，避免日志丢失。
+    """
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("delay", True)  # 延迟打开文件，减少句柄竞争
+        super().__init__(*args, **kwargs)
+
+    def doRollover(self):
+        try:
+            super().doRollover()
+        except PermissionError:
+            # Windows 多进程：源文件被另一进程锁定，无法 rename。
+            # 回退：直接在当前文件继续写入，跳过本次轮转。
+            self.stream = self._open()
+            sys.stderr.write(
+                f"[logger] 日志轮转跳过（文件被占用），继续写入 {self.baseFilename}\n"
+            )
+
 
 class Logger:
     _instance = None
@@ -40,7 +66,7 @@ class Logger:
         if not self.logger.handlers:
             # 创建按日期轮转的文件handler
             log_file = os.path.join(log_dir, 'backend.log')
-            file_handler = TimedRotatingFileHandler(
+            file_handler = WindowsSafeRotatingFileHandler(
                 log_file, 
                 when='midnight', 
                 interval=1, 

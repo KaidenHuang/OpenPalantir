@@ -18,6 +18,14 @@
   padding: 10px;
   background-color: #f8f9fa;
   flex-shrink: 0;
+  align-items: center;
+}
+
+.nav-logo {
+  height: 32px;
+  width: 32px;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .nav button {

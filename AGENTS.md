@@ -30,7 +30,7 @@
 ```bash
 # 后端
 cd backend && pip install -r requirements.txt
-uvicorn main:app --reload --port 8001
+uvicorn main:app --reload --port 8000
 
 # 前端
 cd frontend && npm install
@@ -42,7 +42,7 @@ npm run lint     # 对 .ts/.tsx 文件运行 ESLint
 scripts/service/start-services.ps1   # 启动 Neo4j + Redis
 scripts/service/stop-services.ps1    # 停止 Neo4j + Redis
 
-# 测试（后端必须在 localhost:8001 运行）
+# 测试（后端必须在 localhost:8000 运行）
 cd tests && pytest
 python run-all-tests.py              # 集成测试 + 报告
 ```
@@ -65,7 +65,7 @@ python run-all-tests.py              # 集成测试 + 报告
 
 - **测试框架**: 后端测试使用 pytest。
 - **覆盖率**: 为新功能和 Bug 修复添加测试。提交前确保所有现有测试通过。
-- **执行方式**: 在 `localhost:8001` 启动后端，然后运行 `cd tests && pytest` 或 `python run-all-tests.py` 执行完整的集成测试套件。
+- **执行方式**: 在 `localhost:8000` 启动后端，然后运行 `cd tests && pytest` 或 `python run-all-tests.py` 执行完整的集成测试套件。
 - **测试命令**: 不要在 bash 测试命令中包含 `#` 内联注释。避免在 `cd` 后使用输出重定向。
 
 ## 提交 & Pull Request 指南

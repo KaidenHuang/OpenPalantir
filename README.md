@@ -7,6 +7,12 @@
 [![Node.js](https://img.shields.io/badge/node-18+-green.svg)](https://nodejs.org/)
 [![React](https://img.shields.io/badge/react-18-61dafb.svg)](https://react.dev/)
 
+<p align="center">
+  <img src="frontend/public/openpalantir.svg" alt="OpenPalantir Logo" width="128" height="128"/>
+</p>
+
+> **Logo 释义**：中央的水晶球象征 Palantir——洞悉世间万物、洞察数据真相；环绕四周的五本书籍源源不断地为水晶球输送知识与数据，寓意系统从多源异构数据中汲取养分，汇入知识图谱，赋能智能决策。
+
 OpenPalantir 是一个基于 AI 的数据分析与知识图谱构建系统。支持文档（PDF/Word/Markdown/图片）、数据库（MySQL/PostgreSQL/SQLite）等多种数据源，通过规则引擎和 LLM 为数据源构建摘要，并提取实体与关系，存入 Neo4j 图数据库，提供图谱分析（路径分析、社区发现、中心性计算、趋势分析）和问答型智能决策能力。
 
 ## 功能特性
@@ -71,7 +77,7 @@ cd OpenPalantir
 cd backend
 cp .env.example .env   # 编辑 .env 填入你的配置
 pip install -r requirements.txt
-uvicorn main:app --reload --port 8001
+uvicorn main:app --reload --port 8000
 
 # 前端
 cd frontend
@@ -79,7 +85,7 @@ npm install
 npm run dev             # 端口 5175
 ```
 
-访问 http://localhost:5175 打开应用，http://localhost:8001/docs 查看 API 文档。
+访问 http://localhost:5175 打开应用，http://localhost:8000/docs 查看 API 文档。
 
 ### 使用 Docker（推荐）
 

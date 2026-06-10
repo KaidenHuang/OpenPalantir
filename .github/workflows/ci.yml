@@ -42,7 +42,7 @@ jobs:
           NEO4J_PASSWORD: test1234
         run: |
           cd backend
-          python -m uvicorn main:app --port 8001 &
+          python -m uvicorn main:app --port 8000 &
           sleep 5
           cd ../tests
           pytest --cov=../backend --cov-report=xml

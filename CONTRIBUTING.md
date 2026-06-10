@@ -67,7 +67,7 @@ npm run dev
 ### 测试
 
 ```bash
-# 确保后端运行在 localhost:8001
+# 确保后端运行在 localhost:8000
 cd tests
 pytest
 

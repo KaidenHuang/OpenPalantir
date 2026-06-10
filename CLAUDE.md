@@ -96,7 +96,7 @@ OpenPalantir 是一个基于 AI 的数据分析与知识图谱构建系统。支
 ```bash
 # 后端
 cd backend && pip install -r requirements.txt
-uvicorn main:app --reload --port 8001
+uvicorn main:app --reload --port 8000
 
 # 前端
 cd frontend && npm install
@@ -108,7 +108,7 @@ scripts/service/start-services.ps1   # 启动 Neo4j + Redis
 scripts/service/stop-services.ps1    # 停止 Neo4j + Redis
 
 # 测试
-cd tests && pytest                   # 需运行后端 localhost:8001
+cd tests && pytest                   # 需运行后端 localhost:8000
 python run-all-tests.py              # 集成测试 + 报告
 
 # 清理 DB

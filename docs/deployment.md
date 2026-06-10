@@ -35,7 +35,7 @@ docker-compose logs -f backend
 | 服务 | 端口 | 用途 |
 |------|------|------|
 | frontend | 5175 | Web 前端界面 |
-| backend | 8001 | REST API |
+| backend | 8000 | REST API |
 | Neo4j Browser | 7474 | 图数据库管理界面 |
 | Neo4j Bolt | 7687 | 图数据库连接协议 |
 | Redis | 6379 | 缓存和消息队列 |
@@ -131,13 +131,13 @@ CORS_ORIGINS=http://your-domain.com
 **开发模式**：
 ```bash
 cd backend
-uvicorn main:app --reload --host 0.0.0.0 --port 8001
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 **生产模式**（使用 Gunicorn + Uvicorn workers）：
 ```bash
 cd backend
-gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8001
+gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
 ```
 
 **Celery Worker**（单独启动，用于异步任务）：
@@ -177,7 +177,7 @@ server {
 
     # API 反向代理
     location /api/ {
-        proxy_pass http://localhost:8001;
+        proxy_pass http://localhost:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }

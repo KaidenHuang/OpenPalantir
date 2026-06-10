@@ -78,6 +78,7 @@ function App() {
         >
           智能决策
         </button>
+        <img src="/openpalantir.svg" alt="OpenPalantir" className="nav-logo" />
       </nav>
       
       <main className="main">

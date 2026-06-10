@@ -2,10 +2,10 @@
 
 ## 基础信息
 
-- **Base URL**: `http://localhost:8001`
+- **Base URL**: `http://localhost:8000`
 - **Content-Type**: `application/json`
-- **API 文档 (Swagger)**: `http://localhost:8001/docs`
-- **API 文档 (ReDoc)**: `http://localhost:8001/redoc`
+- **API 文档 (Swagger)**: `http://localhost:8000/docs`
+- **API 文档 (ReDoc)**: `http://localhost:8000/redoc`
 - **响应格式**:
 
 ```json

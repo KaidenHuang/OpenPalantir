@@ -97,7 +97,7 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 ```powershell
 cd backend
-python -m uvicorn main:app --reload --port 8001
+python -m uvicorn main:app --reload --port 8000
 ```
 
 **前端**（终端 2）：
@@ -133,8 +133,8 @@ npm run dev
 | 服务 | 地址 | 说明 |
 |------|------|------|
 | 前端应用 | `http://localhost:5175` | React UI |
-| 后端 API | `http://localhost:8001` | FastAPI 服务 |
-| API 文档 | `http://localhost:8001/docs` | Swagger UI |
+| 后端 API | `http://localhost:8000` | FastAPI 服务 |
+| API 文档 | `http://localhost:8000/docs` | Swagger UI |
 | Neo4j Browser | `http://localhost:7474` | 图数据库管理界面 |
 | Neo4j Bolt | `bolt://localhost:7687` | 应用连接用 |
 | Redis | `localhost:6379` | 任务队列 / 缓存 |
