@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 32 32">
+  <defs>
+    <path id="pleat" d="M26.865 24L16 28.24L5.135 24l-1.802 3.125L16 32l12.667-4.875z"/>
+    <path id="orb" d="M16 0C9.005 0 3.333 5.672 3.333 12.667S9.005 25.334 16 25.334s12.667-5.672 12.667-12.667S22.995 0 16 0"/>
+  </defs>
+
+  <!-- 水晶球 -->
+  <g transform="translate(16, 16) scale(0.72) translate(-16, -12.667)">
+    <use href="#orb" fill="#000000"/>
+  </g>
+
+  <!-- 5个折线 -->
+  <g transform="rotate(0, 16, 16) translate(16, 25.9) scale(0.42) translate(-16, -24)">
+    <use href="#pleat" fill="#000000"/>
+  </g>
+  <g transform="rotate(72, 16, 16) translate(16, 25.9) scale(0.42) translate(-16, -24)">
+    <use href="#pleat" fill="#000000"/>
+  </g>
+  <g transform="rotate(144, 16, 16) translate(16, 25.9) scale(0.42) translate(-16, -24)">
+    <use href="#pleat" fill="#000000"/>
+  </g>
+  <g transform="rotate(216, 16, 16) translate(16, 25.9) scale(0.42) translate(-16, -24)">
+    <use href="#pleat" fill="#000000"/>
+  </g>
+  <g transform="rotate(288, 16, 16) translate(16, 25.9) scale(0.42) translate(-16, -24)">
+    <use href="#pleat" fill="#000000"/>
+  </g>
+</svg>
