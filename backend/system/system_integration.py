@@ -121,7 +121,10 @@ class SystemIntegration:
         @self.app.exception_handler(HTTPException)
         async def http_exception_handler(request: Request, exc: HTTPException):
             """处理HTTP异常"""
-            logger.error(f"HTTP Exception: {exc.status_code} - {exc.detail}")
+            if exc.status_code < 500:
+                logger.warning(f"HTTP {exc.status_code}: {exc.detail} [{request.method} {request.url.path}]")
+            else:
+                logger.error(f"HTTP {exc.status_code}: {exc.detail} [{request.method} {request.url.path}]")
             return JSONResponse(
                 status_code=exc.status_code,
                 content={"detail": exc.detail}
