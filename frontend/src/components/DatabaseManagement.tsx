@@ -7,10 +7,6 @@ import { logger } from '../services/logger';
 import ERDiagram from './ERDiagram';
 
 const DB_STATUS = { EXTRACTED: 'extracted', DELETED: 'deleted' } as const;
-const TASK_STATUS_LABEL: Record<string, string> = {
-  completed: '完成',
-  failed: '失败',
-};
 
 interface DatabaseConnection {
   id: string;
@@ -94,7 +90,7 @@ function DatabaseManagement() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(null);
   const isAnalyzing = taskId !== null;
-  const [taskStatus, setTaskStatus] = useState<string>('');
+  const [_taskStatus, setTaskStatus] = useState<string>('');
   const [viewMode, setViewMode] = useState<'card' | 'er'>('card');
   const [sourceSearchText, setSourceSearchText] = useState('');
   const [showDeletedConnections, setShowDeletedConnections] = useState(false);

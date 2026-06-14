@@ -350,6 +350,12 @@ Prometheus 格式的监控指标。
 ### `POST /connections/{connection_id}/import`
 图谱导入（阶段2，创建异步任务）。
 
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `batch_size` | int | 否 | 批处理大小，默认 5000 |
+| `row_limit` | int | 否 | 单表行数上限，0=不限制（默认 1000） |
+| `auto_start_cdc` | bool | 否 | 导入完成后自动启动 CDC 增量同步，默认 false |
+
 ### `GET /connections/{connection_id}/tables`
 获取已分析的表列表。
 
@@ -487,7 +493,77 @@ Prometheus 格式的监控指标。
 
 ---
 
-## 10. 错误码
+## 10. CDC 增量同步接口 | CDC
+
+所有接口前缀：`/api/cdc`
+
+### `POST /{connection_id}/start`
+启动增量同步。启动前自动执行断流检测，若发现事件间隙则返回 `gap_detected` 状态并建议重新全量导入。
+
+**Request Body**:
+```json
+{
+  "database_name": "mydb",
+  "topic_prefix": "openpalantir"
+}
+```
+
+**Response** (正常启动):
+```json
+{
+  "status": "running",
+  "message": "CDC 增量同步已启动"
+}
+```
+
+**Response** (检测到断流):
+```json
+{
+  "status": "gap_detected",
+  "message": "Redis Stream 中存在事件间隙...",
+  "suggestion": "请先执行全量导入重建基线，再启动增量同步"
+}
+```
+
+### `POST /{connection_id}/stop`
+停止增量同步。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `database_name` | string | 是 | 数据库名（Query 参数） |
+
+### `POST /{connection_id}/pause`
+暂停增量同步（停止并标记状态为 `paused`）。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `database_name` | string | 是 | 数据库名（Query 参数） |
+
+### `GET /{connection_id}/status`
+查询单个连接的同步状态。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `database_name` | string | 是 | 数据库名（Query 参数） |
+
+**Response**:
+```json
+{
+  "connection_id": "uuid",
+  "database_name": "mydb",
+  "status": "running",
+  "events_processed": 1523,
+  "last_event_ts": 1717200000000,
+  "last_error": null
+}
+```
+
+### `GET /statuses`
+查询所有连接的 CDC 同步状态列表。
+
+---
+
+## 11. 错误码
 
 | HTTP 状态码 | 说明 |
 |------------|------|

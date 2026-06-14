@@ -173,9 +173,9 @@ class GraphManager:
             
             logger.info(f"[add_entity] 开始添加实体: {entity_name}, type={entity_type}")
 
-            # 生成实体ID
-            import uuid
-            entity_id = str(uuid.uuid4())
+            # 生成确定性实体ID：MD5(entity_name)
+            import hashlib
+            entity_id = hashlib.md5(entity_name.encode()).hexdigest()
 
             # 构建参数
             params = {
@@ -221,12 +221,14 @@ class GraphManager:
                 logger.info("[add_entities] 没有需要添加的实体")
                 return {"status": "success", "count": 0, "ids": []}
 
-            import uuid
+            import hashlib
             entity_ids = []
             entity_list = []
 
             for entity in filtered_entities:
-                entity_id = str(uuid.uuid4())
+                # 确定性 ID：MD5(entity_name)，保证同一实体在多次导入/增量同步中映射到同一节点
+                entity_name = entity.get("name", "")
+                entity_id = hashlib.md5(entity_name.encode()).hexdigest()
                 entity_ids.append(entity_id)
                 entity['id'] = entity_id
                 entity_list.append({
@@ -748,6 +750,42 @@ class GraphManager:
         except Exception as e:
             logger.error(f"更新实体失败: {e}")
             return False
+
+    def delete_entities_by_datasource(self, datasource_prefix: str) -> int:
+        """删除指定数据源前缀的所有实体及关联关系（用于全量重新导入前去重）
+
+        Args:
+            datasource_prefix: 数据源前缀，如 "DBS://{connection_id}/{db_name}"
+
+        Returns:
+            删除的实体数量
+        """
+        try:
+            # 先统计数量
+            count_query = """
+            MATCH (n:Entity)
+            WHERE n.datasource STARTS WITH $prefix
+            RETURN count(n) as cnt
+            """
+            count_result = neo4j_conn.execute_query(count_query, {"prefix": datasource_prefix})
+            deleted = count_result[0].get('cnt', 0) if count_result else 0
+
+            if deleted > 0:
+                # DETACH DELETE 同时删除节点及其所有关联关系
+                delete_query = """
+                MATCH (n:Entity)
+                WHERE n.datasource STARTS WITH $prefix
+                DETACH DELETE n
+                """
+                neo4j_conn.execute_query(delete_query, {"prefix": datasource_prefix})
+
+            self._maybe_clear_cache("graph:nodes:*")
+            self._maybe_clear_cache("graph:edges:*")
+            logger.info(f"[delete_entities_by_datasource] 清理数据源 '{datasource_prefix}'，删除实体 {deleted} 个")
+            return deleted
+        except Exception as e:
+            logger.error(f"[delete_entities_by_datasource] 删除失败: {e}")
+            raise
 
     def delete_entity(self, entity_id: str) -> bool:
         """删除实体及关联关系"""

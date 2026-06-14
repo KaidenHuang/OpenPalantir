@@ -39,4 +39,5 @@
 # Windows batch files require CRLF
 *.bat text eol=crlf
 *.cmd text eol=crlf
-dependencies/neo4j/local/neo4j-community-4.4.8-windows.zip filter=lfs diff=lfs merge=lfs -text
+# Large binary dependencies via Git LFS
+dependencies/**/*.tar.gz filter=lfs diff=lfs merge=lfs -text

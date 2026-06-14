@@ -14,6 +14,7 @@ interface Task {
   started_at: string | null;
   completed_at: string | null;
   error: string | null;
+  document_name?: string;
 }
 
 const TaskList: React.FC = () => {

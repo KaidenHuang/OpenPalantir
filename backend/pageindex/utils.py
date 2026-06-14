@@ -9,7 +9,6 @@ import logging
 import os
 import re
 import textwrap
-from datetime import datetime
 import time
 import json
 import PyPDF2
@@ -160,6 +159,11 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False,
                 if return_finish_reason:
                     return "", "error"
                 return ""
+
+    logging.error(f"LLM 调用在 {max_retries} 次重试后仍无有效响应")
+    if return_finish_reason:
+        return "", "error"
+    return ""
 
 
 async def llm_acompletion(model, prompt, api_key=None, api_base=None):
@@ -363,39 +367,6 @@ def get_pdf_name(pdf_path):
         pdf_name = meta.title if meta and meta.title else 'Untitled'
         pdf_name = sanitize_filename(pdf_name)
     return pdf_name
-
-
-class JsonLogger:
-    def __init__(self, file_path):
-        pdf_name = get_pdf_name(file_path)
-        current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.filename = f"{pdf_name}_{current_time}.json"
-        os.makedirs("./logs", exist_ok=True)
-        self.log_data = []
-
-    def log(self, level, message, **kwargs):
-        if isinstance(message, dict):
-            self.log_data.append(message)
-        else:
-            self.log_data.append({'message': message})
-        with open(self._filepath(), "w") as f:
-            json.dump(self.log_data, f, indent=2)
-
-    def info(self, message, **kwargs):
-        self.log("INFO", message, **kwargs)
-
-    def error(self, message, **kwargs):
-        self.log("ERROR", message, **kwargs)
-
-    def debug(self, message, **kwargs):
-        self.log("DEBUG", message, **kwargs)
-
-    def exception(self, message, **kwargs):
-        kwargs["exception"] = True
-        self.log("ERROR", message, **kwargs)
-
-    def _filepath(self):
-        return os.path.join("logs", self.filename)
 
 
 def list_to_tree(data):

@@ -20,6 +20,7 @@ OpenPalantir 是一个基于 AI 的数据分析与知识图谱构建系统。支
 - **多源数据接入** — 支持 PDF、Word、Markdown、图片（OCR）、MySQL、PostgreSQL、SQLite 等
 - **智能实体提取** — 基于 LLM 的实体识别与关系抽取，支持自定义实体类型
 - **知识图谱构建** — Neo4j 图数据库存储，支持大规模图谱的批量优化与分区管理
+- **CDC 增量同步** — 基于 Debezium 捕获数据库变更（binlog/WAL），全量导入后实时增量同步到图谱
 - **图谱分析引擎** — 路径分析、社区发现、中心性计算、趋势分析
 - **智能决策助手** — 插件化架构，结合图谱与数据库的问答型决策支持
 - **异步任务管理** — 全流程异步任务队列，实时状态追踪
@@ -33,6 +34,7 @@ OpenPalantir 是一个基于 AI 的数据分析与知识图谱构建系统。支
 | 后端 | FastAPI + Python 3.10+ |
 | 图数据库 | Neo4j 4.4+ |
 | 任务队列 | Celery + Redis |
+| CDC 增量同步 | Debezium Server 3.5.2 + Redis Streams |
 | 元数据库 | SQLite |
 | 图谱分析 | NetworkX + scikit-learn |
 | LLM 集成 | Ollama / OpenAI / DeepSeek / SiliconFlow |
@@ -48,12 +50,17 @@ OpenPalantir 是一个基于 AI 的数据分析与知识图谱构建系统。支
 ┌─ 后端 (FastAPI + Python) ───────────────────────────────┐
 │  api/routes/ → 各模块 router                             │
 │  task_manager → 异步任务队列（状态追踪）                    │
+│  cdc/ → Debezium 增量同步（CDC 消费 + 事件处理）            │
 │  各 manager/service 层处理业务逻辑                         │
 └────────────────────────────────────────────────────────┘
          ↕
 ┌─ 存储层 ────────────────────────────────────────────────┐
 │  SQLite (应用元数据) | Neo4j (图关系)                      │
-│  文件系统 (data/summaries/)                │
+│  Redis Streams (CDC 事件流) | 文件系统 (data/summaries/)   │
+└────────────────────────────────────────────────────────┘
+         ↕
+┌─ 外部服务 ──────────────────────────────────────────────┐
+│  Debezium Server (Quarkus) → 源DB binlog/WAL → Redis     │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -100,6 +107,7 @@ OpenPalantir/
 ├── backend/                # FastAPI 后端
 │   ├── api/routes/         # REST API 端点
 │   ├── analysis_engine/    # 图谱分析引擎
+│   ├── cdc/                # Debezium 增量同步 (CDC)
 │   ├── config/             # 数据库 & Neo4j 配置
 │   ├── database_management/# 外部数据库连接管理
 │   ├── decision_engine/    # 智能决策引擎

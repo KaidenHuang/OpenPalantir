@@ -582,7 +582,10 @@ def process_no_toc(page_list, start_index=1, model=None):
     toc_with_page_number= generate_toc_init(group_texts[0], model)
     for group_text in group_texts[1:]:
         toc_with_page_number_additional = generate_toc_continue(toc_with_page_number, group_text, model)
-        toc_with_page_number.extend(toc_with_page_number_additional)
+        if toc_with_page_number_additional:
+            toc_with_page_number.extend(toc_with_page_number_additional)
+        else:
+            logger.warning(f"generate_toc_continue 返回空结果，跳过当前分组")
     logger.info(f'generate_toc: {toc_with_page_number}')
 
     toc_with_page_number = convert_physical_index_to_int(toc_with_page_number)
@@ -1065,8 +1068,6 @@ async def page_index_builder(doc, page_list, opt):
 
 def page_index_main(doc, opt=None):
     """PageIndex 主入口（同步，内部使用 asyncio.run）。"""
-    logger = JsonLogger(doc)
-
     is_valid_pdf = (
         (isinstance(doc, str) and os.path.isfile(doc) and doc.lower().endswith(".pdf")) or
         isinstance(doc, BytesIO)
@@ -1077,18 +1078,13 @@ def page_index_main(doc, opt=None):
     print('Parsing PDF...')
     page_list = get_page_tokens(doc, model=opt.model)
 
-    logger.info({'total_page_number': len(page_list)})
-    logger.info({'total_token': sum([page[1] for page in page_list])})
+    logger.info(f"PDF解析完成，总页数: {len(page_list)}，总token数: {sum([page[1] for page in page_list])}")
 
     return asyncio.run(page_index_builder(doc, page_list, opt))
 
 
 async def page_index_main_async(doc, opt=None):
     """PageIndex 主入口（异步，用于 async/await 上下文）。"""
-    from .utils import JsonLogger
-
-    logger = JsonLogger(doc)
-
     is_valid_pdf = (
         (isinstance(doc, str) and os.path.isfile(doc) and doc.lower().endswith(".pdf")) or
         isinstance(doc, BytesIO)
@@ -1099,8 +1095,7 @@ async def page_index_main_async(doc, opt=None):
     print('Parsing PDF...')
     page_list = get_page_tokens(doc, model=opt.model)
 
-    logger.info({'total_page_number': len(page_list)})
-    logger.info({'total_token': sum([page[1] for page in page_list])})
+    logger.info(f"PDF解析完成，总页数: {len(page_list)}，总token数: {sum([page[1] for page in page_list])}")
 
     return await page_index_builder(doc, page_list, opt)
 

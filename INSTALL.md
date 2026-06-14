@@ -12,7 +12,7 @@
 | Node.js | 18+ | 前端构建与运行 |
 | Git | 任意 | 克隆仓库 |
 
-此外系统依赖 Neo4j 4.4.8 和 Redis 6+，由安装脚本自动处理。
+此外系统依赖 Neo4j 5.26.27、Redis 6+ 和 Debezium Server 3.5.2（可选，用于 CDC 增量同步），由安装脚本自动处理。
 
 ## 快速安装
 
@@ -36,10 +36,16 @@ cd OpenPalantir
 dependencies/
 ├── neo4j/
 │   └── local/
-│       └── neo4j-community-4.4.8-windows.zip     # 从 https://neo4j.com/download/ 下载
-└── redis/
+│       └── neo4j-community-5.26.27-windows.zip     # 从 https://neo4j.com/download/ 下载
+├── redis/
+│   └── local/
+│       └── Redis-x64-<version>.zip               # 从 https://github.com/tporadowski/redis/releases 下载
+└── debezium/
     └── local/
-        └── Redis-x64-<version>.zip               # 从 https://github.com/tporadowski/redis/releases 下载
+        ├── debezium-server-dist-3.5.2.Final.tar.gz           # 首次安装自动从 Maven 中央仓库下载(server + 4 个 connector 插件,无需手动放置)
+        ├── debezium-connector-mysql-3.5.2.Final-plugin.tar.gz
+        ├── debezium-connector-postgres-3.5.2.Final-plugin.tar.gz
+        └── (可选) oracle/sqlserver 连接器插件
 ```
 
 创建目录并放入 zip 文件后即可继续。
@@ -57,8 +63,9 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 1. 创建 `dependencies/` 和 `logs/` 目录
 2. 安装 Redis（解压 → 注册 Windows 服务 → 启动）
 3. 安装 Neo4j（解压 → 配置 → 注册 Windows 服务 → 设置初始密码 → 启动）
-4. 安装前端依赖（`npm install` → `npm run build`）
-5. 安装后端依赖（`pip install -r requirements.txt` → 生成 `.env`）
+4. 安装 Debezium Server（解压 → 生成连接器配置 → 启动）
+5. 安装前端依赖（`npm install` → `npm run build`）
+6. 安装后端依赖（`pip install -r requirements.txt` → 生成 `.env`）
 
 安装完成后输出摘要，列出各组件的安装结果。
 
@@ -70,20 +77,21 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 |------|------|
 | `scripts/install/install-redis.ps1` | 安装并启动 Redis |
 | `scripts/install/install-neo4j.ps1` | 安装、配置并启动 Neo4j |
+| `scripts/install/install-debezium.ps1` | 解压 Debezium Server + 连接器插件，生成配置并启动 |
 | `scripts/install/install-frontend.ps1` | 安装前端 npm 依赖并构建 |
 | `scripts/install/install-backend.ps1` | 安装后端 pip 依赖并生成 `.env` |
 
-> 每个脚本均需在项目根目录下运行。安装顺序建议：Redis → Neo4j → Frontend → Backend。
+> 每个脚本均需在项目根目录下运行。安装顺序建议：Redis → Neo4j → Debezium → Frontend → Backend。
 
 ## 服务启停
 
-### 启动基础服务（Neo4j + Redis）
+### 启动基础服务（Neo4j + Redis + Debezium）
 
 ```powershell
 .\scripts\service\start-services.ps1
 ```
 
-### 停止基础服务（Neo4j + Redis）
+### 停止基础服务（Neo4j + Redis + Debezium）
 
 ```powershell
 .\scripts\service\stop-services.ps1
@@ -117,7 +125,7 @@ npm run dev
 .\scripts\uninstall\uninstall-all.ps1
 ```
 
-该脚本依次：停止 Redis 服务并移除 → 停止 Neo4j 服务并移除 → 停止前后端进程 → 清理 `logs/` 目录。
+该脚本依次：停止 Redis 服务并移除 → 停止 Neo4j 服务并移除 → 停止 Debezium 进程并清理 → 停止前后端进程 → 清理 `logs/` 目录。
 
 ### 分步卸载
 
@@ -125,6 +133,7 @@ npm run dev
 |------|------|
 | `scripts/uninstall/uninstall-redis.ps1` | 停止并卸载 Redis |
 | `scripts/uninstall/uninstall-neo4j.ps1` | 停止并卸载 Neo4j |
+| `scripts/uninstall/uninstall-debezium.ps1` | 停止 Debezium Java 进程，清理解压和数据目录 |
 | `scripts/uninstall/uninstall-frontend.ps1` | 停止前端相关进程 |
 | `scripts/uninstall/uninstall-backend.ps1` | 停止后端 Python 进程，移除 `.env` |
 
@@ -137,7 +146,8 @@ npm run dev
 | API 文档 | `http://localhost:8000/docs` | Swagger UI |
 | Neo4j Browser | `http://localhost:7474` | 图数据库管理界面 |
 | Neo4j Bolt | `bolt://localhost:7687` | 应用连接用 |
-| Redis | `localhost:6379` | 任务队列 / 缓存 |
+| Redis | `localhost:6379` | 任务队列 / 缓存 / CDC 事件流 |
+| Debezium Server | — | CDC 变更数据捕获（独立 Java 进程，通过 Redis 通信） |
 
 **Neo4j 默认凭据：**
 
@@ -149,8 +159,8 @@ npm run dev
 安装脚本会自动设置初始密码。如需修改，可在 Neo4j Browser 中操作，或运行：
 
 ```powershell
-cd dependencies\neo4j\extracted\neo4j-community-4.4.8\bin
-.\neo4j-admin.bat set-initial-password <新密码>
+cd dependencies\neo4j\extracted\neo4j-community-5.26.27\bin
+.\neo4j-admin.bat dbms set-initial-password <新密码>
 ```
 
 ## 配置文件
@@ -225,4 +235,4 @@ Get-Service | Where-Object {$_.Name -like "*redis*"}
 
 ### 依赖包目录不存在
 
-`dependencies/neo4j/local/` 和 `dependencies/redis/local/` 需自行创建并放入对应的 zip 包。未放入时安装脚本会跳过对应组件。
+`dependencies/neo4j/local/`、`dependencies/redis/local/` 需自行创建并放入对应的发行包，未放入时安装脚本会跳过对应组件。`dependencies/debezium/local/` 由 `install-debezium.ps1` 首次运行时自动从 Maven 中央仓库下载，无需预置。

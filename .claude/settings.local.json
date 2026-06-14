@@ -31,7 +31,14 @@
       "Bash(tasklist)",
       "Bash(python *)",
       "Bash(read d *)",
-      "Bash(gawk)"
+      "Bash(gawk)",
+      "Bash(dir *)",
+      "Bash(tar --version)",
+      "Bash(tar *)",
+      "Bash(java *)",
+      "Bash(git lfs *)",
+      "Bash(git add *)",
+      "Bash(git config *)"
     ],
     "deny": [
       "Bash(rm -rf *)",

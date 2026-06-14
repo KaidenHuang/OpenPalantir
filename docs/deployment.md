@@ -38,7 +38,8 @@ docker-compose logs -f backend
 | backend | 8000 | REST API |
 | Neo4j Browser | 7474 | 图数据库管理界面 |
 | Neo4j Bolt | 7687 | 图数据库连接协议 |
-| Redis | 6379 | 缓存和消息队列 |
+| Redis | 6379 | 缓存、消息队列、CDC 事件流 |
+| Debezium Server | — | CDC 变更数据捕获（独立 Java 进程，通过 Redis 通信） |
 
 ### 1.4 常用命令
 
@@ -97,6 +98,42 @@ docker run -d --name neo4j \
 ```bash
 docker run -d --name redis -p 6379:6379 redis:7-alpine
 ```
+
+#### 安装 Debezium Server（CDC 增量同步，可选）
+
+Debezium Server 用于捕获源数据库的 binlog/WAL 变更，写入 Redis Streams，实现全量导入后的增量同步。
+
+**PowerShell 一键安装**（Windows）：
+```powershell
+# 全量安装（包含 Neo4j + Redis + Debezium）
+scripts/install/install-all.ps1
+
+# 或单独安装 Debezium
+scripts/install/install-debezium.ps1
+```
+
+**手动安装**：
+1. 解压 `dependencies/debezium/local/debezium-server-dist-3.5.2.Final.tar.gz`
+2. 按需解压连接器插件（`debezium-connector-mysql-*.tar.gz`、`debezium-connector-postgres-*.tar.gz` 等）
+3. 配置 `conf/application.properties`：
+   ```properties
+   debezium.sink.type=redis
+   debezium.sink.redis.address=127.0.0.1:6379
+   debezium.sink.redis.stream-type=stream
+   debezium.source.connector.class=io.debezium.connector.mysql.MySqlConnector
+   debezium.source.snapshot.mode=never
+   debezium.source.topic.prefix=openpalantir
+   ```
+4. 启动：`bin/run.bat`（Windows）或 `bin/run.sh`（Linux/Mac）
+
+**服务管理**：
+```powershell
+scripts/service/start-services.ps1   # 启动 Neo4j + Redis + Debezium
+scripts/service/stop-services.ps1    # 停止所有服务
+scripts/uninstall/uninstall-debezium.ps1  # 卸载 Debezium
+```
+
+**支持的连接器**：MySQL、PostgreSQL、Oracle、SQL Server（均为 v3.5.2.Final）。
 
 ### 2.2 配置后端
 
@@ -240,7 +277,7 @@ cp backend/data/sqlite/database.db backup/sqlite_$(date +%Y%m%d).db
 | `NEO4J_URI` | 是 | `bolt://localhost:7687` | Neo4j Bolt 连接地址 |
 | `NEO4J_USER` | 是 | `neo4j` | Neo4j 用户名 |
 | `NEO4J_PASSWORD` | 是 | - | Neo4j 密码 |
-| `REDIS_HOST` | 是 | `localhost` | Redis 地址 |
+| `REDIS_HOST` | 是 | `localhost` | Redis 地址（缓存 + Celery + CDC 事件流） |
 | `REDIS_PORT` | 否 | `6379` | Redis 端口 |
 | `REDIS_DB` | 否 | `0` | Redis 数据库编号 |
 | `CELERY_BROKER_URL` | 否 | `redis://localhost:6379/0` | Celery 消息队列 |

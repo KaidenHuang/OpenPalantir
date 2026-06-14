@@ -42,9 +42,11 @@ logs/
 # ===== Neo4j =====
 dependencies/neo4j/extracted/
 dependencies/redis/extracted/
+dependencies/debezium/extracted/
+dependencies/debezium/local/
+dependencies/neo4j/local/neo4j-5.26.27-1.noarch.rpm
 
-# ===== Temp & Test Data =====
-backend/temp/
+# ===== Test Data =====
 tests/*-test-results.json
 tests/test-report.json
 

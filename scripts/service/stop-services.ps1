@@ -15,53 +15,42 @@ $ErrorActionPreference = "Stop"
 
 # Define variables
 $currentDir = Get-Location
-$dependenciesDir = "$currentDir\dependencies"
+$projectRoot = (Get-Item $PSScriptRoot).Parent.Parent.FullName
+$dependenciesDir = "$projectRoot\dependencies"
 
+# Neo4j 5.x: use Windows service management, neo4j.bat only supports install/uninstall
 Write-Host "=== Stopping OpenPalantir Services ===" -ForegroundColor Green
-
-# Function to stop a service
-function Stop-ServiceIfExists {
-    param(
-        [string]$serviceName,
-        [string]$searchPath,
-        [string]$executableName,
-        [string]$command,
-        [string[]]$arguments
-    )
-    
-    try {
-        $executable = Get-ChildItem -Path $searchPath -Recurse -Name $executableName -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($executable) {
-            $executablePath = Join-Path $searchPath $executable
-            $executableDir = Split-Path $executablePath -Parent
-            
-            Write-Host "  Stopping $serviceName service..."
-            Write-Host "  Executable path: $executablePath"
-            Write-Host "  Executable directory: $executableDir"
-            
-            if (Test-Path $executablePath) {
-                Write-Host "  Executable found at: $executablePath"
-                Set-Location $executableDir
-                try {
-                    Write-Host "  Running command: $command $($arguments -join ' ' )"
-                    & $command $arguments
-                } finally {
-                    Set-Location $currentDir
-                }
-            } else {
-                Write-Host "  Executable not found at: $executablePath" -ForegroundColor Red
-            }
-        } else {
-            Write-Host "  $serviceName executable not found, skipping..." -ForegroundColor Yellow
-        }
-    } catch {
-        Write-Host "  Failed to stop $serviceName service: $($_.Exception.Message)" -ForegroundColor Red
-        Set-Location $currentDir
+try {
+    $svc = Get-Service -Name "Neo4j" -ErrorAction SilentlyContinue
+    if (-not $svc) {
+        $svc = Get-Service | Where-Object { $_.DisplayName -eq 'Neo4j' }
     }
+    if ($svc) {
+        Write-Host "  Stopping Neo4j service ($($svc.Name))..."
+        if ($svc.Status -eq 'Running') {
+            # Service control requires admin privileges, use silent elevation
+            $tempBat = [System.IO.Path]::GetTempFileName() + ".bat"
+            Set-Content -Path $tempBat -Value "@echo off`r`nnet stop `"$($svc.Name)`""
+            $tempVbs = [System.IO.Path]::GetTempFileName() + ".vbs"
+            Set-Content -Path $tempVbs -Value "CreateObject(""WScript.Shell"").Run ""$tempBat"", 0, True"
+            try {
+                Start-Process -FilePath "wscript.exe" -ArgumentList "`"$tempVbs`"" -Verb RunAs -Wait
+            } finally {
+                Remove-Item $tempBat -Force -ErrorAction SilentlyContinue
+                Remove-Item $tempVbs -Force -ErrorAction SilentlyContinue
+            }
+            Start-Sleep -Seconds 2
+            $svc.Refresh()
+            Write-Host "  Neo4j service stopped" -ForegroundColor Green
+        } else {
+            Write-Host "  Neo4j service not running (status: $($svc.Status))"
+        }
+    } else {
+        Write-Host "  Neo4j service not found, skipping..." -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "  Failed to stop Neo4j service: $($_.Exception.Message)" -ForegroundColor Red
 }
-
-# Stop Neo4j
-Stop-ServiceIfExists -serviceName "Neo4j" -searchPath "$dependenciesDir\neo4j" -executableName "neo4j.bat" -command ".\neo4j.bat" -arguments @("stop")
 
 # Stop Redis
 try {
@@ -75,6 +64,22 @@ try {
     }
 } catch {
     Write-Host "  Failed to stop Redis service, skipping..." -ForegroundColor Yellow
+}
+
+# Stop Debezium Server (CDC)
+try {
+    $debeziumProcesses = Get-Process -Name "java" -ErrorAction SilentlyContinue | Where-Object {
+        $_.CommandLine -match "debezium-server" -or $_.CommandLine -match "io\.debezium\.server"
+    }
+    if ($debeziumProcesses) {
+        Write-Host "  Stopping Debezium Server..."
+        $debeziumProcesses | Stop-Process -Force
+        Write-Host "  Debezium Server stopped"
+    } else {
+        Write-Host "  Debezium Server not running, skipping..." -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "  Failed to stop Debezium Server, skipping..." -ForegroundColor Yellow
 }
 
 Write-Host "=== Services Stop Complete ===" -ForegroundColor Green

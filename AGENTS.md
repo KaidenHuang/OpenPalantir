@@ -16,12 +16,13 @@
   - `decision_engine/` -- 对话式决策推理内核
   - `database_management/` -- 数据库 Schema 标注与管理
   - `model_management/` -- LLM 模型客户端集成
+  - `cdc/` -- Debezium 增量同步（CDC 消费 + 事件处理 + Schema 缓存）
   - `task_management/` -- 异步任务队列与状态跟踪
   - `models/` -- SQLAlchemy ORM 模型与资源标识符
   - `utils/` -- 通用工具函数
 - **`frontend/`** -- React + TypeScript + Vite 单页应用
 - **`tests/`** -- 测试套件（pytest）
-- **`scripts/`** -- 服务管理脚本（启动/停止 Neo4j、Redis）
+- **`scripts/`** -- 服务管理脚本（启动/停止 Neo4j、Redis、Debezium）
 - **`data/`** -- 运行时数据（SQLite 数据库、摘要、上传文件）
 - **`docs/`** -- 项目文档
 
@@ -39,8 +40,8 @@ npm run build    # TypeScript 检查 + Vite 生产构建
 npm run lint     # 对 .ts/.tsx 文件运行 ESLint
 
 # 服务（PowerShell）
-scripts/service/start-services.ps1   # 启动 Neo4j + Redis
-scripts/service/stop-services.ps1    # 停止 Neo4j + Redis
+scripts/service/start-services.ps1   # 启动 Neo4j + Redis + Debezium
+scripts/service/stop-services.ps1    # 停止 Neo4j + Redis + Debezium
 
 # 测试（后端必须在 localhost:8000 运行）
 cd tests && pytest

@@ -284,16 +284,17 @@ def get_database_summary(connection_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{connection_id}/import", response_model=Dict)
-def import_to_graph(connection_id: str, batch_size: int = 5000, row_limit: int = 0, neo4j_batch_size: int = 20000, use_merge: bool = False):
+def import_to_graph(connection_id: str, batch_size: int = 5000, row_limit: int = 0, neo4j_batch_size: int = 20000, use_merge: bool = False, auto_start_cdc: bool = False):
     """
     将分析结果导入知识图谱（阶段2）
     - batch_size: 每批从源数据库读取的行数（默认 5000）
     - row_limit: 每表最大导入行数（默认 0=不限制），用于测试
     - neo4j_batch_size: 每批写入 Neo4j 的实体数（默认 20000），增加以减少往返次数
     - use_merge: 关系写入是否使用 MERGE（默认 False=使用 CREATE，更快；True=使用 MERGE，幂等安全）
+    - auto_start_cdc: 导入完成后是否自动启动 CDC 增量同步（默认 False）
     """
     try:
-        payload = {"connection_id": connection_id, "batch_size": batch_size, "row_limit": row_limit, "neo4j_batch_size": neo4j_batch_size, "use_merge": use_merge}
+        payload = {"connection_id": connection_id, "batch_size": batch_size, "row_limit": row_limit, "neo4j_batch_size": neo4j_batch_size, "use_merge": use_merge, "auto_start_cdc": auto_start_cdc}
         task_id = task_manager.create_task("database_schema_import", payload)
         return {"task_id": task_id, "message": "导入任务已创建"}
     except Exception as e:

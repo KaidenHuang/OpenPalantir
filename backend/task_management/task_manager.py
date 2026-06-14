@@ -848,6 +848,7 @@ class TaskManager:
             row_limit = task.payload.get("row_limit", 0)
             neo4j_batch_size = task.payload.get("neo4j_batch_size", 20000)  # Neo4j 写入批大小
             use_merge = task.payload.get("use_merge", False)  # 默认使用 CREATE（更快）
+            auto_start_cdc = task.payload.get("auto_start_cdc", False)
 
             logger.info(f"开始执行数据库行级导入任务，连接ID: {connection_id}, "
                         f"源批量大小: {batch_size}, Neo4j写入批大小: {neo4j_batch_size}, use_merge={use_merge}")
@@ -934,6 +935,15 @@ class TaskManager:
                 [t["table_name"] for t in schema["tables"]]
             )
 
+            # 记录 binlog/WAL 位点（全量导入前，供 CDC 衔接使用）
+            binlog_info = dialect.capture_binlog_position(conn)
+            if binlog_info:
+                logger.info(f"已捕获 binlog 位点: {binlog_info}")
+                logger.warning(
+                    f"[CDC] binlog 位点已记录，但仅在导入成功完成后保存检查点。"
+                    f"若导入中途失败，需重新执行全量导入才能启用 CDC 增量同步。"
+                )
+
             from knowledge_graph.graph_manager import graph_manager
 
             # 确保 Neo4j 索引已创建（Entity.name 索引对关系写入性能至关重要）
@@ -947,6 +957,11 @@ class TaskManager:
             db_prefix = f"DBS://{connection_id}"
             if database_name_for_uri:
                 db_prefix += f"/{database_name_for_uri}"
+
+            # 全量导入前清理该数据源的旧实体（DELETE + CREATE 策略：清理后用 CREATE 保证性能）
+            deleted_count = graph_manager.delete_entities_by_datasource(db_prefix)
+            if deleted_count > 0:
+                logger.info(f"全量导入前清理旧数据: 删除 {deleted_count} 个实体（datasource={db_prefix}）")
 
             # 分批导入期间延迟缓存清除
             graph_manager.set_defer_cache(True)
@@ -1111,6 +1126,16 @@ class TaskManager:
                 "batch_size": batch_size
             }
             logger.info(f"[_execute_database_schema_import] 任务完成: {task.result}")
+
+            # 保存 binlog 位点，供 CDC 增量同步衔接
+            if binlog_info and database_name_for_uri:
+                from cdc.cdc_manager import cdc_manager
+                cdc_manager.save_binlog_checkpoint(connection_id, database_name_for_uri, binlog_info)
+
+                # 可选：导入完成后自动启动增量同步
+                if auto_start_cdc:
+                    logger.info(f"全量导入完成，自动启动 CDC 增量同步: conn={connection_id}, db={database_name_for_uri}")
+                    cdc_manager.start(connection_id, database_name_for_uri)
 
         except Exception as e:
             logger.error(f"执行数据库行级导入任务时出错: {e}")

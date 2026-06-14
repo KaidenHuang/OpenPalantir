@@ -10,7 +10,17 @@ from system.logger import logger
 
 class DatabaseDialect:
     """数据库方言抽象基类（数据库级别批量操作）"""
-    
+
+    def capture_binlog_position(self, connection) -> Optional[Dict]:
+        """捕获当前 binlog/WAL 位点（供 CDC 衔接使用）
+
+        Returns:
+            MySQL: {"file": "mysql-bin.000003", "position": 154}
+            PostgreSQL: {"wal_lsn": "0/16B3748"}
+            不支持的数据库: None
+        """
+        return None
+
     def extract_full_schema(self, connection) -> Dict:
         """
         批量提取数据库完整Schema信息（以数据库为单位）
@@ -124,7 +134,23 @@ class DatabaseDialect:
 
 class MySQLDialect(DatabaseDialect):
     """MySQL方言"""
-    
+
+    def capture_binlog_position(self, connection) -> Optional[Dict]:
+        """获取 MySQL binlog 当前位点"""
+        try:
+            result = connection.execute(text("SHOW MASTER STATUS"))
+            row = result.fetchone()
+            if row:
+                columns = list(result.keys())
+                data = dict(zip(columns, row))
+                return {
+                    "file": data.get("File", ""),
+                    "position": data.get("Position", 0),
+                }
+        except Exception as e:
+            logger.warning(f"获取 MySQL binlog 位点失败: {e}")
+        return None
+
     def extract_full_schema(self, connection) -> Dict:
         """批量提取MySQL数据库完整Schema"""
         result = {"tables": [], "columns": [], "foreign_keys": []}
@@ -172,7 +198,18 @@ class MySQLDialect(DatabaseDialect):
 
 class PostgreSQLDialect(DatabaseDialect):
     """PostgreSQL方言"""
-    
+
+    def capture_binlog_position(self, connection) -> Optional[Dict]:
+        """获取 PostgreSQL WAL 当前 LSN"""
+        try:
+            result = connection.execute(text("SELECT pg_current_wal_lsn()"))
+            lsn = result.scalar()
+            if lsn:
+                return {"wal_lsn": str(lsn)}
+        except Exception as e:
+            logger.warning(f"获取 PostgreSQL WAL LSN 失败: {e}")
+        return None
+
     def extract_full_schema(self, connection) -> Dict:
         """批量提取PostgreSQL数据库完整Schema"""
         result = {"tables": [], "columns": [], "foreign_keys": []}

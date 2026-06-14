@@ -11,7 +11,7 @@ from system.logger import logger
 from config.database import Base, engine
 
 # 导入所有模型
-from models import model, task, database, source
+from models import model, task, database, source, cdc
 
 # 创建数据库表
 Base.metadata.create_all(bind=engine)
@@ -43,7 +43,7 @@ async def root():
     return {"message": "分析决策系统API服务运行中"}
 
 # 导入路由
-from api.routes import graph, analysis, model, database, decision, filesystem, source
+from api.routes import graph, analysis, model, database, decision, filesystem, source, cdc as cdc_routes
 from api import task
 
 app.include_router(graph.router, prefix="/api/graph", tags=["graph"])
@@ -54,6 +54,14 @@ app.include_router(database.router, tags=["database"])
 app.include_router(decision.router, prefix="/api/decision", tags=["decision"])
 app.include_router(filesystem.router, prefix="/api/filesystem", tags=["filesystem"])
 app.include_router(source.router, prefix="/api", tags=["source"])
+app.include_router(cdc_routes.router, tags=["cdc"])
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """应用关闭时优雅停止所有 CDC Consumer"""
+    from cdc.cdc_manager import cdc_manager
+    cdc_manager.shutdown_all()
 
 if __name__ == "__main__":
     import uvicorn

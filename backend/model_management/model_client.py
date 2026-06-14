@@ -451,9 +451,9 @@ class ModelClient:
                         logger.info(f"本地模型响应成功，响应长度: {len(response_text)}")
                         return response_text
                     else:
-                        logger.warning(f"响应内容为空，输入prompt长度: {len(prompt)}，末尾内容: {prompt[-2000:]}")
-                        logger.warning(f"跳过重试（模型已正常处理，判定无实体可提取）")
-                        return ""
+                        logger.warning(f"本地模型响应内容为空，输入prompt长度: {len(prompt)}，尝试 {attempt + 1}/{self.config.max_retries}")
+                        last_error = "响应内容为空"
+                        continue
                 else:
                     error_msg = f"API调用失败，状态码: {response.status_code}, 响应: {response.text}"
                     logger.warning(f"第 {attempt + 1} 次尝试：{error_msg}")
@@ -553,9 +553,9 @@ class ModelClient:
                         logger.info(f"云端模型响应成功，响应长度: {len(response_content)}")
                         return response_content
                     else:
-                        logger.warning(f"响应内容为空，输入prompt长度: {len(prompt)}，末尾内容: {prompt[-2000:]}")
-                        logger.warning(f"跳过重试（模型已正常处理，判定无实体可提取）")
-                        return ""
+                        logger.warning(f"云端模型响应内容为空，输入prompt长度: {len(prompt)}，尝试 {attempt + 1}/{self.config.max_retries}")
+                        last_error = "响应内容为空"
+                        continue
                 else:
                     error_msg = f"API调用失败，状态码: {response.status_code}, 响应: {response.text}"
                     logger.warning(f"第 {attempt + 1} 次尝试：{error_msg}")

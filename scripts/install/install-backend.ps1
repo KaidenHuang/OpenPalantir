@@ -7,7 +7,8 @@ This script installs back-end dependencies and optionally starts the back-end se
 #>
 # Define parameters
 param(
-    [switch]$StartService = $false
+    [switch]$StartService = $false,
+    [string]$LogFilePath
 )
 
 # Set error handling
@@ -17,50 +18,54 @@ $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
+# Load logging helpers
+. "$PSScriptRoot\..\install-uninstall-helpers.ps1"
+
 # Define variables
 $currentDir = Get-Location
-$dependenciesDir = "$currentDir\dependencies"
-$backendDir = "$currentDir\backend"
+$projectRoot = (Get-Item $PSScriptRoot).Parent.Parent.FullName
+$dependenciesDir = "$projectRoot\dependencies"
+$backendDir = "$projectRoot\backend"
 $envFile = "$backendDir\.env"
 
-Write-Host "=== Installing Back-end Dependencies ===" -ForegroundColor Green
+Initialize-LogFile -Action "install-backend" -LogFilePath $LogFilePath
 
 if (Test-Path $backendDir) {
     Set-Location $backendDir
     $localBackendDir = "$dependenciesDir\backend\local"
     if (Test-Path $localBackendDir) {
-        Write-Host "  Found local back-end dependencies, using offline installation..."
         if (Test-Path "$localBackendDir\requirements.txt") {
-            Write-Host "  Installing back-end dependencies from local package..."
-            $process = Start-Process -FilePath "pip" -ArgumentList "install", "--no-index", "--find-links=$localBackendDir", "-r", "requirements.txt" -Wait -NoNewWindow -PassThru -RedirectStandardOutput "pip_output.txt" -RedirectStandardError "pip_error.txt"
+            Write-Log "Using offline installation from local packages"
+            $exitCode = Invoke-LoggedProcess -FilePath "pip" -ArgumentList @("install", "--no-index", "--find-links=$localBackendDir", "-r", "requirements.txt") -WorkingDirectory $backendDir
         } else {
-            Write-Host "  Local back-end dependencies not found, trying online installation..." -ForegroundColor Yellow
-            Write-Host "  Running pip install withmirror source..."
-            $process = Start-Process -FilePath "pip" -ArgumentList "install", "-i", "https://pypi.tuna.tsinghua.edu.cn/simple", "-r", "requirements.txt" -Wait -NoNewWindow -PassThru -RedirectStandardOutput "pip_output.txt" -RedirectStandardError "pip_error.txt"
+            Write-Log "Local requirements.txt not found, using online installation"
+            $exitCode = Invoke-LoggedProcess -FilePath "pip" -ArgumentList @("install", "-i", "https://pypi.tuna.tsinghua.edu.cn/simple", "-r", "requirements.txt") -WorkingDirectory $backendDir
         }
     } else {
-        Write-Host "  Running pip install withmirror source..."
-        $process = Start-Process -FilePath "pip" -ArgumentList "install", "-i", "https://pypi.tuna.tsinghua.edu.cn/simple", "-r", "requirements.txt" -Wait -NoNewWindow -PassThru -RedirectStandardOutput "pip_output.txt" -RedirectStandardError "pip_error.txt"
+        Write-Log "No local packages found, using online installation"
+        $exitCode = Invoke-LoggedProcess -FilePath "pip" -ArgumentList @("install", "-i", "https://pypi.tuna.tsinghua.edu.cn/simple", "-r", "requirements.txt") -WorkingDirectory $backendDir
     }
-    
-    # Display output
-    if (Test-Path "pip_output.txt") {
-        Write-Host (Get-Content "pip_output.txt")
-        Remove-Item "pip_output.txt"
-    }
-    if (Test-Path "pip_error.txt") {
-        Write-Host (Get-Content "pip_error.txt")
-        Remove-Item "pip_error.txt"
-    }
-    
-    if ($process.ExitCode -ne 0) {
-        Write-Host "  pip install failed with exit code $($process.ExitCode)" -ForegroundColor Red
+
+    if ($exitCode -ne 0) {
+        Write-Log "pip install failed with exit code $exitCode" -Level ERROR
+        Write-Host "  pip install failed (exit code $exitCode), check log for details:" -ForegroundColor Red
+        Write-Host "  $script:LogFilePath" -ForegroundColor Red
         Set-Location $currentDir
         return $false
     }
     
     # Create environment variables file
     Write-Host "  Creating environment variables file..."
+    Write-Log "Creating environment variables file at $envFile"
+
+    # Backup existing .env if present to avoid losing user customizations
+    if (Test-Path $envFile) {
+        $backupEnvFile = "$envFile.bak"
+        Copy-Item -Path $envFile -Destination $backupEnvFile -Force
+        Write-Host "  Existing .env backed up to $backupEnvFile" -ForegroundColor Yellow
+        Write-Log "Backed up existing .env to $backupEnvFile"
+    }
+
     $envContent = @'
 # Neo4j configuration
 NEO4J_URI=bolt://127.0.0.1:7687
@@ -89,7 +94,7 @@ CACHE_TTL=3600
     } else {
         Write-Host "  Back-end directory not found, skipping environment variables file creation..." -ForegroundColor Yellow
         # Create the file in the current directory instead
-        $fallbackEnvFile = "$currentDir\.env"
+        $fallbackEnvFile = "$projectRoot\.env"
         Set-Content -Path $fallbackEnvFile -Value $envContent
         Write-Host "  Created environment variables file at $fallbackEnvFile" -ForegroundColor Yellow
     }
@@ -106,9 +111,11 @@ CACHE_TTL=3600
     }
     
     Set-Location $currentDir
+    Write-Log "Back-end installation successful"
     Write-Host "  Back-end installation successful!" -ForegroundColor Green
     return $true
 } else {
+    Write-Log "Back-end directory not found, skipping" -Level WARN
     Write-Host "  Back-end directory not found, skipping back-end dependency installation" -ForegroundColor Yellow
     return $false
 }

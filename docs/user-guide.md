@@ -10,6 +10,7 @@
 | Node.js | 18 | 20+ |
 | Neo4j | 4.4 | 4.4.8+ |
 | Redis | 6.0 | 7.0+ |
+| Debezium Server | 3.5.2 | 3.5.2.Final（可选，用于 CDC 增量同步） |
 
 ### 方式一：Docker 部署（推荐）
 
@@ -37,18 +38,21 @@ docker-compose up -d
 # 下载 Neo4j Community 4.4: https://neo4j.com/download/
 # 下载 Redis 7: https://redis.io/download/
 
-# 2. 后端
+# 2. 安装 Debezium Server（可选，用于数据库增量同步）
+# PowerShell: scripts/install/install-debezium.ps1
+
+# 3. 后端
 cd backend
 cp .env.example .env
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 
-# 3. 前端
+# 4. 前端
 cd frontend
 npm install
 npm run dev
 
-# 4. 访问 http://localhost:5175
+# 5. 访问 http://localhost:5175
 ```
 
 ### 配置说明 (`backend/.env`)
@@ -120,11 +124,31 @@ DEEPSEEK_API_KEY=
 7. 等待异步任务完成，数据即进入图谱
 
 **支持的数据源**：
-- MySQL 5.7+
-- PostgreSQL 12+
+- MySQL 5.7+（需开启 binlog）
+- PostgreSQL 12+（需配置逻辑复制）
 - SQLite 3
 
 **实体命名**：数据库行实体以 `{表名}:{主键值}` 命名，如 `employees:1001`。
+
+**增量同步（CDC）**：
+
+全量导入完成后，可开启基于 Debezium 的增量同步，实时捕获源数据库的变更（INSERT/UPDATE/DELETE）并自动同步到图谱。
+
+开启方式（API 调用）：
+```bash
+# 全量导入时自动启动 CDC
+POST /api/database/connections/{id}/import?auto_start_cdc=true
+
+# 或手动启动
+POST /api/cdc/{connection_id}/start
+Body: {"database_name": "mydb"}
+```
+
+增量同步特性：
+- 支持 MySQL（binlog）、PostgreSQL（WAL）、Oracle、SQL Server
+- 全量导入与增量同步无缝衔接，使用相同的实体 ID 方案
+- 支持断点续传，进程重启后从上次消费位点继续
+- 启动前自动检测事件流连续性，发现间隙时提示重新全量导入
 
 ---
 

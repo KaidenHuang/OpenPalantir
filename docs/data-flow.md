@@ -120,6 +120,84 @@
 | 复合主键表 | `{表名}:{PK1}:{PK2}` | `order_items:1001:5` |
 | 无主键表 | 使用首列作为代理键 | `logs:2024-01-01` |
 
+### 2.3 阶段3：增量同步（CDC，基于 Debezium）
+
+全量导入完成后，可启动 Debezium 增量同步，实时捕获源数据库变更并同步到图谱。
+
+```
+[全量导入完成] → [POST /api/cdc/{connection_id}/start]
+                              ↓
+  ┌─────────────────────────────────────────────────────────────┐
+  │ 前置检查: check_stream_continuity()                          │
+  │  ├─ 比对 Redis Stream 最旧消息 ID 与上次消费位点              │
+  │  ├─ 有间隙 → 返回 gap_detected，建议重新全量导入              │
+  │  └─ 无间隙 → 继续启动                                        │
+  └─────────────────────────────────────────────────────────────┘
+                              ↓
+  ┌─────────────────────────────────────────────────────────────┐
+  │ Debezium Server (Quarkus 独立进程)                           │
+  │  ├─ snapshot.mode=never: 跳过初始快照，仅消费增量变更         │
+  │  ├─ 从全量导入前捕获的 binlog/WAL 位点开始监听                │
+  │  │   - MySQL: SHOW MASTER STATUS → binlog file + position    │
+  │  │   - PostgreSQL: pg_current_wal_lsn() → WAL LSN           │
+  │  ├─ 变更事件写入 Redis Streams                               │
+  │  │   key: openpalantir.{db_name}.{table_name}               │
+  │  └─ 支持连接器: MySQL, PostgreSQL, Oracle, SQL Server        │
+  └─────────────────────────────────────────────────────────────┘
+                              ↓
+  ┌─────────────────────────────────────────────────────────────┐
+  │ CDCConsumer (后台线程, 每个连接一个)                          │
+  │  ├─ XREADGROUP 消费 Redis Streams (阻塞读取, 3s超时)         │
+  │  ├─ 断点续传: 加载 last_message_id → 从上次位点继续           │
+  │  ├─ 指数退避: Redis 连接错误时最大重试 30s                    │
+  │  └─ 每条消息处理后立即 ACK (操作幂等)                         │
+  └─────────────────────────────────────────────────────────────┘
+                              ↓
+  ┌─────────────────────────────────────────────────────────────┐
+  │ EventProcessor (Debezium 事件 → Neo4j 操作)                  │
+  │  ├─ 解析 Debezium 2.x 信封格式 (schema.payload 解包)         │
+  │  ├─ 事件类型映射:                                             │
+  │  │   c (CREATE) → MERGE 实体 (upsert)                        │
+  │  │   r (READ/SNAPSHOT) → MERGE 实体                          │
+  │  │   u (UPDATE) → MERGE 实体 (更新属性)                       │
+  │  │   d (DELETE) → DELETE 实体 + 关联关系                      │
+  │  ├─ 实体 ID 一致性:                                          │
+  │  │   {表名}:{PK值1}:{PK值2} → MD5 哈希                       │
+  │  │   与全量导入使用相同方案，确保命中同一 Neo4j 节点           │
+  │  ├─ 外键关系差量同步:                                         │
+  │  │   1. 查询现有 RELATED_TO 边 (source='cdc_fk')             │
+  │  │   2. 计算当前行应有的 FK 关系集合                          │
+  │  │   3. 删除不再存在的关系 (stale)                            │
+  │  │   4. 创建新增的关系                                        │
+  │  └─ 占位节点: FK 目标未见时创建空节点，后续 INSERT 会 MERGE    │
+  └─────────────────────────────────────────────────────────────┘
+                              ↓
+  [Neo4j 图谱实时同步] → 增量更新与全量导入数据无缝融合
+```
+
+#### 生命周期管理
+
+```
+全量导入 (auto_start_cdc=true)
+    → CDC 启动 (running)
+    → 暂停 (pause → paused)
+    → 恢复 (start → running)
+    → 停止 (stop → stopped)
+
+应用关闭时:
+    main.py shutdown hook → cdc_manager.shutdown_all()
+    → 逐个停止所有 consumer 线程 (30s 超时 join)
+    → 持久化最终消费位点到 SQLite
+```
+
+#### SchemaCache 初始化
+
+CDCConsumer 启动时从 SQLite 加载 Schema 元数据（由阶段1 Schema 分析填充）：
+- 表列表、列名、数据类型
+- 主键列（无主键时回退到首列）
+- 外键定义（用于关系同步）
+- 生成 Redis Stream key: `{topic_prefix}.{database_name}.{table_name}`
+
 ---
 
 ## 3. 决策引擎流程
@@ -228,7 +306,7 @@ plugins/
 | 类型 | 触发接口 | 执行内容 |
 |------|---------|---------|
 | `document_process` | `POST /api/sources/{id}/process` | 文档解析+摘要+实体提取+图谱写入 |
-| `database_import` | `POST /api/database/connections/{id}/import` | Schema 分析 (P1) / 行级导入 (P2) |
+| `database_import` | `POST /api/database/connections/{id}/import` | Schema 分析 (P1) / 行级导入 (P2) + 可选 CDC 启动 |
 | `entity_extraction` | 文档处理子任务 | 对指定文本块提取实体和关系 |
 | `analysis_report` | `POST /api/analysis/report` | 生成 HTML/PDF 分析报告 |
 

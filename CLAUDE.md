@@ -3,6 +3,7 @@
 description: OpenPalantir 项目指南 — 中文
 alwaysApply: true
 -----------------
+始终使用简体中文回复。
 
 # OpenPalantir 项目指南
 
@@ -25,12 +26,17 @@ OpenPalantir 是一个基于 AI 的数据分析与知识图谱构建系统。支
 ┌─ 后端 (FastAPI + Python) ───────────────────────────────┐
 │  api/routes/ → 各模块 router                             │
 │  task_manager → 异步任务队列（状态追踪）                    │
+│  cdc/ → Debezium 增量同步（CDC 消费 + 事件处理）            │
 │  各 manager/service 层处理业务逻辑                         │
 └────────────────────────────────────────────────────────┘
          ↕
 ┌─ 存储层 ────────────────────────────────────────────────┐
 │  SQLite (应用元数据) | Neo4j (图关系)                      │
-│  文件系统 (data/summaries/)                │
+│  Redis Streams (CDC 事件流) | 文件系统 (data/summaries/)   │
+└────────────────────────────────────────────────────────┘
+         ↕
+┌─ 外部服务 ──────────────────────────────────────────────┐
+│  Debezium Server (Quarkus) → 源DB binlog/WAL → Redis     │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -39,7 +45,7 @@ OpenPalantir 是一个基于 AI 的数据分析与知识图谱构建系统。支
 | 模块                     | 职责                             | 核心文件                                                                                            |
 | ---------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------- |
 | `config/`              | 数据库连接、Neo4j 配置                 | `database.py`, `neo4j_config.py`                                                                 |
-| `api/routes/`          | REST API 端点                    | `graph.py`, `analysis.py`, `database.py`, `model.py`, `decision.py`, `source.py`, `filesystem.py` |
+| `api/routes/`          | REST API 端点                    | `graph.py`, `analysis.py`, `database.py`, `model.py`, `decision.py`, `source.py`, `filesystem.py`, `cdc.py` |
 | `document_processing/` | 文档解析（PDF/Word/MD/图片→文本）        | `document_processor.py`                                                                          |
 | `entity_extraction/`   | 实体识别（LLM 增强）                   | `llm_entity_enhancer.py`                                                                        |
 | `knowledge_graph/`     | Neo4j 图操作（增删查、社区检测、批量优化 + 实体 CRUD/搜索） | `graph_manager.py`, `graph_partition.py`, `graph_performance.py`                                |
@@ -48,11 +54,12 @@ OpenPalantir 是一个基于 AI 的数据分析与知识图谱构建系统。支
 | `decision_engine/`     | 智能决策（插件化架构，查询数据库 + 图谱）         | `decision_kernel.py`, `plugin_registry.py`, `plugins/`, `adapters/`                             |
 | `task_management/`     | 异步任务执行 + 状态追踪                  | `task_manager.py`, `task_service.py`                                                            |
 | `system/`              | 日志（文件输出到 `logs/`）、管道编排         | `logger.py`, `system_integration.py`                                                            |
-| `models/`              | SQLAlchemy ORM 模型              | `database.py`, `model.py`, `source.py`, `task.py`                                               |
+| `models/`              | SQLAlchemy ORM 模型              | `database.py`, `model.py`, `source.py`, `task.py`, `cdc.py`                                      |
 | `file_sources/`        | 文件源抽象（本地、S3 等）                 | `local_source.py`, `base.py`                                                                    |
 | `pageindex/`           | 文档摘要树生成（PDF/MD/TXT 分层结构）       | `page_index.py`, `page_index_md.py`, `utils.py`                                                 |
 | `utils/`               | 数据存储工具                         | `data_store.py`                                                                                 |
 | `model_management/`    | LLM 模型管理（Ollama API 调用）        | `model_client.py`, `model_service.py`                                                           |
+| `cdc/`                 | Debezium 增量同步（CDC 消费 + 事件处理）   | `cdc_manager.py`, `cdc_consumer.py`, `event_processor.py`, `schema_cache.py`                    |
 
 ## 前端组件
 
@@ -91,6 +98,27 @@ OpenPalantir 是一个基于 AI 的数据分析与知识图谱构建系统。支
 → 外键值匹配构建行间关系 → EntityDataStore.save_all() 写入 Neo4j
 ```
 
+### 数据库增量同步流程（CDC，基于 Debezium）
+
+```
+前置条件：完成阶段2全量导入，且导入前已捕获 binlog/WAL 位点
+
+阶段3（增量同步）：
+Debezium Server（Quarkus 独立进程）从 binlog/WAL 位点开始监听源DB变更
+→ 变更事件写入 Redis Streams（key: openpalantir.{db}.{table}）
+→ CDCConsumer 后台线程通过 XREADGROUP 消费事件流
+→ EventProcessor 解析 Debezium 信封，映射为 Neo4j 操作：
+   c/r → MERGE 实体（upsert），u → MERGE 更新，d → DELETE 实体
+→ 外键关系差量同步（删旧建新），占位节点处理未见的 FK 目标
+→ 每条消息处理后 ACK，定期持久化 last_message_id 到 SQLite（断点续传）
+
+关键设计：
+- snapshot.mode=never：Debezium 跳过初始快照，仅消费全量导入后的增量变更
+- 实体 ID 一致性：CDC 使用与全量导入相同的 {表名}:{主键值} → MD5 哈希方案，确保更新命中同一节点
+- 断流检测：启动前 check_stream_continuity() 比对 Redis Stream 最旧消息与上次消费位点，发现间隙则建议重新全量导入
+- 数据库导入接口支持 auto_start_cdc 参数，全量导入完成后自动启动增量同步
+```
+
 ## 开发命令
 
 ```bash
@@ -104,8 +132,13 @@ npm run dev       # 端口 5175
 npm run build
 
 # 服务管理（PowerShell）
-scripts/service/start-services.ps1   # 启动 Neo4j + Redis
-scripts/service/stop-services.ps1    # 停止 Neo4j + Redis
+scripts/service/start-services.ps1   # 启动 Neo4j + Redis + Debezium Server
+scripts/service/stop-services.ps1    # 停止 Neo4j + Redis + Debezium Server
+
+# 安装（PowerShell）
+scripts/install/install-all.ps1            # 全量安装（Neo4j + Redis + Debezium + 前端 + 后端）
+scripts/install/install-debezium.ps1       # 单独安装 Debezium（解压 + 生成配置 + 启动）
+scripts/uninstall/uninstall-debezium.ps1   # 卸载 Debezium（停止进程 + 清理目录）
 
 # 测试
 cd tests && pytest                   # 需运行后端 localhost:8000
@@ -143,5 +176,14 @@ del backend\data\sqlite\database.db  # 删除后重启自动重建
 - **LLM 集成**：通过 `ModelClient` 统一调用 Ollama API，支持本地和云端模型
 - **单一存储**：实体和关系写入 Neo4j（图遍历），通过全文索引实现搜索
 - **配置来源**：`backend/.env` 配置数据库连接，`frontend/src/config/apiConfig.ts` 配置 API 端点
+- **CDC 增量同步**：基于 Debezium Server（Quarkus 独立进程，v3.5.2.Final）+ Redis Streams 实现数据库增量同步
+  - 支持 MySQL（binlog）、PostgreSQL（WAL）、Oracle、SQL Server 四种连接器
+  - `snapshot.mode=never`：跳过 Debezium 初始快照，仅消费全量导入后的增量变更
+  - 实体 ID 与全量导入一致（`{表名}:{主键值}` → MD5），确保增量更新命中同一 Neo4j 节点
+  - 外键关系采用差量同步策略（删旧建新），FK 目标未见时创建占位节点
+  - `CdcSyncState` ORM 模型（`cdc_sync_states` 表）追踪每个连接的同步状态（binlog 位点、WAL LSN、Redis Stream 消息 ID、事件计数、状态）
+  - 启动前进行断流检测（`check_stream_continuity()`），发现事件间隙则建议重新全量导入
+  - 数据库导入接口支持 `auto_start_cdc` 参数，全量导入完成后自动启动增量同步
+  - 配置依赖：`REDIS_HOST`、`REDIS_PORT`（`.env`），Debezium Server 配置由安装脚本自动生成
 
 
