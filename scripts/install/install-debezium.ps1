@@ -332,12 +332,11 @@ debezium.source.connector.class=io.debezium.connector.mysql.MySqlConnector
 debezium.source.database.hostname=127.0.0.1
 debezium.source.database.port=3306
 debezium.source.database.user=cdc_user
-debezium.source.database.password=cdc_password
+debezium.source.database.password=123456
 debezium.source.database.connectionTimeZone=Asia/Shanghai
 debezium.source.database.server.id=1
 debezium.source.topic.prefix=openpalantir
 debezium.source.database.include.list=employees
-debezium.source.table.include.list=employees.employees,employees.departments,employees.dept_emp
 # ---- Schema History（MySQL connector 必需，用 Redis 存储，避免依赖 Kafka）----
 debezium.source.schema.history.internal=io.debezium.storage.redis.history.RedisSchemaHistory
 debezium.source.schema.history.internal.redis.address=127.0.0.1:6379
