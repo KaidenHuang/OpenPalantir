@@ -145,7 +145,7 @@ class CDCManager:
                 return {"has_gap": False, "message": "无历史检查点，可直接启动"}
 
             last_id = state.last_message_id
-            r = redis.Redis(host=self._redis_host, port=self._redis_port, decode_responses=True)
+            r = redis.Redis(host=self._redis_host, port=self._redis_port, decode_responses=True, protocol=2)
             try:
                 # 检查所有相关 Stream 中最旧的消息
                 from cdc.schema_cache import SchemaCache
@@ -229,17 +229,45 @@ class CDCManager:
             state.binlog_position = binlog_info.get("position")
             state.wal_lsn = binlog_info.get("wal_lsn")
             state.status = "idle"
+            # 重导 = 全新起点：清零运行态与消费进度。否则旧 last_message_id 会让
+            # check_stream_continuity 误判断层，导致重导后仍无法启动 CDC。
+            state.last_message_id = None
+            state.events_processed = 0
+            state.last_event_ts = None
+            state.last_error = None
             db.commit()
 
             logger.info(
                 f"[CDC] 保存 binlog 检查点: conn={connection_id}, db={database_name}, "
                 f"info={binlog_info}"
             )
+
+            # 同步写入 Debezium offsets.dat：用全量导入时的 binlog 位点初始化，
+            # 确保 Debezium 启动时从该位点（而非 binlog 头）开始消费，避免重放整个历史
+            self._write_debezium_offset(binlog_info)
         except Exception as e:
             logger.error(f"[CDC] 保存 binlog 检查点失败: {e}")
             db.rollback()
         finally:
             db.close()
+
+    def _write_debezium_offset(self, binlog_info: Dict):
+        """将 binlog 位点写入 Debezium offsets.dat（MySQL 专用）。
+
+        独立 try/except：写入失败不影响已保存的 CdcSyncState 检查点与全量导入结果，
+        仅记录 warning——增量同步启动前需确保 offsets.dat 正确。
+        """
+        binlog_file = binlog_info.get("file")
+        binlog_pos = binlog_info.get("position")
+        if not binlog_file or not binlog_pos:
+            return  # 非 MySQL 或无位点，跳过
+        try:
+            from cdc.offset_store import write_debezium_offset
+            write_debezium_offset(binlog_file, int(binlog_pos))
+        except Exception as e:
+            logger.warning(
+                f"[CDC] 写入 Debezium offsets.dat 失败（不影响全量导入）: {e}"
+            )
 
     # ─────────────────────────────────────────────────────────
     # 内部方法

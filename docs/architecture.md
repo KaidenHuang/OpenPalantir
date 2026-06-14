@@ -211,6 +211,15 @@ App.tsx (标签导航)
 | 资源标识符 (URI) | `{TYPE}://{UUID}/{PATH}` | `DOC://a1b2-.../novel.txt` |
 | 摘要树节点 ID | 8位零填充序号 | `00000001` |
 | 会话 ID | `sess_` + uuid4.hex[:12] | `sess_a1b2c3d4e5f6` |
+| DocumentSource.id / Connection.id / Task.id | UUID v4，36 字符（纯 UUID，无前缀） | `d3060fed-53a1-...` |
+| AnalyzedTable.uri (ORM) | `DBS://{conn_uuid}/{db_name}/{table_name}` | `DBS://c0e2.../employees/users` |
+
+**资源标识符（ResourceIdentifier）**：URI 统一由 `ResourceIdentifier` 类（`models/resource_identifier.py`）管理，支持 `parse()` / `generate()` / `uri` / `file_safe_name`。前缀类型：
+
+- `DOC://` — 文档源，如 `DOC://a1b2c3d4-.../重生野性时代-100章.txt`
+- `DBS://` — 数据库，如 `DBS://c0e2d4ca-.../employees/departments`
+
+实体/关系字典中的 `datasource_id` 字段、数据库概要 JSON 中的 `resource_id` 均采用此 URI 格式。
 
 ---
 

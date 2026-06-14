@@ -373,6 +373,19 @@ function DatabaseManagement() {
     }
   };
 
+  const handleStartCdc = async () => {
+    if (!selectedConnection || !selectedDatabase) return;
+    try {
+      const response = await axios.post(
+        API_CONFIG.endpoints.cdc.startTask(selectedConnection.id),
+        { database_name: selectedDatabase }
+      );
+      alert(`增量同步任务已创建，任务ID: ${response.data.task_id}\n请到「任务管理」查看或停止`);
+    } catch (error) {
+      logger.error('DatabaseManagement', '启动增量同步失败', error);
+    }
+  };
+
   const handleOpenEditModal = () => {
     if (selectedConnection) {
       setNewConnection({
@@ -509,6 +522,9 @@ function DatabaseManagement() {
                 </button>
                 <button onClick={handleImport} disabled={!schemaResult}>
                   导入图谱
+                </button>
+                <button onClick={handleStartCdc} disabled={!selectedDatabase}>
+                  增量同步
                 </button>
                 <Button icon={<ReloadOutlined />} onClick={() => loadSchema(selectedConnection.id, selectedConnection.database)}>
                   刷新

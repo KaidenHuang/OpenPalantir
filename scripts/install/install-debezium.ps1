@@ -194,9 +194,15 @@ function Extract-DebeziumServer {
         $runBatContent = Get-Content -Path $runBat -Raw
         $runBatContent = $runBatContent -replace 'SET LIB_CONFIG=config\\lib', 'SET LIB_CONFIG_PATH=config\lib'
         $runBatContent = $runBatContent -replace '"true" LIB_PATH=', '"true" SET LIB_PATH='
+        # 自包含工作目录：从任意目录调用 run.bat 都能定位相对路径的 lib/config（问题#5）
+        if ($runBatContent -notmatch 'cd /d "%~dp0"') {
+            $runBatContent = 'cd /d "%~dp0"' + "`r`n" + $runBatContent
+        }
+        # JAVA_HOME 兜底：未设时退回 PATH 的 java（问题#5，与 Start-DebeziumService 自动检测互补）
+        $runBatContent = $runBatContent -replace 'SET JAVA_BINARY=%JAVA_HOME%\\bin\\java', 'IF DEFINED JAVA_HOME (SET "JAVA_BINARY=%JAVA_HOME%\bin\java") ELSE (SET "JAVA_BINARY=java")'
         Set-Content -Path $runBat -Value $runBatContent -NoNewline
-        Write-Host "  Patched run.bat (fixed LIB_CONFIG_PATH variable and SET keyword)" -ForegroundColor Cyan
-        Write-Log "Patched run.bat (fixed LIB_CONFIG_PATH and SET keyword)"
+        Write-Host "  Patched run.bat (LIB_CONFIG_PATH, SET keyword, self-contained cwd, JAVA_HOME fallback)" -ForegroundColor Cyan
+        Write-Log "Patched run.bat (LIB_CONFIG_PATH, SET keyword, cwd, JAVA_HOME fallback)"
 
         $libJars = Get-ChildItem -Path "$extractDir\lib" -Filter "*.jar" -ErrorAction SilentlyContinue
         Write-Host "  Debezium Server extracted: run.bat found, $($libJars.Count) runtime JAR(s) in lib/" -ForegroundColor Green
@@ -321,15 +327,21 @@ quarkus.log.console.json=false
         "mysql" = @"
 
 # ---- Source: MySQL ----
+# 注意(按需修改)：以下 host/user/password/database/table.include.list 需按你的源库实际修改，改后须重启 Debezium 服务生效
 debezium.source.connector.class=io.debezium.connector.mysql.MySqlConnector
 debezium.source.database.hostname=127.0.0.1
 debezium.source.database.port=3306
 debezium.source.database.user=cdc_user
 debezium.source.database.password=cdc_password
+debezium.source.database.connectionTimeZone=Asia/Shanghai
 debezium.source.database.server.id=1
 debezium.source.topic.prefix=openpalantir
 debezium.source.database.include.list=employees
 debezium.source.table.include.list=employees.employees,employees.departments,employees.dept_emp
+# ---- Schema History（MySQL connector 必需，用 Redis 存储，避免依赖 Kafka）----
+debezium.source.schema.history.internal=io.debezium.storage.redis.history.RedisSchemaHistory
+debezium.source.schema.history.internal.redis.address=127.0.0.1:6379
+debezium.source.schema.history.internal.redis.key=schemahistory.openpalantir
 "@
         "postgres" = @"
 
@@ -494,14 +506,21 @@ function Start-DebeziumService {
     }
 
     # Check Redis connectivity (Debezium sinks to Redis Streams)
+    # 注意：用 TcpClient 替代 Test-NetConnection。后者在 PS5.1 下会对 127.0.0.1 做 ICMP ping
+    # 及多项探测，极易卡住数十秒（端口实际是通的也会假死），表现为打印本标题后长时间无输出。
     try {
-        $tcpTest = Test-NetConnection -ComputerName 127.0.0.1 -Port 6379 -WarningAction SilentlyContinue
-        if (-not $tcpTest.TcpTestSucceeded) {
+        $tcpClient = New-Object System.Net.Sockets.TcpClient
+        $iar = $tcpClient.BeginConnect("127.0.0.1", 6379, $null, $null)
+        $connected = $iar.AsyncWaitHandle.WaitOne(1500, $false)
+        if ($connected -and $tcpClient.Connected) {
+            $tcpClient.EndConnect($iar)
+        } else {
             Write-Host "  Redis not reachable at 127.0.0.1:6379, Debezium Server may fail to start" -ForegroundColor Yellow
             Write-Host "  Start Redis first: .\scripts\service\start-services.ps1" -ForegroundColor Yellow
         }
+        $tcpClient.Close()
     } catch {
-        # Skip check if Test-NetConnection is unavailable
+        Write-Host "  Redis connectivity check skipped: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 
     $debeziumDataDir = "$projectRoot\backend\data\debezium"

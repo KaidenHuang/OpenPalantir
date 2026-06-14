@@ -771,11 +771,18 @@ class GraphManager:
             deleted = count_result[0].get('cnt', 0) if count_result else 0
 
             if deleted > 0:
-                # DETACH DELETE 同时删除节点及其所有关联关系
+                # 分批事务删除，避免单事务 DETACH DELETE 大量节点导致
+                # dbms.memory.transaction.total.max 超限（Neo4j 默认仅约 2.8 GiB）。
+                # CALL ... IN TRANSACTIONS 每批独立提交，内存可控；execute_query 内部用
+                # session.run()（autocommit），满足该语法的运行要求。
                 delete_query = """
                 MATCH (n:Entity)
                 WHERE n.datasource STARTS WITH $prefix
-                DETACH DELETE n
+                CALL {
+                    WITH n
+                    DETACH DELETE n
+                } IN TRANSACTIONS
+                OF 1000 ROWS
                 """
                 neo4j_conn.execute_query(delete_query, {"prefix": datasource_prefix})
 
@@ -1082,11 +1089,11 @@ class GraphManager:
                 }
 
             # ── Step 2: 获取核心节点（类型过滤 + 边数过滤）──
-            # 使用 size((n)-[:RELATED_TO]-()) 利用 Neo4j 内部度计数器
+            # 使用 COUNT { (n)-[:RELATED_TO]-() } 利用 Neo4j 内部度计数器（Neo4j 5.x 语法）
             core_query = """
             MATCH (n:Entity)
             WHERE n.type IN $entity_types
-            WITH n, size((n)-[:RELATED_TO]-()) as edge_count
+            WITH n, COUNT { (n)-[:RELATED_TO]-() } as edge_count
             WHERE edge_count >= $min_edges
             RETURN n{.*} as node, edge_count
             """

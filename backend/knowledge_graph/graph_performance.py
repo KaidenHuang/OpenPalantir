@@ -14,7 +14,8 @@ class GraphPerformanceOptimizer:
             self.redis_client = redis.Redis(
                 host=os.getenv('REDIS_HOST', 'localhost'),
                 port=int(os.getenv('REDIS_PORT', '6379')),
-                db=int(os.getenv('REDIS_DB', '0'))
+                db=int(os.getenv('REDIS_DB', '0')),
+                protocol=2
             )
             # 测试连接
             self.redis_client.ping()

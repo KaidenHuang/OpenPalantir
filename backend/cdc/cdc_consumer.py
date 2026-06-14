@@ -35,7 +35,7 @@ class CDCConsumer:
         self._thread: Optional[threading.Thread] = None
 
         # Redis 客户端
-        self._redis = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
+        self._redis = redis.Redis(host=redis_host, port=redis_port, decode_responses=True, protocol=2)
 
         # Schema 缓存
         self.schema = SchemaCache(connection_id, database_name)

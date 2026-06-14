@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from cdc.cdc_manager import cdc_manager
 from system.logger import logger
+from task_management.task_manager import task_manager
 
 router = APIRouter(prefix="/api/cdc", tags=["cdc"])
 
@@ -37,6 +38,22 @@ def start_cdc(connection_id: str, req: CdcStartRequest):
         return result
     except Exception as e:
         logger.error(f"启动 CDC 失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{connection_id}/start-task", response_model=Dict)
+def start_cdc_task(connection_id: str, req: CdcStartRequest):
+    """创建异步任务启动增量同步（任务常驻运行，停止请到「任务管理」）"""
+    try:
+        payload = {
+            "connection_id": connection_id,
+            "database_name": req.database_name,
+            "topic_prefix": req.topic_prefix,
+        }
+        task_id = task_manager.create_task("database_cdc_start", payload)
+        return {"task_id": task_id, "message": "增量同步任务已创建"}
+    except Exception as e:
+        logger.error(f"创建增量同步启动任务失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

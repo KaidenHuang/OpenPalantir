@@ -68,6 +68,9 @@ export const API_CONFIG = {
       summary: (connectionId: string) => `${API_BASE_URL}/api/database/${connectionId}/summary`,
       import: (connectionId: string) => `${API_BASE_URL}/api/database/${connectionId}/import`
     },
+    cdc: {
+      startTask: (connectionId: string) => `${API_BASE_URL}/api/cdc/${connectionId}/start-task`,
+    },
     decision: {
       ask: `${API_BASE_URL}/api/decision/ask`,
       session: (sessionId: string) => `${API_BASE_URL}/api/decision/session/${sessionId}`,

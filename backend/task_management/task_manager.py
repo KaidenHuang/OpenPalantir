@@ -548,19 +548,27 @@ class TaskManager:
                     self._execute_database_schema_analyze(task)
                 elif task.task_type == "database_schema_import":
                     self._execute_database_schema_import(task)
+                elif task.task_type == "database_cdc_start":
+                    self._execute_database_cdc_start(task)
                 elif task.task_type == "document_generate_summary":
                     self._execute_document_generate_summary(task)
                 else:
                     raise ValueError(f"Unknown task type: {task.task_type}")
                 
-                # 任务完成
+                # 任务完成（若已被 stop_task 置为 stopped，则保持 stopped 不覆盖）
                 with self.lock:
-                    task.status = "completed"
-                    task.completed_at = datetime.now().isoformat()
+                    was_stopped = (task.status == "stopped")
+                    if not was_stopped:
+                        task.status = "completed"
+                        task.completed_at = datetime.now().isoformat()
                     if task_id in self.running_tasks:
                         self.running_tasks.remove(task_id)
-                    self._update_task_in_db(task_id, "completed", result=task.result)
-                logger.info(f"[_execute_task] 任务完成: task_id={task_id}")
+                    if not was_stopped:
+                        self._update_task_in_db(task_id, "completed", result=task.result)
+                if was_stopped:
+                    logger.info(f"[_execute_task] 任务已停止: task_id={task_id}")
+                else:
+                    logger.info(f"[_execute_task] 任务完成: task_id={task_id}")
             except Exception as e:
                 with self.lock:
                     task.status = "failed"
@@ -1140,6 +1148,96 @@ class TaskManager:
         except Exception as e:
             logger.error(f"执行数据库行级导入任务时出错: {e}")
             raise
+
+    def _execute_database_cdc_start(self, task: Task):
+        """启动 CDC 增量同步——任务常驻 running，直到任务管理点「停止」"""
+        import time
+        from cdc.cdc_manager import cdc_manager
+        from config.database import SessionLocal
+        from models.cdc import CdcSyncState
+
+        connection_id = task.payload.get("connection_id")
+        database_name = task.payload.get("database_name")
+        topic_prefix = task.payload.get("topic_prefix", "openpalantir")
+
+        logger.info(
+            f"[_execute_database_cdc_start] 入参: task_id={task.task_id}, "
+            f"connection_id={connection_id}, database_name={database_name}"
+        )
+
+        if not connection_id or not database_name:
+            raise ValueError("缺少 connection_id 或 database_name")
+
+        with self.lock:
+            task.progress = 10
+            self._update_task_progress_in_db(task.task_id, task.progress)
+
+        # 前置检查1：是否已完成全量导入（CdcSyncState 有 binlog checkpoint）
+        db = SessionLocal()
+        try:
+            state = (
+                db.query(CdcSyncState)
+                .filter_by(connection_id=connection_id, database_name=database_name)
+                .first()
+            )
+            if not state or (not state.binlog_file and not state.wal_lsn):
+                raise ValueError("尚未完成全量导入，无法启动增量同步。请先点击「导入图谱」完成全量导入。")
+        finally:
+            db.close()
+
+        with self.lock:
+            task.progress = 30
+            self._update_task_progress_in_db(task.task_id, task.progress)
+
+        # 前置检查2：断流检测
+        gap = cdc_manager.check_stream_continuity(connection_id, database_name)
+        if gap.get("has_gap"):
+            raise ValueError(gap["message"])
+
+        with self.lock:
+            task.progress = 50
+            self._update_task_progress_in_db(task.task_id, task.progress)
+
+        # 启动 CDC
+        result = cdc_manager.start(connection_id, database_name, topic_prefix)
+
+        # 若已在运行，任务直接完成（不进入常驻循环）
+        if result["status"] == "already_running":
+            task.result = {"status": "already_running", "message": result["message"]}
+            logger.info(f"[_execute_database_cdc_start] 增量同步已在运行: {result['message']}")
+            return
+
+        # 已 started：常驻 running，轮询停止信号
+        task.result = {
+            "status": "running",
+            "message": "增量同步运行中，停止请到「任务管理」",
+            "connection_id": connection_id,
+            "database_name": database_name,
+        }
+        logger.info(
+            f"[_execute_database_cdc_start] 增量同步已启动，任务常驻运行: "
+            f"conn={connection_id}, db={database_name}"
+        )
+
+        with self.lock:
+            task.progress = 90
+            self._update_task_progress_in_db(task.task_id, task.progress)
+
+        while True:
+            with self.lock:
+                if task.status in ("stopping", "stopped"):
+                    break
+            time.sleep(2)
+
+        # 被停止：清理 CDCConsumer
+        try:
+            cdc_manager.stop(connection_id, database_name)
+        except Exception as e:
+            logger.error(f"[_execute_database_cdc_start] 停止 CDC 失败: {e}")
+        task.result = {"status": "stopped", "message": "增量同步已停止"}
+        logger.info(
+            f"[_execute_database_cdc_start] 增量同步已停止: conn={connection_id}, db={database_name}"
+        )
 
     def _execute_document_generate_summary(self, task: Task):
         """执行文档概要生成任务"""
