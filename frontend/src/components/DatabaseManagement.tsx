@@ -80,6 +80,15 @@ const DB_TYPES: { value: DbType; label: string }[] = [
   { value: 'mssql', label: 'SQL Server' },
 ];
 
+// 各类型默认端口（type 切换时自动填充，避免 PG 沿用 3306 连不上）
+const DB_DEFAULT_PORTS: Record<DbType, number> = {
+  mysql: 3306,
+  postgresql: 5432,
+  oracle: 1521,
+  mssql: 1433,
+  sqlite: 0,
+};
+
 function DatabaseManagement() {
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
   const [selectedConnection, setSelectedConnection] = useState<DatabaseConnection | null>(null);
@@ -248,6 +257,10 @@ function DatabaseManagement() {
     setSelectedTable(null);
   };
 
+  const handleTypeChange = (type: DbType) => {
+    setNewConnection(prev => ({ ...prev, type, port: DB_DEFAULT_PORTS[type] ?? prev.port }));
+  };
+
   const handleCreateConnection = async () => {
     try {
       const { database: _db, ...payload } = newConnection;
@@ -383,6 +396,30 @@ function DatabaseManagement() {
       alert(`增量同步任务已创建，任务ID: ${response.data.task_id}\n请到「任务管理」查看或停止`);
     } catch (error) {
       logger.error('DatabaseManagement', '启动增量同步失败', error);
+    }
+  };
+
+  const handleConfigureCdc = async () => {
+    if (!selectedConnection) return;
+    const confirmed = confirm(
+      `将为数据源「${selectedConnection.name}」配置 CDC：\n` +
+      `自动创建 cdc_user 并赋权、写入 Debezium 配置、清理旧位点并重启服务。\n继续？`
+    );
+    if (!confirmed) return;
+    try {
+      const response = await axios.post(
+        API_CONFIG.endpoints.cdc.configure(selectedConnection.id)
+      );
+      const data = response.data;
+      if (data.status === 'ok') {
+        const detail = (data.steps || []).map((s: any) => `• ${s.message}`).join('\n');
+        alert(`CDC 配置完成：\n${detail}\n\n请随后执行「导入图谱」（全量）再「增量同步」。`);
+      } else {
+        alert(`CDC 配置失败（${data.step}）：${data.message}`);
+      }
+    } catch (error: any) {
+      logger.error('DatabaseManagement', '配置 CDC 失败', error);
+      alert('配置 CDC 失败：' + (error?.response?.data?.detail || error?.message || '未知错误'));
     }
   };
 
@@ -526,6 +563,11 @@ function DatabaseManagement() {
                 <button onClick={handleStartCdc} disabled={!selectedDatabase}>
                   增量同步
                 </button>
+                {(selectedConnection?.type === 'mysql' || selectedConnection?.type === 'postgresql') && (
+                  <button onClick={handleConfigureCdc} disabled={!selectedDatabase}>
+                    配置 CDC
+                  </button>
+                )}
                 <Button icon={<ReloadOutlined />} onClick={() => loadSchema(selectedConnection.id, selectedConnection.database)}>
                   刷新
                 </Button>
@@ -731,7 +773,7 @@ function DatabaseManagement() {
               <label>数据库类型 *</label>
               <select
                 value={newConnection.type}
-                onChange={(e) => setNewConnection({ ...newConnection, type: e.target.value as DbType })}
+                onChange={(e) => handleTypeChange(e.target.value as DbType)}
               >
                 {DB_TYPES.map(type => (
                   <option key={type.value} value={type.value}>{type.label}</option>
@@ -783,6 +825,16 @@ function DatabaseManagement() {
                   </div>
                 </div>
               </>
+            )}
+            {(newConnection.type === 'mysql' || newConnection.type === 'postgresql') && (
+              <div className="form-group" style={{ background: '#f6f8fa', border: '1px solid #d0d7de', borderRadius: 6, padding: '8px 12px', fontSize: 12, color: '#57606a' }}>
+                <strong>CDC 增量同步前置要求</strong>（「配置 CDC」时检测）：
+                {newConnection.type === 'mysql' ? (
+                  <div>MySQL：源库 <code>log_bin=ON</code> + 连接账号具 GRANT 权限（用于建 cdc_user）</div>
+                ) : (
+                  <div>PostgreSQL：<code>wal_level=logical</code>（postgresql.conf，需重启 PG）+ 连接账号具 SUPERUSER/CREATEROLE（用于建 REPLICATION 角色）</div>
+                )}
+              </div>
             )}
             {newConnection.type === 'sqlite' && (
               <div className="form-group">
@@ -840,7 +892,7 @@ function DatabaseManagement() {
               <label>数据库类型 *</label>
               <select
                 value={newConnection.type}
-                onChange={(e) => setNewConnection({ ...newConnection, type: e.target.value as DbType })}
+                onChange={(e) => handleTypeChange(e.target.value as DbType)}
               >
                 {DB_TYPES.map(type => (
                   <option key={type.value} value={type.value}>{type.label}</option>
@@ -892,6 +944,16 @@ function DatabaseManagement() {
                   </div>
                 </div>
               </>
+            )}
+            {(newConnection.type === 'mysql' || newConnection.type === 'postgresql') && (
+              <div className="form-group" style={{ background: '#f6f8fa', border: '1px solid #d0d7de', borderRadius: 6, padding: '8px 12px', fontSize: 12, color: '#57606a' }}>
+                <strong>CDC 增量同步前置要求</strong>（「配置 CDC」时检测）：
+                {newConnection.type === 'mysql' ? (
+                  <div>MySQL：源库 <code>log_bin=ON</code> + 连接账号具 GRANT 权限（用于建 cdc_user）</div>
+                ) : (
+                  <div>PostgreSQL：<code>wal_level=logical</code>（postgresql.conf，需重启 PG）+ 连接账号具 SUPERUSER/CREATEROLE（用于建 REPLICATION 角色）</div>
+                )}
+              </div>
             )}
             {newConnection.type === 'sqlite' && (
               <div className="form-group">

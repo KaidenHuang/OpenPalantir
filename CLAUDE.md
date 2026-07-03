@@ -85,3 +85,4 @@ del backend\data\sqlite\database.db
 | [docs/cdc-setup.md](docs/cdc-setup.md) | CDC 增量同步:新环境配置、完整启动顺序、关键设计 |
 | [docs/development-guide.md](docs/development-guide.md) | 开发环境搭建、添加功能、代码规范 |
 | [docs/deployment.md](docs/deployment.md) | Docker/手动部署、环境变量参考、系统要求 |
+| [backend/cdc/CLAUDE.md](backend/cdc/CLAUDE.md) | CDC 模块（`backend/cdc/`）设计、关键设计、多类型支持、修改注意 |

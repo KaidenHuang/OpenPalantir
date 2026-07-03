@@ -62,3 +62,4 @@ docker-compose.override.yml
 # ===== OS =====
 Desktop.ini
 $RECYCLE.BIN/
+dependencies/debezium/

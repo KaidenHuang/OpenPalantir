@@ -25,10 +25,12 @@ class CDCConsumer:
         redis_host: str = "127.0.0.1",
         redis_port: int = 6379,
         topic_prefix: str = "openpalantir",
+        connector_type: str = "mysql",
     ):
         self.connection_id = connection_id
         self.database_name = database_name
         self.topic_prefix = topic_prefix
+        self.connector_type = connector_type
 
         # 状态控制：使用 threading.Event 保证线程安全的停止信号
         self._stop_event = threading.Event()
@@ -38,7 +40,7 @@ class CDCConsumer:
         self._redis = redis.Redis(host=redis_host, port=redis_port, decode_responses=True, protocol=2)
 
         # Schema 缓存
-        self.schema = SchemaCache(connection_id, database_name)
+        self.schema = SchemaCache(connection_id, database_name, connector_type=connector_type)
 
         # 事件处理器
         self.processor: Optional[EventProcessor] = None
@@ -192,16 +194,25 @@ class CDCConsumer:
         logger.info(f"[CDC] 消费循环结束，共处理 {self.events_processed} 条事件")
 
     def _parse_event(self, data: dict) -> Optional[dict]:
-        """解析 Redis Streams 消息中的 Debezium 事件"""
-        # Debezium Server 写入 Redis Streams 时，payload 可能在 "payload" 或 "value" 字段
-        payload_str = data.get("payload") or data.get("value")
+        """解析 Redis Streams 消息中的 Debezium 事件。
+
+        Debezium Server Redis sink 格式：每条消息是一个 hash field，
+        field 名 = record key JSON，field 值 = record value JSON（含 schema + payload）。
+        故取 field 的值（而非按 "payload"/"value" 字段名查找）。
+        """
+        if not data:
+            return None
+        # 取 field 值（record value JSON）；兼容旧格式 payload/value 字段名
+        payload_str = next(iter(data.values()), None)
+        if not payload_str or not isinstance(payload_str, str):
+            payload_str = data.get("payload") or data.get("value")
         if not payload_str:
             return None
 
         try:
             payload = json.loads(payload_str)
             # Debezium 2.x 格式：外层有 schema + payload
-            if "payload" in payload:
+            if isinstance(payload, dict) and "payload" in payload:
                 return payload["payload"]
             return payload
         except (json.JSONDecodeError, TypeError) as e:

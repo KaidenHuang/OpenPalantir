@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Starts OpenPalantir services including Neo4j and Redis
 
@@ -70,28 +70,10 @@ try {
     Write-Host "  Failed to start Redis service, skipping..." -ForegroundColor Yellow
 }
 
-# Start Debezium Server (CDC 增量同步)
-try {
-    $debeziumDir = "$dependenciesDir\debezium\extracted"
-    $debeziumBat = "$debeziumDir\run.bat"
-    if (Test-Path $debeziumBat) {
-        Write-Host "  Starting Debezium Server (CDC)..."
-        $debeziumDataDir = "$projectRoot\backend\data\debezium"
-        New-Item -ItemType Directory -Path $debeziumDataDir -Force | Out-Null
-        $logFile = "$debeziumDataDir\debezium.log"
-        $errFile = "$debeziumDataDir\debezium-error.log"
-        Start-Process -FilePath $debeziumBat -WorkingDirectory $debeziumDir `
-            -RedirectStandardOutput $logFile `
-            -RedirectStandardError $errFile `
-            -WindowStyle Hidden
-        Write-Host "  Debezium Server started in background"
-        Write-Host "  Logs: $logFile"
-    } else {
-        Write-Host "  Debezium Server not found, skipping (CDC incremental sync unavailable)..." -ForegroundColor Yellow
-    }
-} catch {
-    Write-Host "  Failed to start Debezium Server, skipping..." -ForegroundColor Yellow
-}
+# NOTE: Debezium Server 不在此启动——阶段 2 多实例模型下，每个数据库连接的 Debezium
+# 实例由「配置 CDC」（cdc_manager.configure_connection）按需启动到 instances/{conn}/。
+# 手动启停某实例：scripts/service/start-debezium.ps1 -InstanceId <conn_id>（或 stop-debezium.ps1）
+Write-Host "  Debezium: 不由 start-services 启动（多实例，由「配置 CDC」按需启动）" -ForegroundColor DarkGray
 
 Write-Host "=== Services Start Complete ===" -ForegroundColor Green
 Write-Host "Please start the back-end and front-end services manually:"

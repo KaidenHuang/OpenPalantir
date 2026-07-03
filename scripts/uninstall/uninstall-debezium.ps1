@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Uninstalls Debezium Server and cleans up extracted files
 
@@ -35,15 +35,15 @@ function Stop-DebeziumProcesses {
     Write-Log "Stopping Debezium processes"
 
     try {
-        $debeziumProcesses = Get-Process -Name "java" -ErrorAction SilentlyContinue | Where-Object {
-            $_.CommandLine -match "debezium-server" -or $_.CommandLine -match "io\.debezium\.server"
-        }
+        # Get-CimInstance 兼容 PS 5.1（Get-Process | Where CommandLine 在 PS 5.1 拿不到命令行）
+        $debeziumProcesses = Get-CimInstance Win32_Process -Filter "Name='java.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -match "io\.debezium\.server" }
         if ($debeziumProcesses) {
-            Write-Host "  Stopping Debezium Server processes..."
+            Write-Host "  Stopping Debezium processes..."
             foreach ($proc in $debeziumProcesses) {
-                Write-Log "Stopping Debezium process PID $($proc.Id)"
+                Write-Log "Stopping Debezium process PID $($proc.ProcessId)"
             }
-            $debeziumProcesses | Stop-Process -Force
+            $debeziumProcesses | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
             Start-Sleep -Seconds 2
             Write-Host "  Debezium processes stopped" -ForegroundColor Green
             Write-Log "Debezium processes stopped"
@@ -75,6 +75,19 @@ function Remove-DebeziumExtractedDirectory {
     } else {
         Write-Host "  Debezium extracted directory not found, skipping" -ForegroundColor Yellow
         Write-Log "Debezium extracted directory not found, skipping"
+    }
+
+    # 清理多实例目录（阶段 2：每连接独立 Debezium 实例目录 instances/{conn}/）
+    $instancesDir = "$debeziumDir\instances"
+    if (Test-Path $instancesDir) {
+        try {
+            Remove-Item -Path $instancesDir -Recurse -Force
+            Write-Host "  Debezium instances directory removed" -ForegroundColor Green
+            Write-Log "Removed $instancesDir"
+        } catch {
+            Write-Host "  Failed to remove Debezium instances directory: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Log "Failed to remove ${instancesDir}: $($_.Exception.Message)" -Level ERROR
+        }
     }
 
     return $true

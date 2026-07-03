@@ -14,7 +14,6 @@ router = APIRouter(prefix="/api/cdc", tags=["cdc"])
 
 class CdcStartRequest(BaseModel):
     database_name: str
-    topic_prefix: str = "openpalantir"
 
 
 @router.post("/{connection_id}/start", response_model=Dict)
@@ -33,7 +32,6 @@ def start_cdc(connection_id: str, req: CdcStartRequest):
         result = cdc_manager.start(
             connection_id=connection_id,
             database_name=req.database_name,
-            topic_prefix=req.topic_prefix,
         )
         return result
     except Exception as e:
@@ -48,12 +46,25 @@ def start_cdc_task(connection_id: str, req: CdcStartRequest):
         payload = {
             "connection_id": connection_id,
             "database_name": req.database_name,
-            "topic_prefix": req.topic_prefix,
         }
         task_id = task_manager.create_task("database_cdc_start", payload)
         return {"task_id": task_id, "message": "增量同步任务已创建"}
     except Exception as e:
         logger.error(f"创建增量同步启动任务失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{connection_id}/configure", response_model=Dict)
+def configure_cdc(connection_id: str):
+    """为已添加的 MySQL 数据源一键配置 CDC
+
+    自动完成：建 cdc_user 并赋权 → 写 Debezium application.properties →
+    清理旧库残留位点 → 重启 Debezium。配置后需先做全量导入再启动增量同步。
+    """
+    try:
+        return cdc_manager.configure_connection(connection_id)
+    except Exception as e:
+        logger.error(f"配置 CDC 失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

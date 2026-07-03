@@ -18,6 +18,11 @@ class CdcSyncState(Base):
     binlog_position = Column(BigInteger, nullable=True)     # MySQL: binlog 位点
     wal_lsn = Column(String(100), nullable=True)            # PostgreSQL: WAL LSN
 
+    # CDC 实例隔离配置（按连接）
+    topic_prefix = Column(String(100), nullable=True)       # Redis stream 前缀，连接级唯一
+    server_id = Column(Integer, nullable=True)              # MySQL connector slave id，稳定唯一
+    connector_type = Column(String(20), default="mysql")    # mysql / postgresql
+
     # 运行状态: idle / running / stopped / paused / error
     status = Column(String(20), default="idle")
     last_event_ts = Column(BigInteger, nullable=True)       # Debezium 事件时间戳 (ms)
@@ -42,6 +47,9 @@ class CdcSyncState(Base):
             "binlog_file": self.binlog_file,
             "binlog_position": self.binlog_position,
             "wal_lsn": self.wal_lsn,
+            "topic_prefix": self.topic_prefix,
+            "server_id": self.server_id,
+            "connector_type": self.connector_type,
             "status": self.status,
             "last_event_ts": self.last_event_ts,
             "events_processed": self.events_processed,

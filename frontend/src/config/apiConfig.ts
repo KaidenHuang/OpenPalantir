@@ -70,6 +70,7 @@ export const API_CONFIG = {
     },
     cdc: {
       startTask: (connectionId: string) => `${API_BASE_URL}/api/cdc/${connectionId}/start-task`,
+      configure: (connectionId: string) => `${API_BASE_URL}/api/cdc/${connectionId}/configure`,
     },
     decision: {
       ask: `${API_BASE_URL}/api/decision/ask`,

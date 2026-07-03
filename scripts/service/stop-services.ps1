@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Stops OpenPalantir services including Neo4j and Redis
 
@@ -66,20 +66,20 @@ try {
     Write-Host "  Failed to stop Redis service, skipping..." -ForegroundColor Yellow
 }
 
-# Stop Debezium Server (CDC)
+# Stop all Debezium instances (CDC) —— 全停所有实例（Get-CimInstance 兼容 PS 5.1；
+# Get-Process | Where CommandLine 在 PS 5.1 拿不到命令行，会静默失效）
 try {
-    $debeziumProcesses = Get-Process -Name "java" -ErrorAction SilentlyContinue | Where-Object {
-        $_.CommandLine -match "debezium-server" -or $_.CommandLine -match "io\.debezium\.server"
-    }
+    $debeziumProcesses = Get-CimInstance Win32_Process -Filter "Name='java.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -match "io\.debezium\.server" }
     if ($debeziumProcesses) {
-        Write-Host "  Stopping Debezium Server..."
-        $debeziumProcesses | Stop-Process -Force
-        Write-Host "  Debezium Server stopped"
+        Write-Host "  Stopping all Debezium instances..."
+        $debeziumProcesses | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+        Write-Host "  All Debezium instances stopped"
     } else {
-        Write-Host "  Debezium Server not running, skipping..." -ForegroundColor Yellow
+        Write-Host "  No Debezium instance running, skipping..." -ForegroundColor Yellow
     }
 } catch {
-    Write-Host "  Failed to stop Debezium Server, skipping..." -ForegroundColor Yellow
+    Write-Host "  Failed to stop Debezium instances, skipping..." -ForegroundColor Yellow
 }
 
 Write-Host "=== Services Stop Complete ===" -ForegroundColor Green

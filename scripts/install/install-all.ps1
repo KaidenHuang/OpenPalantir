@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Installs all components including Redis, Neo4j, front-end and back-end dependencies
 
@@ -79,7 +79,7 @@ if ($failureCount -eq 0) {
     Write-Log "Installation completed successfully"
     Write-Host ""
     Write-Host "Please follow these steps to start the system:" -ForegroundColor Yellow
-    Write-Host "1. Run .\scripts\service\start-services.ps1 to start Neo4j, Redis and Debezium services"
+    Write-Host "1. Run .\scripts\service\start-services.ps1 to start Neo4j and Redis services (Debezium 由「配置 CDC」按需启动)"
     Write-Host "2. Navigate to backend directory and run:python -m uvicorn main:app --reload to start back-end service"
     Write-Host "3. Navigate to frontend directory and run: npm run dev to start front-end service"
     Write-Host ""

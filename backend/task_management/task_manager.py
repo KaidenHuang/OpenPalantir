@@ -1158,7 +1158,6 @@ class TaskManager:
 
         connection_id = task.payload.get("connection_id")
         database_name = task.payload.get("database_name")
-        topic_prefix = task.payload.get("topic_prefix", "openpalantir")
 
         logger.info(
             f"[_execute_database_cdc_start] 入参: task_id={task.task_id}, "
@@ -1199,7 +1198,7 @@ class TaskManager:
             self._update_task_progress_in_db(task.task_id, task.progress)
 
         # 启动 CDC
-        result = cdc_manager.start(connection_id, database_name, topic_prefix)
+        result = cdc_manager.start(connection_id, database_name)
 
         # 若已在运行，任务直接完成（不进入常驻循环）
         if result["status"] == "already_running":

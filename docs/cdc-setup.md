@@ -19,16 +19,33 @@ CDC(变更数据捕获)用于在全量导入后,持续将源数据库的增量�
 
 ---
 
-## 2. 用户三步准备(新环境首次启用)
+## 2. 一键配置 CDC（推荐）
 
-### 2.1 创建 cdc 用户并赋权
+在前端「数据库管理」选中已添加的 MySQL 数据源（需已选定目标库，且连接账号具 GRANT 权限，如 root），点击 **「配置 CDC」** 按钮，后端自动完成：
+
+1. 用连接账号登录源 MySQL，创建 `cdc_user`（密码 `cdc_password`）并授予 REPLICATION SLAVE/CLIENT 等权限
+2. 前置检测 binlog 是否开启（未开则报错并提示开启步骤）
+3. 把该连接的 host/port/database 写入 `application.properties`（随机生成 `server.id` 避免冲突）
+4. 清理旧库残留的 `offsets.dat` 与 Redis schema history，确保新库干净起步
+5. 重启 Debezium 让新配置立即生效
+
+> 对应接口：`POST /api/cdc/{connection_id}/configure`。
+> 配置完成后仍需按 §4 顺序执行全量导入，再启动增量同步。
+
+下方手动三步作为该按钮不可用（如连接账号无 GRANT 权限、或需连非 MySQL 源）时的回退方案。
+
+---
+
+## 3. 手动三步准备（回退方案）
+
+### 3.1 创建 cdc 用户并赋权
 
 在源 MySQL 用 root 执行 `scripts/install/setup-cdc-user.sql`:
 
 - 创建 `cdc_user`,默认密码 `cdc_password`
 - 赋予 REPLICATION SLAVE / CLIENT 等权限
 
-### 2.2 修改 Debezium 配置文件
+### 3.2 修改 Debezium 配置文件
 
 按实际源库改 `dependencies/debezium/extracted/config/application.properties` 的:
 
@@ -38,7 +55,7 @@ CDC(变更数据捕获)用于在全量导入后,持续将源数据库的增量�
 
 (默认值为 demo 值,必须按实际环境替换)
 
-### 2.3 重启 Debezium 服务
+### 3.3 重启 Debezium 服务
 
 ```powershell
 scripts/service/stop-services.ps1
@@ -49,20 +66,22 @@ scripts/service/start-services.ps1
 
 ---
 
-## 3. 完整启动顺序
+## 4. 完整启动顺序
 
-> **关键**:必须按此顺序启动,否则 Debezium 会从 binlog 头重放整个历史,撑爆 Redis。
+> 多实例模型：基础设施（start-services）与 CDC 实例（「配置 CDC」）分离。Debezium 用 `snapshot.mode=no_data`，首次启动做 schema 快照建 history + 记位点（不读数据、不重放历史），无需 Python 写 `offsets.dat`。
 
 ```
-1. 上述三步准备(用户 + 配置 + 重启)
-2. 全量导入(捕获 binlog 位点 → CdcSyncState + 自动写 offsets.dat)
-3. start-services.ps1(启动 Neo4j + Redis + Debezium;Debezium 读 offsets.dat 从全量位点开始)
-4. 前端「增量同步」按钮(启动 CDCConsumer 消费 Redis Stream → Neo4j)
+1. start-services.ps1（启动 Neo4j + Redis 基础设施；Debezium 不在此启动）
+2. 数据库管理页面「配置 CDC」（建 cdc_user + 写实例配置 + 启动该连接的 Debezium 实例到 instances/{conn}/）
+3. 「分析 Schema」+「导入图谱」（全量导入，捕获 binlog 位点 → CdcSyncState）
+4. 「增量同步」（启动 CDCConsumer 消费 Redis Stream → Neo4j）
 ```
+
+> 手动启停某连接的 Debezium 实例：`start-debezium.ps1 -InstanceId <conn_id>` / `stop-debezium.ps1 -InstanceId <conn_id>`（按 PID 精确启停）。
 
 ---
 
-## 4. 关键设计
+## 5. 关键设计
 
 | 要点 | 说明 |
 |------|------|
@@ -85,14 +104,14 @@ scripts/service/start-services.ps1
 
 ---
 
-## 5. 注意事项
+## 6. 注意事项
 
 - **运行时重做全量导入**:若 Debezium 已在运行时重做全量导入,`offsets.dat` 会被 Debezium 周期性 flush 覆盖,**需重启 Debezium 才能让新位点生效**。
 - **配置依赖**:Redis 连接通过 `.env` 的 `REDIS_HOST` / `REDIS_PORT`;Debezium Server 配置由安装脚本(`scripts/install/install-debezium.ps1`)自动生成。
 
 ---
 
-## 6. 排错
+## 7. 排错
 
 CDC 不生效时按顺序排查:
 

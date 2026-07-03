@@ -10,9 +10,10 @@ from system.logger import logger
 class SchemaCache:
     """缓存源数据库的 Schema 信息（表/列/PK/FK/entity_type），供 CDC 事件处理使用"""
 
-    def __init__(self, connection_id: str, database_name: str):
+    def __init__(self, connection_id: str, database_name: str, connector_type: str = "mysql"):
         self.connection_id = connection_id
         self.database_name = database_name
+        self.connector_type = connector_type
 
         # 按表名索引的数据
         self.table_columns: Dict[str, List[str]] = {}         # {table: [col_name, ...]}
@@ -48,7 +49,7 @@ class SchemaCache:
             # 加载主键信息
             for table_name, cols in columns_by_table.items():
                 pk_cols = [c["column_name"] for c in cols
-                           if c.get("column_key", "").upper() in ("PRI", "PRIMARY KEY", "PK")]
+                           if (c.get("column_key") or "").upper() in ("PRI", "PRIMARY KEY", "PK")]
                 if not pk_cols:
                     # 回退：使用第一列作为代理主键
                     pk_cols = [cols[0]["column_name"]] if cols else []
@@ -80,8 +81,12 @@ class SchemaCache:
             db.close()
 
     def get_stream_keys(self, topic_prefix: str = "openpalantir") -> List[str]:
-        """生成要订阅的 Redis Stream key 列表"""
-        return [f"{topic_prefix}.{self.database_name}.{t}" for t in self.tables]
+        """生成要订阅的 Redis Stream key 列表。
+
+        MySQL topic = {prefix}.{db}.{table}；PG topic = {prefix}.{schema}.{table}（public）。
+        """
+        middle = "public" if self.connector_type == "postgresql" else self.database_name
+        return [f"{topic_prefix}.{middle}.{t}" for t in self.tables]
 
     def build_entity_name(self, table_name: str, row: Dict) -> str:
         """构建实体名称: {table_name}:{pk_value1}:{pk_value2}:..."""
