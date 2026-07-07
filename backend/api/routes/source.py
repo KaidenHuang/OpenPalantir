@@ -230,7 +230,7 @@ async def summarize_file(source_id: str, data: dict = Body(...), db: Session = D
             raise HTTPException(status_code=400, detail="文件不存在")
 
         ext = os.path.splitext(full_path)[1].lower()
-        if ext not in (".pdf", ".md", ".txt"):
+        if ext not in (".pdf", ".md", ".txt", ".docx"):
             raise HTTPException(status_code=400, detail=f"不支持的文件类型: {ext}")
 
         payload = {

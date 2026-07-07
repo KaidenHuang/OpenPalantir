@@ -198,3 +198,64 @@ async def generate_pageindex_txt_async(txt_path: str) -> dict:
         return result
     finally:
         clear_model_config()
+
+
+# ── DOCX ─────────────────────────────────────────────────────────────────────
+
+def generate_pageindex_docx(docx_path: str) -> dict:
+    """
+    同步方式：为 Word (.docx) 文档生成 PageIndex 树结构。
+
+    Raises:
+        RuntimeError: 没有可用模型时抛出
+    """
+    async def _run():
+        return await generate_pageindex_docx_async(docx_path)
+
+    try:
+        loop = asyncio.get_running_loop()
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, _run()).result()
+    except RuntimeError:
+        return asyncio.run(_run())
+
+
+async def generate_pageindex_docx_async(docx_path: str) -> dict:
+    """
+    异步方式：为 Word (.docx) 文档生成 PageIndex 树结构。
+
+    通过 python-docx 提取 Word 内置标题样式（Heading 1-6）构建层级树，
+    使用 LLM 生成节点摘要和文档描述。
+
+    Raises:
+        RuntimeError: 没有可用模型时抛出
+    """
+    model_config = get_model_config()
+    if not model_config:
+        raise RuntimeError("没有可用的模型，请先在模型管理中配置并激活模型")
+
+    from .utils import set_model_config, clear_model_config
+    from .page_index_docx import docx_to_tree
+
+    set_model_config(model_config)
+    try:
+        import os
+        try:
+            _size = os.path.getsize(docx_path)
+        except OSError:
+            _size = 0
+        logger.info(f"[DOCX] docx_path={docx_path}, size={_size}")
+        result = await docx_to_tree(
+            docx_path=docx_path,
+            if_add_node_summary='yes',
+            summary_token_threshold=200,
+            model=model_config['model_name'],
+            if_add_doc_description='yes',
+            if_add_node_text='yes',
+            if_add_node_id='yes',
+        )
+        logger.info(f"[DOCX] result structure nodes={len(result.get('structure',[]))}")
+        return result
+    finally:
+        clear_model_config()

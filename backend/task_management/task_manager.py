@@ -1245,6 +1245,7 @@ class TaskManager:
             generate_pageindex_pdf,
             generate_pageindex_md,
             generate_pageindex_txt,
+            generate_pageindex_docx,
         )
 
         try:
@@ -1264,6 +1265,8 @@ class TaskManager:
                 result = generate_pageindex_md(full_path)
             elif ext == ".txt":
                 result = generate_pageindex_txt(full_path)
+            elif ext == ".docx":
+                result = generate_pageindex_docx(full_path)
             else:
                 raise ValueError(f"不支持的文件类型: {ext}")
 
