@@ -71,8 +71,7 @@ async def generate_pageindex_pdf_async(pdf_path: str) -> dict:
     """
     异步方式：为 PDF 文档生成 PageIndex 树结构。
 
-    Raises:
-        RuntimeError: 没有可用模型时抛出
+    新流程：MinerU 提取结构 → LLM 生成摘要和文档描述
     """
     model_config = get_model_config()
     if not model_config:
@@ -88,7 +87,6 @@ async def generate_pageindex_pdf_async(pdf_path: str) -> dict:
             'model': model_config['model_name'],
             'if_add_node_summary': 'yes',
             'if_add_doc_description': 'yes',
-            'if_add_node_text': 'yes',
             'if_add_node_id': 'yes',
         })
         return await page_index_main_async(pdf_path, opt)

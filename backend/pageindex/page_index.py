@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import copy
 import math
@@ -1067,7 +1068,14 @@ async def page_index_builder(doc, page_list, opt):
 
 
 def page_index_main(doc, opt=None):
-    """PageIndex 主入口（同步，内部使用 asyncio.run）。"""
+    """PageIndex 主入口（同步，内部使用 asyncio.run）。
+
+    非 Windows 平台使用 MinerU 管线，Windows 使用原始 TOC/LLM 管线。
+    """
+    if sys.platform != 'win32':
+        from .page_index_mineru import page_index_main as _mineru_main
+        return _mineru_main(doc, opt)
+
     is_valid_pdf = (
         (isinstance(doc, str) and os.path.isfile(doc) and doc.lower().endswith(".pdf")) or
         isinstance(doc, BytesIO)
@@ -1084,7 +1092,14 @@ def page_index_main(doc, opt=None):
 
 
 async def page_index_main_async(doc, opt=None):
-    """PageIndex 主入口（异步，用于 async/await 上下文）。"""
+    """PageIndex 主入口（异步，用于 async/await 上下文）。
+
+    非 Windows 平台使用 MinerU 管线，Windows 使用原始 TOC/LLM 管线。
+    """
+    if sys.platform != 'win32':
+        from .page_index_mineru import page_index_main_async as _mineru_main_async
+        return await _mineru_main_async(doc, opt)
+
     is_valid_pdf = (
         (isinstance(doc, str) and os.path.isfile(doc) and doc.lower().endswith(".pdf")) or
         isinstance(doc, BytesIO)
@@ -1141,3 +1156,7 @@ def validate_and_truncate_physical_indices(toc_with_page_number, page_list_lengt
         print(f"Truncated {len(truncated_items)} TOC items that exceeded document length")
 
     return toc_with_page_number
+
+
+# ── MinerU 新管线导出（供 __init__.py 使用）──
+from .page_index_mineru import page_index_builder_from_structure
