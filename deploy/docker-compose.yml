@@ -1,0 +1,46 @@
+version: '3.8'
+
+# ============================================================
+# OpenPalantir 基础设施服务 (Neo4j + Redis)
+# 仅包含图数据库和缓存/消息队列，不包含后端和前端。
+# 后端/前端在宿主机原生运行，Debezium 由后端按需管理。
+# ============================================================
+
+services:
+  neo4j:
+    image: neo4j:5.26
+    container_name: openpalantir-neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-1234qwer}
+      NEO4J_PLUGINS: "[]"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "${NEO4J_PASSWORD:-1234qwer}", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: openpalantir-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    # 关闭 RDB 持久化：CDC 场景 Redis 仅中转 Stream，避免 bgsave MISCONF 禁写
+    command: redis-server --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  redis_data:

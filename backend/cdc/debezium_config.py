@@ -170,10 +170,11 @@ def create_instance_layout(instance_id: str) -> str:
         dst = inst / os.path.basename(runner)
         if not dst.exists():
             shutil.copy2(runner, dst)
-    # 复制 run.bat
-    run_bat = DEBEZIUM_HOME / "run.bat"
-    if run_bat.exists() and not (inst / "run.bat").exists():
-        shutil.copy2(run_bat, inst / "run.bat")
+    # 复制启动脚本（按平台：Linux 用 run.sh，Windows 用 run.bat）
+    run_script = DEBEZIUM_HOME / ("run.bat" if os.name == "nt" else "run.sh")
+    dst_script = inst / ("run.bat" if os.name == "nt" else "run.sh")
+    if run_script.exists() and not dst_script.exists():
+        shutil.copy2(run_script, dst_script)
 
     # 目录联接（mklink /J，无需管理员）共享 lib/connectors/config/lib
     _ensure_junction(inst / "lib", DEBEZIUM_HOME / "lib")
@@ -185,22 +186,25 @@ def create_instance_layout(instance_id: str) -> str:
 
 
 def _ensure_junction(link: Path, target: Path):
-    """确保 link 是指向 target 的目录联接（mklink /J）。已存在则跳过。"""
+    """确保 link 是指向 target 的目录链接。Linux 用 symlink，Windows 用 mklink /J。已存在则跳过。"""
     import subprocess
 
     if link.exists():
-        return  # 联接或目录已存在
+        return  # 链接或目录已存在
     if not target.exists():
-        logger.warning("[debezium_config] 联接目标不存在，跳过: %s", target)
+        logger.warning("[debezium_config] 链接目标不存在，跳过: %s", target)
         return
     try:
-        subprocess.run(
-            ["cmd", "/c", "mklink", "/J", str(link), str(target)],
-            capture_output=True, timeout=15, check=True,
-        )
-        logger.info("[debezium_config] 已建联接: %s -> %s", link.name, target)
+        if os.name == "nt":
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                capture_output=True, timeout=15, check=True,
+            )
+        else:
+            os.symlink(target, link, target_is_directory=True)
+        logger.info("[debezium_config] 已建链接: %s -> %s", link.name, target)
     except Exception as e:
-        logger.warning("[debezium_config] 建联接失败 %s: %s", link, e)
+        logger.warning("[debezium_config] 建链接失败 %s: %s", link, e)
 
 
 def write_application_properties(content: str, instance_id: str = None) -> str:

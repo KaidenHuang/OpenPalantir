@@ -1,0 +1,19 @@
+[Unit]
+Description=OpenPalantir Backend (FastAPI)
+After=network.target
+Wants=deploy-docker.service
+
+[Service]
+Type=simple
+User=openpalantir
+Group=openpalantir
+WorkingDirectory=/opt/openpalantir/backend
+Environment="PATH=/opt/openpalantir/backend/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/opt/openpalantir/backend/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/opt/openpalantir/logs/backend.log
+StandardError=append:/opt/openpalantir/logs/backend-error.log
+
+[Install]
+WantedBy=multi-user.target

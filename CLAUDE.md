@@ -47,7 +47,11 @@ cd frontend && npm install
 npm run dev       # :5175
 npm run build
 
-# 服务管理(PowerShell):启动/停止 Neo4j + Redis + Debezium
+# 服务管理
+# Linux: 启动/停止 Neo4j + Redis (Docker)
+bash scripts/service/start-services.sh
+bash scripts/service/stop-services.sh
+# Windows: 启动/停止 Neo4j + Redis (PowerShell)
 scripts/service/start-services.ps1
 scripts/service/stop-services.ps1
 
@@ -55,10 +59,11 @@ scripts/service/stop-services.ps1
 cd tests && pytest
 
 # 清理 DB(Schema 变更后删除重启自动重建)
-del backend\data\sqlite\database.db
+# Linux:   rm backend/data/sqlite/database.db
+# Windows: del backend\data\sqlite\database.db
 ```
 
-> 安装(install-all / install-debezium)、集成测试脚本、构建命令见 `docs/development-guide.md` 与 `docs/deployment.md`。
+> 安装(install-all / install-debezium)、集成测试脚本、构建命令见 `docs/development-guide.md` 与 `INSTALL.md`。
 
 ## 测试规范
 
@@ -84,5 +89,5 @@ del backend\data\sqlite\database.db
 | [docs/data-flow.md](docs/data-flow.md) | 文档分析/数据库导入/CDC/决策引擎的业务流程与数据流转 |
 | [docs/cdc-setup.md](docs/cdc-setup.md) | CDC 增量同步:新环境配置、完整启动顺序、关键设计 |
 | [docs/development-guide.md](docs/development-guide.md) | 开发环境搭建、添加功能、代码规范 |
-| [docs/deployment.md](docs/deployment.md) | Docker/手动部署、环境变量参考、系统要求 |
+| [INSTALL.md](INSTALL.md) | 安装部署、环境变量参考、系统要求、常见问题 |
 | [backend/cdc/CLAUDE.md](backend/cdc/CLAUDE.md) | CDC 模块（`backend/cdc/`）设计、关键设计、多类型支持、修改注意 |

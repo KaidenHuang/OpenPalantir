@@ -405,32 +405,43 @@ class CDCManager:
         return {"status": "ok", "message": "CDC 配置完成", "steps": steps}
 
     def _stop_debezium(self, instance_id: str):
-        """调用 stop-debezium.ps1 停止指定实例的 Debezium（不碰 Neo4j/Redis）。"""
-        self._run_debezium_script("stop-debezium.ps1", instance_id)
+        """调用 stop-debezium 脚本停止指定实例的 Debezium（不碰 Neo4j/Redis）。"""
+        self._run_debezium_script("stop-debezium", instance_id)
 
     def _start_debezium(self, instance_id: str):
-        """调用 start-debezium.ps1 启动指定实例的 Debezium（不碰 Neo4j/Redis）。"""
-        self._run_debezium_script("start-debezium.ps1", instance_id)
+        """调用 start-debezium 脚本启动指定实例的 Debezium（不碰 Neo4j/Redis）。"""
+        self._run_debezium_script("start-debezium", instance_id)
 
     def _run_debezium_script(self, name: str, instance_id: str):
-        """调用 scripts/service/ 下的 Debezium 管理 ps1 脚本（按 instance_id）。"""
+        """调用 scripts/service/ 下的 Debezium 管理脚本（按 instance_id）。
+
+        根据操作系统自动选择解释器：Windows 用 PowerShell（.ps1），Linux 用 bash（.sh）。
+        """
         import subprocess
         from pathlib import Path
 
         project_root = Path(__file__).resolve().parents[2]
-        script = project_root / "scripts" / "service" / name
-        if not script.exists():
-            raise FileNotFoundError(f"脚本不存在: {script}")
-
-        # 用 DEVNULL 而非 PIPE：避免常驻 java 进程继承管道导致 run 死等
-        # （stop/start 脚本本身秒回；脚本错误会写入 debezium-error.log 可后查）
-        result = subprocess.run(
-            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
-             "-InstanceId", instance_id],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=30,
-        )
+        if os.name == "nt":
+            script = project_root / "scripts" / "service" / f"{name}.ps1"
+            if not script.exists():
+                raise FileNotFoundError(f"脚本不存在: {script}")
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                 "-File", str(script), "-InstanceId", instance_id],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+            )
+        else:
+            script = project_root / "scripts" / "service" / f"{name}.sh"
+            if not script.exists():
+                raise FileNotFoundError(f"脚本不存在: {script}")
+            result = subprocess.run(
+                ["bash", str(script), instance_id],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+            )
         if result.returncode != 0:
             raise RuntimeError(f"脚本 {name} 返回非零退出码 {result.returncode}")
 

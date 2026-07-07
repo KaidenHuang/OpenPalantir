@@ -139,7 +139,7 @@ OpenPalantir/
 - [API 参考](docs/api-reference.md)
 - [数据流说明](docs/data-flow.md)
 - [开发指南](docs/development-guide.md)
-- [部署指南](docs/deployment.md)
+- [CDC 设置](docs/cdc-setup.md)
 - [贡献指南](CONTRIBUTING.md)
 - [行为准则](CODE_OF_CONDUCT.md)
 - [安全政策](SECURITY.md)

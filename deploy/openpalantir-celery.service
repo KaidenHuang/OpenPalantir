@@ -1,0 +1,18 @@
+[Unit]
+Description=OpenPalantir Celery Worker
+After=openpalantir-backend.service
+
+[Service]
+Type=simple
+User=openpalantir
+Group=openpalantir
+WorkingDirectory=/opt/openpalantir/backend
+Environment="PATH=/opt/openpalantir/backend/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/opt/openpalantir/backend/venv/bin/celery -A task_management.task_manager worker --loglevel=info
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/opt/openpalantir/logs/celery.log
+StandardError=append:/opt/openpalantir/logs/celery-error.log
+
+[Install]
+WantedBy=multi-user.target

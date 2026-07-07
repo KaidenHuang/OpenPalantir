@@ -57,6 +57,13 @@ CDC(变更数据捕获)用于在全量导入后,持续将源数据库的增量�
 
 ### 3.3 重启 Debezium 服务
 
+**Linux**:
+```bash
+bash scripts/service/stop-services.sh
+bash scripts/service/start-services.sh
+```
+
+**Windows (PowerShell)**:
 ```powershell
 scripts/service/stop-services.ps1
 scripts/service/start-services.ps1
@@ -71,13 +78,13 @@ scripts/service/start-services.ps1
 > 多实例模型：基础设施（start-services）与 CDC 实例（「配置 CDC」）分离。Debezium 用 `snapshot.mode=no_data`，首次启动做 schema 快照建 history + 记位点（不读数据、不重放历史），无需 Python 写 `offsets.dat`。
 
 ```
-1. start-services.ps1（启动 Neo4j + Redis 基础设施；Debezium 不在此启动）
+1. start-services.sh（启动 Neo4j + Redis 基础设施；Debezium 不在此启动）
 2. 数据库管理页面「配置 CDC」（建 cdc_user + 写实例配置 + 启动该连接的 Debezium 实例到 instances/{conn}/）
 3. 「分析 Schema」+「导入图谱」（全量导入，捕获 binlog 位点 → CdcSyncState）
 4. 「增量同步」（启动 CDCConsumer 消费 Redis Stream → Neo4j）
 ```
 
-> 手动启停某连接的 Debezium 实例：`start-debezium.ps1 -InstanceId <conn_id>` / `stop-debezium.ps1 -InstanceId <conn_id>`（按 PID 精确启停）。
+> 手动启停某连接的 Debezium 实例：`start-debezium.sh <conn_id>` / `stop-debezium.sh <conn_id>`（Linux）或 `start-debezium.ps1 -InstanceId <conn_id>` / `stop-debezium.ps1 -InstanceId <conn_id>`（Windows）。
 
 ---
 
@@ -107,7 +114,7 @@ scripts/service/start-services.ps1
 ## 6. 注意事项
 
 - **运行时重做全量导入**:若 Debezium 已在运行时重做全量导入,`offsets.dat` 会被 Debezium 周期性 flush 覆盖,**需重启 Debezium 才能让新位点生效**。
-- **配置依赖**:Redis 连接通过 `.env` 的 `REDIS_HOST` / `REDIS_PORT`;Debezium Server 配置由安装脚本(`scripts/install/install-debezium.ps1`)自动生成。
+- **配置依赖**:Redis 连接通过 `.env` 的 `REDIS_HOST` / `REDIS_PORT`;Debezium Server 配置由安装脚本（`scripts/install/install-debezium.sh`（Linux）或 `scripts/install/install-debezium.ps1`（Windows））自动生成。
 
 ---
 
@@ -115,7 +122,7 @@ scripts/service/start-services.ps1
 
 CDC 不生效时按顺序排查:
 
-1. Debezium Server 是否启动(`scripts/service/start-services.ps1`)
+1. Debezium Server 是否启动（`bash scripts/service/start-services.sh`（Linux）或 `scripts/service/start-services.ps1`（Windows））
 2. Redis 是否可达
 3. 源库是否开启 binlog(MySQL)或逻辑复制(PostgreSQL)
 4. 全量导入是否已完成(CDC 依赖其捕获的 binlog/WAL 位点)

@@ -7,18 +7,27 @@ router = APIRouter()
 
 
 def _list_drive_letters():
-    """Windows 下列出所有可用驱动器"""
-    drives = []
-    for letter in string.ascii_uppercase:
-        root = f"{letter}:\\"
-        if os.path.exists(root):
-            drives.append({
-                "name": root,
-                "path": root,
-                "is_dir": True,
-                "size": 0,
-            })
-    return drives
+    """列出可用的根目录入口（Windows 返回驱动器列表，Linux 返回根目录 /）"""
+    if os.name == "nt":
+        drives = []
+        for letter in string.ascii_uppercase:
+            root = f"{letter}:\\"
+            if os.path.exists(root):
+                drives.append({
+                    "name": root,
+                    "path": root,
+                    "is_dir": True,
+                    "size": 0,
+                })
+        return drives
+    else:
+        # Linux / macOS: 返回根目录 /
+        return [{
+            "name": "/",
+            "path": "/",
+            "is_dir": True,
+            "size": 0,
+        }]
 
 
 def _list_directory(path: str):
