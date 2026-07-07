@@ -12,6 +12,7 @@ init_log "install-neo4j"
 NEO4J_LOCAL_DIR="$PROJECT_ROOT/dependencies/neo4j/local"
 NEO4J_EXTRACTED_DIR="$PROJECT_ROOT/dependencies/neo4j/extracted"
 NEO4J_VERSION="5.26.27"
+NEO4J_PASSWORD="1234qwer"
 NEO4J_HOME_DIR=""
 
 # ── 检查 Java ───────────────────────────────────────────────
@@ -136,7 +137,7 @@ initialize_neo4j() {
 
     export NEO4J_ACCEPT_LICENSE_AGREEMENT="yes"
 
-    if run_cmd "设置初始密码" -- "$neo4j_admin" dbms set-initial-password 1234qwer; then
+    if run_cmd "设置初始密码" -- "$neo4j_admin" dbms set-initial-password "$NEO4J_PASSWORD"; then
         print_success "初始密码已设置"
         return 0
     else
@@ -167,7 +168,7 @@ start_neo4j() {
     print_info "等待 Neo4j 就绪..."
     local max_wait=60 waited=0
     while [ $waited -lt $max_wait ]; do
-        if "$NEO4J_HOME_DIR/bin/cypher-shell" -u neo4j -p 1234qwer "RETURN 1" &>/dev/null; then
+        if "$NEO4J_HOME_DIR/bin/cypher-shell" -u neo4j -p "$NEO4J_PASSWORD" "RETURN 1" &>/dev/null; then
             print_success "Neo4j 已就绪"
             return 0
         fi
@@ -192,7 +193,7 @@ main() {
     print_info "NEO4J_HOME: $NEO4J_HOME_DIR"
     print_info "Bolt:       bolt://localhost:7687"
     print_info "Browser:    http://localhost:7474"
-    print_info "用户:       neo4j / 1234qwer"
+    print_info "用户:       neo4j / $NEO4J_PASSWORD"
 }
 
 main

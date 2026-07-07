@@ -18,11 +18,11 @@ INSTANCES_DIR="$(debezium_instances_dir)"
 
 # 需要下载的组件列表
 declare -A COMPONENTS=(
-    ["debezium-server-dist"]="${DEBEZIUM_VERSION}.tar.gz"
-    ["debezium-connector-mysql"]="${DEBEZIUM_VERSION}-plugin.tar.gz"
-    ["debezium-connector-postgres"]="${DEBEZIUM_VERSION}-plugin.tar.gz"
-    ["debezium-connector-oracle"]="${DEBEZIUM_VERSION}-plugin.tar.gz"
-    ["debezium-connector-sqlserver"]="${DEBEZIUM_VERSION}-plugin.tar.gz"
+    ["debezium-server-dist"]=".tar.gz"
+    ["debezium-connector-mysql"]="-plugin.tar.gz"
+    ["debezium-connector-postgres"]="-plugin.tar.gz"
+    ["debezium-connector-oracle"]="-plugin.tar.gz"
+    ["debezium-connector-sqlserver"]="-plugin.tar.gz"
 )
 
 # ── 下载 ────────────────────────────────────────────────────
@@ -42,28 +42,29 @@ download_component() {
     print_info "下载: $filename"
     log_info "从 $url 下载..."
 
+    # 确定下载工具（一次判定）
+    local dl_cmd dl_opts
     if command -v wget &> /dev/null; then
-        run_cmd "下载 $filename" -- wget -q --show-progress -O "$filepath" "$url"
+        dl_cmd="wget"
+        dl_opts="-q -O"
     elif command -v curl &> /dev/null; then
-        run_cmd "下载 $filename" -- curl -L --progress-bar -o "$filepath" "$url"
+        dl_cmd="curl"
+        dl_opts="-L -s -o"
     else
         log_error "需要 wget 或 curl 才能下载"
         return 1
     fi
 
+    run_cmd "下载 $filename" -- $dl_cmd $dl_opts "$filepath" "$url"
+
     # 下载 SHA1 校验文件
     local sha_file="$filepath.sha1"
-    if command -v wget &> /dev/null; then
-        wget -q -O "$sha_file" "$sha_url" 2>/dev/null || true
-    else
-        curl -L -s -o "$sha_file" "$sha_url" 2>/dev/null || true
-    fi
+    $dl_cmd $dl_opts "$sha_file" "$sha_url" 2>/dev/null || true
 
     # SHA1 校验
     if [ -f "$sha_file" ] && [ -s "$sha_file" ]; then
-        local expected
-        expected=$(cat "$sha_file" | awk '{print $1}')
-        local actual
+        local expected actual
+        expected=$(awk '{print $1}' "$sha_file")
         actual=$(sha1sum "$filepath" | awk '{print $1}')
         if [ "$expected" != "$actual" ]; then
             log_error "SHA1 校验失败: $filename"
@@ -82,17 +83,7 @@ ensure_packages() {
     mkdir -p "$LOCAL_DIR"
 
     for artifact in "${!COMPONENTS[@]}"; do
-        local fullname="${COMPONENTS[$artifact]}"
-        local version="${fullname%%-plugin.tar.gz}"
-        version="${version%%.tar.gz}"
-        # 从 fullname 提取 suffix
-        local suffix=""
-        if [[ "$fullname" == *-plugin.tar.gz ]]; then
-            suffix="-plugin.tar.gz"
-        elif [[ "$fullname" == *.tar.gz ]]; then
-            suffix=".tar.gz"
-        fi
-        # 实际 version 就是 DEBEZIUM_VERSION
+        local suffix="${COMPONENTS[$artifact]}"
         download_component "$artifact" "$DEBEZIUM_VERSION" "$suffix" || {
             print_error "下载失败: $artifact"
             return 1

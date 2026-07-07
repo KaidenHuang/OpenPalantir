@@ -7,7 +7,6 @@ Word (.docx) 文档 PageIndex 树结构生成。
 
 import os
 from docx import Document
-from docx.oxml.ns import qn
 from .utils import *
 from .page_index_md import build_tree_from_nodes, generate_summaries_for_structure_md
 from system.logger import logger
@@ -17,23 +16,28 @@ def extract_nodes_from_docx(docx_path: str):
     """从 Word 文档中提取标题节点和文本内容。
 
     通过段落样式识别标题（Heading 1-6），非标题段落作为前一个节点的正文。
-    返回 (node_list, all_paragraphs)：
+    返回 (node_list, para_count, fallback_text)：
       - node_list: [{'title': str, 'level': int, 'text': str, 'para_index': int}, ...]
-      - all_paragraphs: [{'text': str, 'style': str, 'is_heading': bool}, ...]
+      - para_count: 文档总段落数
+      - fallback_text: 全文纯文本（无标题时回退用）
     """
     doc = Document(docx_path)
-    all_paragraphs = []
+    para_count = 0
     node_list = []
+    all_texts = []
 
     for idx, para in enumerate(doc.paragraphs):
         text = para.text.strip()
+        para_count += 1
         style_name = (para.style.name if para.style else "")
+
+        if text:
+            all_texts.append(text)
 
         # 判断是否为 Word 内置标题样式
         is_heading = False
         level = 1
         if style_name.startswith("Heading") or style_name.startswith("heading"):
-            # 提取标题级别：Heading 1 → 1, Heading 2 → 2, ...
             try:
                 level = int(style_name.replace("Heading", "").replace("heading", "").strip())
             except ValueError:
@@ -42,13 +46,6 @@ def extract_nodes_from_docx(docx_path: str):
         elif style_name in ("Title", "title"):
             is_heading = True
             level = 1
-
-        all_paragraphs.append({
-            "text": text,
-            "style": style_name,
-            "is_heading": is_heading,
-            "para_index": idx,
-        })
 
         if is_heading and text:
             node_list.append({
@@ -61,17 +58,18 @@ def extract_nodes_from_docx(docx_path: str):
     # 为每个标题节点填充正文（两个标题之间的段落）
     for i, node in enumerate(node_list):
         start_idx = node["para_index"] + 1
-        end_idx = node_list[i + 1]["para_index"] if i + 1 < len(node_list) else len(all_paragraphs)
+        end_idx = node_list[i + 1]["para_index"] if i + 1 < len(node_list) else para_count
 
         body_lines = []
         for j in range(start_idx, end_idx):
-            para_text = all_paragraphs[j]["text"]
+            para_text = doc.paragraphs[j].text.strip()
             if para_text:
                 body_lines.append(para_text)
 
         node["text"] = "\n\n".join(body_lines)
 
-    return node_list, all_paragraphs
+    fallback_text = "\n\n".join(all_texts)
+    return node_list, para_count, fallback_text
 
 
 async def docx_to_tree(docx_path: str,
@@ -101,15 +99,13 @@ async def docx_to_tree(docx_path: str,
     """
     logger.info(f"[DOCX] 提取节点: {docx_path}")
 
-    node_list, all_paragraphs = extract_nodes_from_docx(docx_path)
-    para_count = len(all_paragraphs)
+    node_list, para_count, fallback_text = extract_nodes_from_docx(docx_path)
 
     if not node_list:
         # 没有标题样式 → 回退：整个文档作为一个节点
-        full_text = "\n\n".join(p["text"] for p in all_paragraphs if p["text"])
         node_list.append({
             "title": os.path.splitext(os.path.basename(docx_path))[0],
-            "text": full_text,
+            "text": fallback_text,
             "level": 1,
             "para_index": 0,
         })

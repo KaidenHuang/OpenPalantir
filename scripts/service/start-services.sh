@@ -55,6 +55,7 @@ start_neo4j_native() {
     fi
 
     local neo4j_bin="$neo4j_home/bin/neo4j"
+    local neo4j_pass="${NEO4J_PASSWORD:-1234qwer}"
     local status
     status=$("$neo4j_bin" status 2>/dev/null || echo "not running")
 
@@ -70,7 +71,7 @@ start_neo4j_native() {
     print_info "等待 Neo4j 就绪..."
     local max_wait=60 waited=0
     while [ $waited -lt $max_wait ]; do
-        if "$neo4j_home/bin/cypher-shell" -u neo4j -p 1234qwer "RETURN 1" &>/dev/null; then
+        if "$neo4j_home/bin/cypher-shell" -u neo4j -p "$neo4j_pass" "RETURN 1" &>/dev/null; then
             print_success "Neo4j 已就绪"
             return 0
         fi
@@ -101,16 +102,16 @@ start_docker() {
     print_info "等待服务就绪..."
     local max_wait=60 waited=0
     while [ $waited -lt $max_wait ]; do
-        local neo4j_ok redis_ok
-        docker compose -f "$COMPOSE_FILE" ps neo4j 2>/dev/null | grep -q "(healthy)" && neo4j_ok=1 || neo4j_ok=0
-        docker compose -f "$COMPOSE_FILE" ps redis 2>/dev/null | grep -q "(healthy)" && redis_ok=1 || redis_ok=0
-        [ "$neo4j_ok" = "1" ] && print_success "Neo4j 已就绪"
-        [ "$redis_ok" = "1" ] && print_success "Redis 已就绪"
+        local ps_output neo4j_ok=0 redis_ok=0
+        ps_output=$(docker compose -f "$COMPOSE_FILE" ps 2>/dev/null || true)
+        echo "$ps_output" | grep -q "neo4j.*healthy" && neo4j_ok=1
+        echo "$ps_output" | grep -q "redis.*healthy" && redis_ok=1
         [ "$neo4j_ok" = "1" ] && [ "$redis_ok" = "1" ] && break
         sleep 2
         waited=$((waited + 2))
     done
 
+    print_success "Neo4j 已就绪" && print_success "Redis 已就绪"
     docker compose -f "$COMPOSE_FILE" ps 2>/dev/null
 }
 

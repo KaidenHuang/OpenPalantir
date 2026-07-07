@@ -1,0 +1,29 @@
+{
+  "_comment": "remote-bash 的服务器清单。每个 server 至少要有 host+user，再加 password 或 key_path 之一。default_server 用于 run/put/get 省略 --server 时的默认目标。本文件是模板：拷贝为 servers.json（已被 .gitignore 忽略）后填写真实凭据。",
+  "default_server": "ora-dev",
+  "servers": {
+    "ora-dev": {
+      "host": "10.4.240.126",
+      "port": 22,
+      "user": "oracle",
+      "password": "口令填这里",
+      "connect_timeout": 20
+    },
+    "ora-key": {
+      "_comment": "私钥免密写法（与 password 二选一，key_path 优先）",
+      "host": "10.4.240.126",
+      "port": 22,
+      "user": "oracle",
+      "key_path": "~/.ssh/id_rsa",
+      "key_passphrase": "",
+      "connect_timeout": 20
+    },
+    "mysql-test": {
+      "host": "10.4.240.200",
+      "port": 22,
+      "user": "mysql",
+      "key_path": "~/.ssh/id_rsa",
+      "connect_timeout": 20
+    }
+  }
+}
