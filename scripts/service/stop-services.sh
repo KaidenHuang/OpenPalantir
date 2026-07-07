@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # OpenPalantir 服务停止脚本
-# 功能: 停止 Neo4j + Redis (Docker Compose) + 所有 Debezium 实例
+# 功能: 停止 Neo4j + Redis + 所有 Debezium 实例（原生 + Docker）
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,6 +11,7 @@ init_log "stop-services"
 
 COMPOSE_FILE="$PROJECT_ROOT/deploy/docker-compose.yml"
 INSTANCES_DIR="$(debezium_instances_dir)"
+NEO4J_EXTRACTED_DIR="$PROJECT_ROOT/dependencies/neo4j/extracted"
 
 stop_services() {
     print_info "停止所有服务..."
@@ -37,15 +38,28 @@ stop_services() {
             fi
         done
     fi
-    # 兜底：按进程名杀
     kill_by_pattern "io.debezium.server"
 
-    # 2. 停止 Docker 容器
-    if [ -f "$COMPOSE_FILE" ]; then
-        print_info "停止 Neo4j + Redis 容器..."
-        run_cmd_no_fail "停止 Neo4j + Redis" -- docker compose -f "$COMPOSE_FILE" down
-    else
-        log_warn "Docker Compose 文件不存在: $COMPOSE_FILE"
+    # 2. 停止原生 Neo4j
+    local neo4j_home
+    neo4j_home=$(find "$NEO4J_EXTRACTED_DIR" -maxdepth 1 -type d -name "neo4j-community-*" 2>/dev/null | head -1)
+    if [ -n "$neo4j_home" ] && [ -f "$neo4j_home/bin/neo4j" ]; then
+        print_info "停止 Neo4j（原生）..."
+        "$neo4j_home/bin/neo4j" stop 2>/dev/null || true
+    fi
+    kill_by_pattern "neo4j"
+
+    # 3. 停止原生 Redis
+    print_info "停止 Redis（原生）..."
+    systemctl stop redis-server 2>/dev/null || true
+    systemctl stop redis 2>/dev/null || true
+    redis-cli shutdown 2>/dev/null || true
+    kill_by_pattern "redis-server"
+
+    # 4. 停止 Docker 容器
+    if [ -f "$COMPOSE_FILE" ] && docker info &>/dev/null 2>&1; then
+        print_info "停止 Docker 容器..."
+        run_cmd_no_fail "停止 Neo4j + Redis 容器" -- docker compose -f "$COMPOSE_FILE" down
     fi
 }
 

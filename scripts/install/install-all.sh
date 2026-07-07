@@ -9,7 +9,7 @@ source "$SCRIPT_DIR/../lib/helpers.sh"
 
 init_log "install-all"
 
-TOTAL_STEPS=5
+TOTAL_STEPS=7
 CURRENT_STEP=0
 
 step() {
@@ -28,8 +28,9 @@ finish() {
     echo "============================================================"
     echo ""
     print_info "安装摘要:"
+    echo "  Redis:           已安装 (原生)"
+    echo "  Neo4j:           已安装 (原生)"
     echo "  Debezium Server: $EXTRACTED_DIR"
-    echo "  Neo4j + Redis:   Docker Compose (deploy/docker-compose.yml)"
     echo "  后端:            $PROJECT_ROOT/backend"
     echo "  前端:            $PROJECT_ROOT/frontend"
     echo ""
@@ -90,6 +91,9 @@ preflight() {
     fi
 
     # 创建目录
+    mkdir -p "$PROJECT_ROOT/dependencies/neo4j/local"
+    mkdir -p "$PROJECT_ROOT/dependencies/neo4j/extracted"
+    mkdir -p "$PROJECT_ROOT/dependencies/redis/local"
     mkdir -p "$PROJECT_ROOT/dependencies/debezium/local"
     mkdir -p "$PROJECT_ROOT/dependencies/debezium/extracted"
     mkdir -p "$PROJECT_ROOT/dependencies/debezium/instances"
@@ -108,6 +112,16 @@ main() {
     echo "============================================================"
 
     preflight
+
+    step "安装 Redis"
+    bash "$SCRIPT_DIR/install-redis.sh" || {
+        print_warn "Redis 安装失败（非致命），可稍后手动安装或使用 Docker"
+    }
+
+    step "安装 Neo4j"
+    bash "$SCRIPT_DIR/install-neo4j.sh" || {
+        print_warn "Neo4j 安装失败（非致命），可稍后手动安装或使用 Docker"
+    }
 
     step "安装 Debezium Server"
     bash "$SCRIPT_DIR/install-debezium.sh" || {
