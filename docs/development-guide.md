@@ -39,10 +39,10 @@ npm run dev     # 监听 :5175
 
 ```bash
 # 单元测试（无需后端运行）
-cd backend
-python tests/test_memory.py            # 记忆系统
-python tests/test_skill.py              # Skill 加载与注册
-python tests/test_mcp_integration.py    # MCP Client 连接与调用
+cd tests
+python test_memory.py            # 记忆系统
+python test_skill.py              # Skill 加载与注册
+python test_mcp_integration.py    # MCP Client 连接与调用
 
 # 集成测试（需后端运行在 localhost:8000）
 cd tests

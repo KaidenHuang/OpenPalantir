@@ -57,10 +57,10 @@ scripts/service/start-services.ps1
 scripts/service/stop-services.ps1
 
 # 单元测试(无需后端运行)
-cd backend
-python tests/test_memory.py
-python tests/test_skill.py
-python tests/test_mcp_integration.py
+cd tests
+python test_memory.py
+python test_skill.py
+python test_mcp_integration.py
 
 # 集成测试(需后端运行在 localhost:8000)
 cd tests && pytest

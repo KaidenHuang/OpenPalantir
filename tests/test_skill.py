@@ -9,7 +9,7 @@ import os
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'backend'))
 
 from decision_engine.tool_manager.skill.skill_loader import (
     Skill, SkillDefinition, SkillLoader, SkillParam, SkillResult,
@@ -154,7 +154,7 @@ category: test
     def test_load_from_real_skills_directory(self):
         """从真实的 skills/ 目录加载 Skill"""
         skills_root = os.path.join(
-            os.path.dirname(__file__), "..", "decision_engine", "skills"
+            os.path.dirname(__file__), "..", "backend", "decision_engine", "skills"
         )
         skills = SkillLoader.load_from_directory(skills_root)
 
@@ -304,7 +304,7 @@ class TestSkillRegistry:
         """从真实 skills/ 目录加载所有 Skill 并注册"""
         registry = SkillRegistry()
         skills_root = os.path.join(
-            os.path.dirname(__file__), "..", "decision_engine", "skills"
+            os.path.dirname(__file__), "..", "backend", "decision_engine", "skills"
         )
 
         count = registry.load_all(skills_root, domains=["general", "workforce"])

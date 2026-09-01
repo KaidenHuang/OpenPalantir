@@ -8,11 +8,13 @@ import sys
 import os
 
 # 添加 backend 目录到 path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'backend'))
 
 from decision_engine.tool_manager.mcp.mcp_client import MCPClient, MCPServerConfig
 from decision_engine.tool_manager.mcp.mcp_manager import MCPManager
 from decision_engine.tool_manager.mcp.config import load_mcp_server_configs
+
+_SERVER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_mcp_server.py")
 
 
 def test_mcp_client_stdio():
@@ -21,7 +23,7 @@ def test_mcp_client_stdio():
         name="test",
         transport="stdio",
         command=sys.executable,
-        args=["tests/test_mcp_server.py"],
+        args=[_SERVER_PATH],
     )
 
     client = MCPClient(config)
@@ -55,7 +57,7 @@ def test_mcp_manager():
             name="test_server",
             transport="stdio",
             command=sys.executable,
-            args=["tests/test_mcp_server.py"],
+            args=[_SERVER_PATH],
         ),
     ]
 
