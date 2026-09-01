@@ -9,6 +9,9 @@ source "$SCRIPT_DIR/../lib/helpers.sh"
 
 init_log "uninstall-backend"
 
+# 忽略 SIGTERM，防止 kill_by_pattern 发送的信号在 WSL 中传播到自身
+trap '' SIGTERM
+
 print_info "停止后端进程..."
 kill_by_pattern "uvicorn.*main:app"
 kill_by_pattern "main:app"

@@ -18,20 +18,38 @@ NEO4J_EXTRACTED_DIR="$PROJECT_ROOT/dependencies/neo4j/extracted"
 start_redis_native() {
     print_info "启动 Redis（原生）..."
 
-    if systemctl is-active --quiet redis-server 2>/dev/null; then
-        print_success "Redis 已在运行 (systemd)"
-        return 0
-    elif systemctl is-active --quiet redis 2>/dev/null; then
-        print_success "Redis 已在运行 (systemd)"
-        return 0
-    fi
+    # 检查 systemd 是否可用（WSL 中 systemctl 命令存在但 systemd 未运行）
+    if systemctl is-system-running &>/dev/null; then
+        if systemctl is-active --quiet redis-server 2>/dev/null; then
+            print_success "Redis 已在运行 (systemd)"
+            return 0
+        elif systemctl is-active --quiet redis 2>/dev/null; then
+            print_success "Redis 已在运行 (systemd)"
+            return 0
+        fi
 
-    # 尝试启动 systemd 服务
-    if systemctl start redis-server 2>/dev/null; then
-        print_success "Redis 已启动 (systemd)"
-    elif systemctl start redis 2>/dev/null; then
-        print_success "Redis 已启动 (systemd)"
+        if systemctl start redis-server 2>/dev/null; then
+            print_success "Redis 已启动 (systemd)"
+        elif systemctl start redis 2>/dev/null; then
+            print_success "Redis 已启动 (systemd)"
+        else
+            # systemd 启动失败，回退到直接启动 redis-server
+            if command -v redis-server &> /dev/null; then
+                if pgrep -x redis-server > /dev/null 2>&1; then
+                    print_success "Redis 已在运行"
+                else
+                    nohup redis-server --daemonize yes --bind 127.0.0.1 > /dev/null 2>&1 &
+                    print_success "Redis 已启动 (后台进程，systemd 回退)"
+                fi
+            else
+                return 1
+            fi
+        fi
     elif command -v redis-server &> /dev/null; then
+        if pgrep -x redis-server > /dev/null 2>&1; then
+            print_success "Redis 已在运行"
+            return 0
+        fi
         nohup redis-server --daemonize yes --bind 127.0.0.1 > /dev/null 2>&1 &
         print_success "Redis 已启动 (后台进程)"
     else
@@ -65,7 +83,17 @@ start_neo4j_native() {
     fi
 
     export NEO4J_HOME="$neo4j_home"
-    "$neo4j_bin" start 2>/dev/null
+
+    # 判断是否可用 systemd（WSL 中 systemctl 存在但 systemd 未运行）
+    if systemctl is-system-running &>/dev/null; then
+        # 有 systemd，使用 daemon 模式
+        "$neo4j_bin" start 2>/dev/null
+    else
+        # 无 systemd（WSL），使用 console 模式 + setsid 彻底分离进程
+        log_info "检测到无 systemd 环境，使用 console 模式启动 Neo4j..."
+        setsid "$neo4j_bin" console > "$PROJECT_ROOT/logs/neo4j-console.log" 2>&1 &
+        disown
+    fi
 
     # 等待就绪
     print_info "等待 Neo4j 就绪..."
@@ -104,14 +132,19 @@ start_docker() {
     while [ $waited -lt $max_wait ]; do
         local ps_output neo4j_ok=0 redis_ok=0
         ps_output=$(docker compose -f "$COMPOSE_FILE" ps 2>/dev/null || true)
-        echo "$ps_output" | grep -q "neo4j.*healthy" && neo4j_ok=1
-        echo "$ps_output" | grep -q "redis.*healthy" && redis_ok=1
+        echo "$ps_output" | grep -q "neo4j.*\(healthy\)" && neo4j_ok=1
+        echo "$ps_output" | grep -q "redis.*\(healthy\)" && redis_ok=1
         [ "$neo4j_ok" = "1" ] && [ "$redis_ok" = "1" ] && break
         sleep 2
         waited=$((waited + 2))
     done
 
-    print_success "Neo4j 已就绪" && print_success "Redis 已就绪"
+    if [ "$neo4j_ok" = "1" ] && [ "$redis_ok" = "1" ]; then
+        print_success "Neo4j 已就绪" && print_success "Redis 已就绪"
+    else
+        [ "$neo4j_ok" = "1" ] && print_success "Neo4j 已就绪" || print_warn "Neo4j 可能未就绪（超时）"
+        [ "$redis_ok" = "1" ] && print_success "Redis 已就绪" || print_warn "Redis 可能未就绪（超时）"
+    fi
     docker compose -f "$COMPOSE_FILE" ps 2>/dev/null
 }
 

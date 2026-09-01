@@ -9,7 +9,7 @@ source "$SCRIPT_DIR/../lib/helpers.sh"
 
 init_log "install-all"
 
-TOTAL_STEPS=7
+TOTAL_STEPS=8
 CURRENT_STEP=0
 
 step() {
@@ -30,7 +30,8 @@ finish() {
     print_info "安装摘要:"
     echo "  Redis:           已安装 (原生)"
     echo "  Neo4j:           已安装 (原生)"
-    echo "  Debezium Server: $EXTRACTED_DIR"
+    echo "  Debezium Server: $(debezium_extracted_dir)"
+    echo "  MinerU:          magic-pdf (PDF 结构提取)"
     echo "  后端:            $PROJECT_ROOT/backend"
     echo "  前端:            $PROJECT_ROOT/frontend"
     echo ""
@@ -71,12 +72,17 @@ preflight() {
     if [ ${#missing[@]} -gt 0 ]; then
         print_error "缺少以下命令: ${missing[*]}"
         echo ""
-        print_info "请先安装系统依赖:"
+        print_info "请先安装系统依赖 (Debian/Ubuntu):"
         echo "  sudo apt update && sudo apt install -y \\"
         echo "    python3 python3-pip python3-venv \\"
         echo "    curl wget tar unzip \\"
-        echo "    openjdk-17-jdk \\"
-        echo "    docker.io docker-compose-v2"
+        echo "    openjdk-17-jdk"
+        echo ""
+        print_info "或 (RHEL/Oracle Linux/Fedora):"
+        echo "  sudo dnf install -y \\"
+        echo "    python3 python3-pip \\"
+        echo "    curl wget tar unzip \\"
+        echo "    java-17-openjdk-devel"
         echo ""
         print_info "然后安装 Node.js:"
         echo "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
@@ -87,7 +93,7 @@ preflight() {
     # 检查 Docker
     if ! docker info &> /dev/null; then
         print_warn "Docker 未运行，Neo4j/Redis 将无法通过 Docker Compose 启动"
-        print_info "启动 Docker: sudo systemctl enable --now docker"
+        print_info "启动 Docker: sudo systemctl enable --now docker  (或 sudo service docker start)"
     fi
 
     # 创建目录
@@ -127,6 +133,11 @@ main() {
     bash "$SCRIPT_DIR/install-debezium.sh" || {
         print_error "Debezium 安装失败"
         exit 1
+    }
+
+    step "安装 MinerU"
+    bash "$SCRIPT_DIR/install-mineru.sh" || {
+        print_warn "MinerU 安装失败（非致命），PDF 结构提取将不可用"
     }
 
     step "安装前端依赖"

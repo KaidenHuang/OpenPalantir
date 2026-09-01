@@ -9,6 +9,9 @@ source "$SCRIPT_DIR/../lib/helpers.sh"
 
 init_log "uninstall-debezium"
 
+# 忽略 SIGTERM，防止 kill_by_pattern 发送的信号在 WSL 中传播到自身
+trap '' SIGTERM
+
 print_info "停止所有 Debezium 实例..."
 
 # 停止所有实例

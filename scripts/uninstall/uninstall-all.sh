@@ -20,19 +20,23 @@ print_info "2/6 卸载 Debezium..."
 bash "$SCRIPT_DIR/uninstall-debezium.sh" || true
 
 # 3. 卸载 Neo4j
-print_info "3/6 卸载 Neo4j..."
+print_info "3/7 卸载 Neo4j..."
 bash "$SCRIPT_DIR/uninstall-neo4j.sh" || true
 
 # 4. 卸载 Redis
-print_info "4/6 卸载 Redis..."
+print_info "4/7 卸载 Redis..."
 bash "$SCRIPT_DIR/uninstall-redis.sh" || true
 
-# 5. 卸载前端
-print_info "5/6 卸载前端..."
+# 5. 卸载 MinerU
+print_info "5/7 卸载 MinerU..."
+bash "$SCRIPT_DIR/uninstall-mineru.sh" || true
+
+# 6. 卸载前端
+print_info "6/7 卸载前端..."
 bash "$SCRIPT_DIR/uninstall-frontend.sh" || true
 
-# 6. 卸载后端
-print_info "6/6 卸载后端..."
+# 7. 卸载后端
+print_info "7/7 卸载后端..."
 bash "$SCRIPT_DIR/uninstall-backend.sh" || true
 
 print_success "OpenPalantir 卸载完成"

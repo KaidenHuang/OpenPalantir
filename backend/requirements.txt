@@ -7,7 +7,7 @@ PyPDF2>=3.0.1
 python-docx>=0.8.11
 Pillow>=10.1.0
 markdown>=3.5.1
-magic-pdf>=1.2.0  # MinerU PDF 结构提取（文本+布局+表格+公式）
+# magic-pdf 由 scripts/install/install-mineru.sh 单独安装（含系统依赖和模型下载）
 
 # 自然语言处理
 jieba>=0.42.1

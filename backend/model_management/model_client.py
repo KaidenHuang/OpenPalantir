@@ -607,6 +607,156 @@ class ModelClient:
             logger.error(f"测试连接失败: {e}")
             return False
 
+    def call_with_tools(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        system_prompt: Optional[str] = None,
+        temperature: float = 0,
+        max_tokens: int = 8192,
+        tool_choice: str = "auto",
+    ) -> Optional[Dict[str, Any]]:
+        """
+        调用模型并支持 tool calling（OpenAI 兼容格式）
+
+        Args:
+            messages: 对话消息列表，格式 [{"role": "...", "content": "..."}]
+            tools: OpenAI 兼容的 tools 定义列表
+            system_prompt: 系统提示词（如果 messages 中未包含 system 角色）
+            temperature: 温度参数
+            max_tokens: 最大生成 token 数
+            tool_choice: "auto" | "none" | "required"
+
+        Returns:
+            {
+                "content": str,        # 模型文本输出
+                "tool_calls": [        # 工具调用列表
+                    {
+                        "id": str,
+                        "type": "function",
+                        "function": {"name": str, "arguments": str}
+                    }
+                ]
+            }
+            失败返回 None
+        """
+        if self.config.type == "local":
+            return self._call_local_chat(messages, tools, system_prompt, temperature, max_tokens, tool_choice)
+        else:
+            return self._call_cloud_chat(messages, tools, system_prompt, temperature, max_tokens, tool_choice)
+
+    def _call_local_chat(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        system_prompt: Optional[str] = None,
+        temperature: float = 0,
+        max_tokens: int = 8192,
+        tool_choice: str = "auto",
+    ) -> Optional[Dict[str, Any]]:
+        """调用本地 Ollama /api/chat 端点（支持 tools）"""
+        # 如果传入了 system_prompt 且 messages 首条不是 system 角色，则插入
+        req_messages = list(messages)
+        if system_prompt and (not req_messages or req_messages[0].get("role") != "system"):
+            req_messages.insert(0, {"role": "system", "content": system_prompt})
+
+        last_error = None
+        for attempt in range(self.config.max_retries):
+            try:
+                logger.info(
+                    f"[model_client] 调用本地 chat API，模型: {self.config.model_name} "
+                    f"(尝试 {attempt + 1}/{self.config.max_retries})"
+                )
+                response = requests.post(
+                    f"{self.config.api_url}/api/chat",
+                    json={
+                        "model": self.config.model_name,
+                        "messages": req_messages,
+                        "tools": tools,
+                        "tool_choice": tool_choice,
+                        "stream": False,
+                        "options": {
+                            "temperature": temperature,
+                            "num_predict": max_tokens,
+                        },
+                    },
+                    timeout=self.config.timeout,
+                )
+                if response.status_code == 200:
+                    result = response.json()
+                    msg = result.get("message", {})
+                    return {
+                        "content": msg.get("content", ""),
+                        "tool_calls": msg.get("tool_calls", []),
+                    }
+                else:
+                    last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+            except Exception as e:
+                last_error = str(e)
+            if attempt < self.config.max_retries - 1:
+                time.sleep(self.config.retry_delay)
+        logger.error(f"[model_client] local chat 失败: {last_error}")
+        return None
+
+    def _call_cloud_chat(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        system_prompt: Optional[str] = None,
+        temperature: float = 0,
+        max_tokens: int = 8192,
+        tool_choice: str = "auto",
+    ) -> Optional[Dict[str, Any]]:
+        """调用云端 /chat/completions 端点（原生支持 tools）"""
+        full_messages: List[Dict[str, Any]] = []
+        if system_prompt:
+            full_messages.append({"role": "system", "content": system_prompt})
+        full_messages.extend(messages)
+
+        request_params = {
+            "model": self.config.model_name,
+            "messages": full_messages,
+            "tools": tools,
+            "tool_choice": tool_choice,
+            "stream": False,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+
+        last_error = None
+        for attempt in range(self.config.max_retries):
+            try:
+                api_url = f"{self.config.api_url}/chat/completions"
+                logger.info(
+                    f"[model_client] 调用云端 chat API，模型: {self.config.model_name} "
+                    f"(尝试 {attempt + 1}/{self.config.max_retries})"
+                )
+                response = requests.post(
+                    api_url,
+                    headers={
+                        "Authorization": f"Bearer {self.config.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=request_params,
+                    timeout=self.config.timeout,
+                )
+                if response.status_code == 200:
+                    result = response.json()
+                    choice = result["choices"][0]
+                    msg = choice.get("message", {})
+                    return {
+                        "content": msg.get("content", ""),
+                        "tool_calls": msg.get("tool_calls", []),
+                    }
+                else:
+                    last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+            except Exception as e:
+                last_error = str(e)
+            if attempt < self.config.max_retries - 1:
+                time.sleep(self.config.retry_delay)
+        logger.error(f"[model_client] cloud chat 失败: {last_error}")
+        return None
+
 
 # 创建默认客户端实例
 default_client = ModelClient()

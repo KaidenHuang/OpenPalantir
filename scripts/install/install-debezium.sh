@@ -106,6 +106,24 @@ extract_server() {
 
     run_cmd "解压 Debezium Server" -- tar -xzf "$server_archive" -C "$EXTRACTED_DIR"
 
+    # 新版 Debezium 发行版可能解压到子目录，扁平化处理
+    local subdirs
+    subdirs=$(find "$EXTRACTED_DIR" -maxdepth 1 -type d ! -name '.' ! -name "$(basename "$EXTRACTED_DIR")" 2>/dev/null)
+    local subdir_count
+    subdir_count=$(echo "$subdirs" | grep -c . 2>/dev/null || echo 0)
+    if [ "$subdir_count" -eq 1 ] && [ -d "$subdirs" ]; then
+        log_info "检测到子目录: $(basename "$subdirs")，扁平化处理..."
+        local tmp_flat="$EXTRACTED_DIR.flat_tmp"
+        # 清理可能残留的临时目录
+        rm -rf "$tmp_flat" 2>/dev/null || true
+        mv "$subdirs" "$tmp_flat"
+        # 移动所有内容到 extracted/
+        shopt -s dotglob
+        mv "$tmp_flat"/* "$EXTRACTED_DIR"/ 2>/dev/null || true
+        shopt -u dotglob
+        rmdir "$tmp_flat" 2>/dev/null || true
+    fi
+
     # 检查 run.sh 是否存在（Linux 下 Debezium 发行版自带）
     if [ -f "$EXTRACTED_DIR/run.sh" ]; then
         # 确保可执行权限

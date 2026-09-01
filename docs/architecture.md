@@ -79,8 +79,30 @@ main.py (FastAPI 应用入口)
   │   ├─ retriever/                   ← 检索器（文档/数据库/图谱）
   │   ├─ evidence_fusion.py           ← 证据融合排序
   │   ├─ context_builder.py           ← LLM 上下文构建
-  │   ├─ llm_reasoner.py             ← LLM 推理
+  │   ├─ llm_reasoner.py             ← LLM 推理（RAG 模式）
   │   ├─ conversation_manager.py      ← 多轮对话管理
+  │   ├─ memory/                      ← 记忆系统
+  │   │   ├─ memory_manager.py        ← 短期记忆（SQLite）+ 长期记忆（MEMORY.md）
+  │   │   ├─ memory_extractor.py      ← LLM 记忆提取
+  │   ├─ tool_manager/                ← 统一的工具管理层
+  │   │   ├─ tool_reasoner.py         ← 多轮工具推理引擎（调度 Skill + MCP）
+  │   │   ├─ skill/                   ← 本地 Skill 源（加载 + 注册 + 执行）
+  │   │   │   ├─ skill_loader.py      ← Skill 定义 + 加载
+  │   │   │   ├─ skill_registry.py    ← Skill 注册中心
+  │   │   ├─ mcp/                     ← 外部 MCP 工具源（连接 + 管理 + 路由）
+  │   │   │   ├─ mcp_client.py        ← MCP Client（stdio + HTTP）
+  │   │   │   ├─ mcp_manager.py       ← 多 Server 管理 + 工具合并
+  │   │   │   ├─ config.py            ← MCP 配置加载
+  │   │   ├─ prompts/                 ← 推理 Prompt 模板
+  │   ├─ skills/                      ← 8 个本地 Skill 实现
+  │   │   ├─ search_entities/         ← 图谱实体搜索
+  │   │   ├─ get_entity_detail/       ← 实体详情
+  │   │   ├─ get_entity_relationships/← 实体关系
+  │   │   ├─ analyze_path/            ← 路径分析
+  │   │   ├─ analyze_centrality/      ← 中心性分析
+  │   │   ├─ analyze_community/       ← 社区检测
+  │   │   ├─ search_documents/        ← 文档搜索
+  │   │   ├─ query_database/          ← 数据库查询
   │   └─ plugins/                     ← 领域插件（workforce等）
   ├─ document_processing/             ← 文档解析
   │   └─ document_processor.py        ← PDF/Word/Markdown/图片解析
@@ -123,7 +145,7 @@ main.py (FastAPI 应用入口)
 | `api/routes/` | REST API 端点 | FastAPI Router、Pydantic Schema |
 | `knowledge_graph/` | 图谱 CRUD、搜索、分区、缓存 | Cypher、LRU Cache |
 | `analysis_engine/` | 图算法分析 | NetworkX、Louvain、scikit-learn |
-| `decision_engine/` | 智能问答 | 插件化架构、多源检索、LLM 推理 |
+| `decision_engine/` | 智能决策 | 双模式（RAG + Tool 推理）、插件化架构、多源检索、记忆系统、工具管理 |
 | `document_processing/` | 多格式文档解析 | PyPDF2、python-docx、Pillow、pytesseract |
 | `entity_extraction/` | 实体识别+关系抽取 | LLM prompt 工程、JSON 修复 |
 | `pageindex/` | 文档分层摘要 | LLM、层级聚类 |
@@ -179,6 +201,7 @@ App.tsx (标签导航)
 │  database_tables  ← 外部数据库连接 + Schema 分析结果      │
 │  tasks            ← 异步任务状态                         │
 │  cdc_sync_states  ← CDC 增量同步状态 (binlog/WAL位点)     │
+│  short_term_memories ← 短期记忆（7天TTL，关键词检索）           │
 └──────────────────────────────────────────────────────┘
 
 ┌─ 图数据 (Neo4j) ────────────────────────────────────┐
@@ -190,6 +213,7 @@ App.tsx (标签导航)
 ┌─ 文件系统 (data/summaries/) ────────────────────────┐
 │  DOC/{source_uuid}/  ← 文档摘要树 JSON                  │
 │  DBS/{conn_uuid}/    ← 数据库概要 JSON                  │
+│  MEMORY.md           ← 长期记忆（用户偏好 + 重要决策，≤10条）   │
 └──────────────────────────────────────────────────────┘
 
 ┌─ 缓存层 (Redis) ────────────────────────────────────┐

@@ -11,7 +11,7 @@ from system.logger import logger
 from config.database import Base, engine
 
 # 导入所有模型
-from models import model, task, database, source, cdc
+from models import model, task, database, source, cdc, memory
 
 # 创建数据库表
 Base.metadata.create_all(bind=engine)

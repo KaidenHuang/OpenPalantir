@@ -95,6 +95,11 @@ class LLMReasoner:
         sub_qs_section = f"\n\n### 补充子问题\n\n{sub_qs}"
 
         header = f"# 智能决策推理任务\n\n你是一个专业的 {context.domain} 决策分析师。请基于以下证据给出决策建议。\n\n## 输入数据\n"
+
+        # 注入记忆上下文
+        if context.memory_context:
+            header += "\n" + context.memory_context + "\n"
+
         body = header + "\n" + entity_sec + "\n\n" + graph_sec
         remaining = MAX_PROMPT_CHARS - len(body) - len(sub_qs_section) - len(footer)
 
@@ -130,30 +135,7 @@ class LLMReasoner:
             return FALLBACK_ANSWER
 
         try:
-            work_orders_raw = response.get("work_orders", [])
-            work_orders = []
-            for wo in work_orders_raw:
-                if isinstance(wo, dict):
-                    work_orders.append(WorkOrder(**wo))
-                else:
-                    logger.warning(f"[llm_reasoner] skip invalid work_order: {type(wo)}")
-
-            rec = response.get("recommendation", "")
-            if isinstance(rec, dict):
-                rec = json.dumps(rec, ensure_ascii=False)
-
-            situation = response.get("situation_analysis", "")
-            if isinstance(situation, dict):
-                situation = json.dumps(situation, ensure_ascii=False)
-
-            return DecisionAnswer(
-                summary=str(response.get("summary", situation))[:500],
-                situation_analysis=situation,
-                key_issues=response.get("key_issues", []),
-                options=response.get("options", []),
-                recommendation=rec,
-                work_orders=work_orders,
-            )
+            return DecisionAnswer.from_dict(response)
         except Exception as e:
             logger.warning(f"[llm_reasoner] parse failed: {e}")
             return FALLBACK_ANSWER

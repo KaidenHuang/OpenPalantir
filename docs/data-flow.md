@@ -202,68 +202,140 @@ CDCConsumer 启动时从 SQLite 加载 Schema 元数据（由阶段1 Schema 分�
 
 ## 3. 决策引擎流程
 
-决策引擎是系统最高层的能力，整合图谱+数据库+文档三类信息源，为用户提供自然语言问答。
+决策引擎是系统最高层的能力，整合图谱+数据库+文档三类信息源，提供自然语言问答。
+支持两种决策模式：**RAG 管道**（固定流程）和 **Tool 推理**（LLM 多轮工具调用）。
+
+### 3.1 记忆注入（两种模式共用）
+
+每次用户提问，决策引擎自动注入三层记忆：
 
 ```
-[用户提问] → [POST /api/decision/ask]
-                          ↓
-  ┌─────────────────────────────────────────────────────────────┐
-  │ Step 1: QueryAnalyzer 查询分析                                │
-  │  ├─ LLM 解析用户意图 (intent)                                  │
-  │  ├─ 识别问题域 (domain)                                       │
-  │  ├─ 提取关键实体 (entities)                                    │
-  │  ├─ 拆分子问题 (sub_questions)                                 │
-  │  └─ 确定检索策略 (required_sources: [graph|database|document]) │
-  └─────────────────────────────────────────────────────────────┘
-                          ↓
-  ┌─────────────────────────────────────────────────────────────┐
-  │ Step 2: PluginRegistry 路由到领域插件                           │
-  │  ├─ 根据 domain 查找注册的插件 (如 workforce_plugin)             │
-  │  └─ 若无匹配 → 使用通用插件                                     │
-  └─────────────────────────────────────────────────────────────┘
-                          ↓
-  ┌─────────────────────────────────────────────────────────────┐
-  │ Step 3: RetrievalOrchestrator 多源检索                        │
-  │  ├─ GraphRetriever       → Cypher 查询图谱实体+关系             │
-  │  ├─ DatabaseRetriever    → SQL 查询源数据库                     │
-  │  └─ DocumentRetriever    → 搜索文档摘要树                        │
-  │ 输出: RawEvidence[{source_type, content, relevance_score}]    │
-  └─────────────────────────────────────────────────────────────┘
-                          ↓
-  ┌─────────────────────────────────────────────────────────────┐
-  │ Step 4: EvidenceFusion 证据融合排序                             │
-  │  ├─ 基于 relevance_score 排序                                   │
-  │  ├─ 去重 (同源相似内容合并)                                      │
-  │  └─ 生成 citation 引用标记                                      │
-  │ 输出: EvidenceItem[{evidence_id, summary, citation}]         │
-  └─────────────────────────────────────────────────────────────┘
-                          ↓
-  ┌─────────────────────────────────────────────────────────────┐
-  │ Step 5: ContextBuilder 构建 LLM 上下文                          │
-  │  ├─ 组装 System Prompt (角色 + 指令)                            │
-  │  ├─ 填入检索证据 (EvidenceItem 序列化)                           │
-  │  ├─ 填入对话历史 (ConversationTurn[])                          │
-  │  └─ token 数量估算 (避免超出 LLM 上下文窗口)                       │
-  └─────────────────────────────────────────────────────────────┘
-                          ↓
-  ┌─────────────────────────────────────────────────────────────┐
-  │ Step 6: LLMReasoner 推理                                      │
-  │  ├─ 调用 LLM API 生成结构化回答                                  │
-  │  └─ 解析为 DecisionAnswer {summary, options, recommendation,  │
-  │                           work_orders[]}                     │
-  └─────────────────────────────────────────────────────────────┘
-                          ↓
-  ┌─────────────────────────────────────────────────────────────┐
-  │ Step 7: ConversationManager 会话管理                            │
-  │  ├─ 记录本轮对话 (ConversationTurn)                              │
-  │  ├─ 更新会话历史                                                │
-  │  └─ session_id 关联多轮对话                                     │
-  └─────────────────────────────────────────────────────────────┘
-                          ↓
-  [返回 DecisionResponse 给前端]
+[用户提问]
+       ↓
+┌─ 记忆注入 ───────────────────────────────────────────────┐
+│ 1. 当前会话记忆：最近 3 轮对话（ConversationManager）       │
+│ 2. 短期记忆检索：SQLite 关键词匹配 + 时间衰减，上限 5 条    │
+│ 3. 长期记忆读取：MEMORY.md（用户偏好 + 重要决策，≤10条）    │
+│    └─ hash 去重：相同内容不重复注入                         │
+└──────────────────────────────────────────────────────────┘
+       ↓
+[进入决策管道]
 ```
 
-### 插件化架构
+### 3.2 RAG 管道模式（默认）
+
+```
+[POST /api/decision/ask]
+       ↓
+┌─ Step 1: QueryAnalyzer 查询分析 ─────────────────────────┐
+│  ├─ LLM 解析用户意图 (intent)                              │
+│  ├─ 识别问题域 (domain)                                   │
+│  ├─ 提取关键实体 (entities)                                │
+│  ├─ 拆分子问题 (sub_questions)                             │
+│  └─ 确定检索策略 (required_sources)                        │
+└──────────────────────────────────────────────────────────┘
+       ↓
+┌─ Step 2: PluginRegistry 路由到领域插件 ───────────────────┐
+│  └─ 根据 domain 查找注册的插件 (如 workforce_plugin)        │
+└──────────────────────────────────────────────────────────┘
+       ↓
+┌─ Step 3: RetrievalOrchestrator 多源检索 ─────────────────┐
+│  ├─ GraphRetriever       → Cypher 查询图谱实体+关系         │
+│  ├─ DatabaseRetriever    → SQL 查询源数据库                 │
+│  └─ DocumentRetriever    → 搜索文档摘要树                    │
+└──────────────────────────────────────────────────────────┘
+       ↓
+┌─ Step 4: EvidenceFusion 证据融合排序 ─────────────────────┐
+│  ├─ 基于 relevance_score 排序                               │
+│  ├─ 去重 (同源相似内容合并)                                  │
+│  └─ 生成 citation 引用标记                                  │
+└──────────────────────────────────────────────────────────┘
+       ↓
+┌─ Step 5: ContextBuilder 构建 LLM 上下文 ─────────────────┐
+│  ├─ 组装 System Prompt (角色 + 指令 + 记忆)                 │
+│  ├─ 填入检索证据 (EvidenceItem 序列化)                       │
+│  ├─ 填入对话历史 (ConversationTurn[])                      │
+│  └─ token 数量估算 (避免超出 LLM 上下文窗口)                   │
+└──────────────────────────────────────────────────────────┘
+       ↓
+┌─ Step 6: LLMReasoner 推理 ───────────────────────────────┐
+│  ├─ 调用 LLM API 生成结构化回答                              │
+│  └─ 解析为 DecisionAnswer {summary, options, recommendation,│
+│                           work_orders[]}                 │
+└──────────────────────────────────────────────────────────┘
+       ↓
+┌─ Step 7: 记录 + 记忆提取 ────────────────────────────────┐
+│  ├─ ConversationManager 记录本轮对话                        │
+│  └─ MemoryExtractor 异步提取 → 短期记忆 → 长期记忆候选       │
+└──────────────────────────────────────────────────────────┘
+       ↓
+[返回 DecisionResponse 给前端]
+```
+
+### 3.3 Tool 推理模式（Skill + MCP）
+
+Tool 推理模式通过 `ToolReasoner` 实现多轮 LLM + 工具调用循环，工具来源包括本地 Skill 和外部 MCP Server。
+
+```
+[POST /api/decision/ask] (decision_mode=skill_reasoning)
+       ↓
+┌─ Step 1: QueryAnalyzer 轻量分析 ─────────────────────────┐
+│  └─ 提取意图 + 实体（不做子问题拆分）                        │
+└──────────────────────────────────────────────────────────┘
+       ↓
+┌─ Step 2: ToolReasoner 多轮推理循环 (max 10 turns) ───────┐
+│  ┌──────────────────────────────────────────────────┐    │
+│  │ 工具列表 = 本地 Skill (8个) + 外部 MCP Tool       │    │
+│  │   ├─ 本地 Skill: skill_registry.get_tool_definitions() │
+│  │   └─ MCP Tool:   mcp_manager.get_tool_definitions()    │
+│  │        └─ 名称以 {server}__ 为前缀，避免冲突         │    │
+│  └──────────────────────────────────────────────────┘    │
+│                         ↓                                 │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │ LOOP:                                            │    │
+│  │  1. LLM call_with_tools(messages, tools)         │    │
+│  │  2. 无 tool_calls → 解析 JSON → DecisionAnswer   │    │
+│  │  3. 有 tool_calls → 按来源路由执行:               │    │
+│  │     ├─ 本地 Skill → skill_registry.execute()     │    │
+│  │     └─ MCP Tool  → mcp_manager.execute()         │    │
+│  │  4. 结果追加到 messages → 回到步骤 1              │    │
+│  └──────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────┘
+       ↓
+[返回 DecisionResponse（含 skill_trace 工具调用记录）]
+```
+
+### 3.4 本地 Skill 体系（8 个内置）
+
+每个 Skill 是一个目录，包含 `SKILL.md`（YAML 元数据）和 `executor.py`（`execute(params) -> dict`）。
+
+| Skill | 类别 | 功能 |
+|------|------|------|
+| `search_entities` | graph | 知识图谱全文搜索实体 |
+| `get_entity_detail` | graph | 获取实体详情 + 最近关系 |
+| `get_entity_relationships` | graph | 获取实体所有关系（入+出） |
+| `analyze_path` | analysis | 实体间最短路径分析 |
+| `analyze_centrality` | analysis | 节点中心性分析（度/介数/紧密度/PageRank） |
+| `analyze_community` | analysis | 社区检测 |
+| `search_documents` | document | 搜索文档摘要 |
+| `query_database` | database | 查询数据库表元数据 |
+
+### 3.5 外部 MCP 工具
+
+通过配置 `config/mcp_servers.json` 连接外部 MCP Server，其工具自动纳入 ToolReasoner 的工具列表。
+
+```json
+{
+  "servers": [
+    {"name": "filesystem", "transport": "stdio", "command": "npx",
+     "args": ["-y", "@modelcontextprotocol/server-filesystem", "/data"]},
+    {"name": "web_search", "transport": "http",
+     "url": "http://search-service:9000/mcp"}
+  ]
+}
+```
+
+### 3.6 插件化架构
 
 ```
 plugin_registry.py
@@ -279,8 +351,6 @@ plugins/
 1. 继承 `BaseDecisionPlugin`
 2. 实现 `run(request)` 方法
 3. 调用 `plugin_registry.register("domain_name", MyPlugin)`
-
----
 
 ## 4. 异步任务管理流程
 

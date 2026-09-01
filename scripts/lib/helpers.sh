@@ -81,15 +81,16 @@ run_cmd_no_fail() {
 
 kill_by_pattern() {
     # 按进程名模式查找并终止进程。参数: <pattern>
+    # 注意: 排除自身及父进程，防止 pgrep -f 匹配到脚本命令行
     local pattern="$1"
     local pids
-    pids=$(pgrep -f "$pattern" 2>/dev/null || true)
+    pids=$(pgrep -f "$pattern" 2>/dev/null | grep -v -w -e "$$" -e "$PPID" || true)
     if [ -n "$pids" ]; then
         log_info "终止进程: $pattern (PID: $pids)"
         echo "$pids" | xargs kill 2>/dev/null || true
         sleep 2
         # 强制终止残留
-        pids=$(pgrep -f "$pattern" 2>/dev/null || true)
+        pids=$(pgrep -f "$pattern" 2>/dev/null | grep -v -w -e "$$" -e "$PPID" || true)
         if [ -n "$pids" ]; then
             echo "$pids" | xargs kill -9 2>/dev/null || true
         fi

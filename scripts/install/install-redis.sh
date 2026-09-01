@@ -25,7 +25,7 @@ install_redis() {
         return 0
     fi
 
-    # 方案 B：apt 安装
+    # 方案 B：系统包管理器安装
     if command -v apt &> /dev/null; then
         print_info "通过 apt 安装 Redis..."
         if sudo apt install -y redis-server; then
@@ -34,6 +34,22 @@ install_redis() {
             return 0
         fi
         log_warn "apt 安装失败，尝试从本地包安装..."
+    elif command -v dnf &> /dev/null; then
+        print_info "通过 dnf 安装 Redis..."
+        if sudo dnf install -y redis; then
+            print_success "Redis 安装完成"
+            configure_redis_system
+            return 0
+        fi
+        log_warn "dnf 安装失败，尝试从本地包安装..."
+    elif command -v yum &> /dev/null; then
+        print_info "通过 yum 安装 Redis..."
+        if sudo yum install -y redis; then
+            print_success "Redis 安装完成"
+            configure_redis_system
+            return 0
+        fi
+        log_warn "yum 安装失败，尝试从本地包安装..."
     fi
 
     # 方案 C：从本地离线包编译安装
@@ -56,7 +72,7 @@ install_redis() {
         fi
     fi
 
-    print_error "无法安装 Redis，请手动安装: sudo apt install redis-server"
+    print_error "无法安装 Redis，请手动安装: sudo dnf install redis  或  sudo apt install redis-server"
     return 1
 }
 
@@ -79,12 +95,16 @@ configure_redis_system() {
     fi
 
     # 启动 Redis
-    if systemctl is-active --quiet redis-server 2>/dev/null; then
-        print_success "Redis 服务已在运行"
-    elif systemctl is-active --quiet redis 2>/dev/null; then
-        print_success "Redis 服务已在运行"
-    else
-        print_info "启动 Redis 服务..."
+    # 检查 systemd 是否可用（WSL 中 systemctl 命令存在但 systemd 未运行）
+    if systemctl is-system-running &>/dev/null; then
+        if systemctl is-active --quiet redis-server 2>/dev/null; then
+            print_success "Redis 服务已在运行 (systemd)"
+            return 0
+        elif systemctl is-active --quiet redis 2>/dev/null; then
+            print_success "Redis 服务已在运行 (systemd)"
+            return 0
+        fi
+        print_info "启动 Redis 服务 (systemd)..."
         if systemctl start redis-server 2>/dev/null; then
             sudo systemctl enable redis-server 2>/dev/null || true
         elif systemctl start redis 2>/dev/null; then
@@ -94,6 +114,15 @@ configure_redis_system() {
             nohup redis-server --daemonize yes --bind 127.0.0.1 --protected-mode no \
                 > /dev/null 2>&1 &
         fi
+    else
+        # 无 systemd（WSL 等），直接启动
+        if pgrep -x redis-server > /dev/null 2>&1; then
+            print_success "Redis 服务已在运行"
+            return 0
+        fi
+        print_info "启动 Redis 服务（后台进程）..."
+        nohup redis-server --daemonize yes --bind 127.0.0.1 --protected-mode no \
+            > /dev/null 2>&1 &
     fi
 
     # 验证连接

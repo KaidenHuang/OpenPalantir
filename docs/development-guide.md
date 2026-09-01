@@ -38,14 +38,15 @@ npm run dev     # 监听 :5175
 ### 运行测试
 
 ```bash
-# 确保后端运行在 localhost:8000
+# 单元测试（无需后端运行）
+cd backend
+python tests/test_memory.py            # 记忆系统
+python tests/test_skill.py              # Skill 加载与注册
+python tests/test_mcp_integration.py    # MCP Client 连接与调用
 
-# 方式一：pytest
+# 集成测试（需后端运行在 localhost:8000）
 cd tests
 pytest -v
-
-# 方式二：集成测试脚本
-python run-all-tests.py
 ```
 
 ---
@@ -65,7 +66,16 @@ OpenPalantir/
 │   ├── models/                  ← ORM 模型 (model/task/database/source/cdc)
 │   ├── knowledge_graph/         ← 图谱 CRUD + 缓存 + 分区
 │   ├── analysis_engine/         ← NetworkX 分析
-│   ├── decision_engine/         ← 决策引擎 (插件化)
+│   ├── decision_engine/         ← 决策引擎
+│   ├── tool_manager/        ← 工具管理层
+│   │   ├── tool_reasoner.py ← 多轮工具推理引擎
+│   │   ├── skill/           ← 本地 Skill 源（加载+注册）
+│   │   ├── mcp/             ← 外部 MCP 工具源（连接+管理）
+│   │   └── prompts/         ← 推理 Prompt 模板
+│   ├── skills/              ← 8 个本地 Skill 实现
+│   ├── memory/              ← 记忆系统（短期+长期）
+│   ├── plugins/             ← 领域插件
+│   └─ ...                   ← 检索器、上下文构建等
 │   ├── document_processing/     ← 文档解析
 │   ├── entity_extraction/       ← LLM 实体提取
 │   ├── pageindex/               ← 文档摘要树
@@ -133,6 +143,102 @@ class MyDomainPlugin(BaseDecisionPlugin):
 # 注册插件 (在 plugin_registry.py 或插件文件末尾)
 from decision_engine.plugin_registry import plugin_registry
 plugin_registry.register("my_domain", MyDomainPlugin)
+```
+
+### 3.3 添加本地 Skill
+
+每个 Skill 是一个目录，包含 `SKILL.md`（元数据）和 `executor.py`（执行函数）。
+
+```bash
+# 目录结构
+backend/decision_engine/skills/my_skill/
+├── SKILL.md        # YAML frontmatter + Markdown 描述
+└── executor.py     # execute(params: dict) -> dict
+```
+
+**SKILL.md 示例**：
+
+```markdown
+---
+name: my_skill
+description: 我的自定义 Skill，执行某项具体任务
+category: analysis
+parameters:
+  - name: input_text
+    type: string
+    description: 输入文本
+    required: true
+  - name: limit
+    type: integer
+    description: 返回数量上限
+    required: false
+---
+# my_skill
+
+详细说明（可选）。
+```
+
+**executor.py 示例**：
+
+```python
+def execute(params: dict) -> dict:
+    """执行 Skill，返回 dict 结果"""
+    text = params.get("input_text", "")
+    limit = params.get("limit", 10)
+    # 业务逻辑...
+    return {"result": text, "count": min(len(text), limit)}
+```
+
+Skill 在启动时自动扫描加载，无需手动注册。可通过 `SkillLoader.load_from_directory()` 或 `SkillRegistry.load_all()` 验证。
+
+### 3.4 配置外部 MCP Server
+
+在 `backend/config/mcp_servers.json` 中配置外部 MCP Server，其工具自动纳入 ToolReasoner 的工具列表。
+
+```json
+{
+  "servers": [
+    {
+      "name": "filesystem",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/data"],
+      "env": {}
+    },
+    {
+      "name": "web_search",
+      "transport": "http",
+      "url": "http://search-service:9000/mcp"
+    }
+  ]
+}
+```
+
+**配置字段说明**：
+
+| 字段 | 说明 |
+|------|------|
+| `name` | 逻辑名称，工具以 `{name}__{tool}` 命名 |
+| `transport` | `"stdio"`（子进程）或 `"http"`（远程 HTTP） |
+| `command` | stdio 模式：启动命令 |
+| `args` | stdio 模式：命令参数 |
+| `url` | HTTP 模式：MCP Server 端点 URL |
+| `env` | 环境变量，支持 `${ENV_VAR}` 替换 |
+
+**使用方式**：
+
+```python
+from decision_engine.tool_manager.mcp import MCPManager, load_mcp_server_configs
+
+configs = load_mcp_server_configs()
+mcp_manager = MCPManager(configs)
+mcp_manager.connect_all()
+
+# 传入 ToolReasoner
+from decision_engine.tool_manager.skill.skill_registry import skill_registry
+from decision_engine.tool_manager.tool_reasoner import ToolReasoner
+
+reasoner = ToolReasoner(skill_registry, mcp_manager=mcp_manager)
 ```
 
 ### 3.3 添加新的前端组件
@@ -304,3 +410,12 @@ A: 检查以下几点：
 3. 源数据库是否开启了 binlog（MySQL）或逻辑复制（PostgreSQL）
 4. 全量导入是否已完成（CDC 依赖全量导入捕获的 binlog/WAL 位点）
 5. 查看后端日志 `logs/backend.log` 中的 CDC 相关错误
+
+**Q: MCP Server 连接失败**
+A: 检查 `backend/config/mcp_servers.json` 配置是否正确。stdio 模式确认命令可执行，HTTP 模式确认 URL 可达。连接失败不影响本地 Skill 使用。
+
+**Q: 如何查看当前加载了哪些 Skill**
+A: 启动日志中会输出 `[skill_registry] 注册 Skill: xxx`，或通过代码 `skill_registry.list_all()` 查看。
+
+**Q: 短期记忆不生效**
+A: 确认 SQLite 数据库正常（`backend/data/sqlite/database.db`），检查日志中 `[memory]` 相关输出。

@@ -83,8 +83,12 @@ def connect(srv):
         key_path = os.path.expanduser(key_path)
         passphrase = srv.get("key_passphrase") or None
         pkey = None
-        for cls in (paramiko.Ed25519Key, paramiko.ECDSAKey,
-                    paramiko.RSAKey, paramiko.DSSKey):
+        key_classes = []
+        for attr in ("Ed25519Key", "ECDSAKey", "RSAKey", "DSSKey"):
+            cls = getattr(paramiko, attr, None)
+            if cls is not None:
+                key_classes.append(cls)
+        for cls in key_classes:
             try:
                 pkey = cls.from_private_key_file(key_path, password=passphrase)
                 break

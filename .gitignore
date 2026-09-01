@@ -46,6 +46,7 @@ dependencies/debezium/extracted/
 dependencies/debezium/local/
 dependencies/neo4j/local/neo4j-5.26.27-1.noarch.rpm
 dependencies/neo4j/local/neo4j-community-5.26.27-windows.zip
+dependencies/neo4j/local/neo4j-community-2026.07.1-unix.tar.gz
 
 # ===== Test Data =====
 tests/*-test-results.json

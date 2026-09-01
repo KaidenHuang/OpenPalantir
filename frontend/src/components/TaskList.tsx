@@ -292,6 +292,7 @@ const TaskList: React.FC = () => {
                   border: '1px solid #ccc',
                   borderRadius: '4px',
                   backgroundColor: '#fff',
+                  color: '#333',
                   cursor: 'pointer'
                 }}
               >

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Button, Input, Switch } from 'antd';
+import { Button, Input, Switch, message } from 'antd';
 import { ReloadOutlined, UndoOutlined } from '@ant-design/icons';
 import { API_CONFIG } from '../config/apiConfig';
 import { logger } from '../services/logger';
@@ -105,6 +105,10 @@ function DatabaseManagement() {
   const [showDeletedConnections, setShowDeletedConnections] = useState(false);
   const [restoringConnectionId, setRestoringConnectionId] = useState<string | null>(null);
   const [dbSummary, setDbSummary] = useState<any>(null);
+
+  // Import state: prevent duplicate task creation
+  const [importTaskId, setImportTaskId] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
 
   // Middle panel: database list
   const [databases, setDatabases] = useState<DatabaseItem[]>([]);
@@ -255,6 +259,8 @@ function DatabaseManagement() {
   const handleSelectConnection = async (connection: DatabaseConnection) => {
     setSelectedConnection(connection);
     setSelectedTable(null);
+    setImportTaskId(null);
+    setIsImporting(false);
   };
 
   const handleTypeChange = (type: DbType) => {
@@ -375,14 +381,19 @@ function DatabaseManagement() {
   };
 
   const handleImport = async () => {
-    if (!selectedConnection) return;
+    if (!selectedConnection || isImporting) return;
+    setIsImporting(true);
     try {
       const response = await axios.post(
         API_CONFIG.endpoints.database.import(selectedConnection.id)
       );
-      alert(`导入任务已创建，任务ID: ${response.data.task_id}`);
+      const newTaskId = response.data.task_id;
+      setImportTaskId(newTaskId);
+      message.success(`导入任务已创建，任务ID: ${newTaskId}`);
     } catch (error) {
       logger.error('DatabaseManagement', '开始导入失败', error);
+      message.error('导入任务创建失败，请重试');
+      setIsImporting(false);
     }
   };
 
@@ -557,8 +568,11 @@ function DatabaseManagement() {
                 <button onClick={handleAnalyze} disabled={isAnalyzing || !selectedDatabase}>
                   {isAnalyzing ? '分析中...' : '分析Schema'}
                 </button>
-                <button onClick={handleImport} disabled={!schemaResult}>
-                  导入图谱
+                <button
+                  onClick={handleImport}
+                  disabled={!schemaResult || isImporting || importTaskId !== null}
+                >
+                  {isImporting ? '导入中...' : importTaskId ? '已创建任务' : '导入图谱'}
                 </button>
                 <button onClick={handleStartCdc} disabled={!selectedDatabase}>
                   增量同步

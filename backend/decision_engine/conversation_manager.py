@@ -69,15 +69,16 @@ class _ConversationManager:
         self._save(session)
         return turn_id
 
-    def get_history(self, session_id: str) -> List[Dict]:
+    def get_history(self, session_id: str, max_turns: int = 3) -> List[Dict]:
         session = self._cache.get(session_id) or self._load(session_id)
         if not session:
             return []
         self._cache[session_id] = session
+        turns = session.turns if max_turns <= 0 else session.turns[-max_turns:]
         return [
             {"turn_id": t.turn_id, "question": t.question,
              "summary": t.answer.summary, "timestamp": t.timestamp}
-            for t in session.turns[-5:]
+            for t in turns
         ]
 
     def get_session(self, session_id: str) -> Optional[ConversationSession]:
@@ -85,6 +86,11 @@ class _ConversationManager:
         if session:
             self._cache[session_id] = session
         return session
+
+    def save_session(self, session: ConversationSession):
+        """持久化会话（公开接口，供外部更新 long_term_memory_hash 等字段后调用）"""
+        self._cache[session.session_id] = session
+        self._save(session)
 
 
 conv_manager = _ConversationManager()

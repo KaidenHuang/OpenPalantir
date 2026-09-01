@@ -9,6 +9,9 @@ source "$SCRIPT_DIR/../lib/helpers.sh"
 
 init_log "stop-services"
 
+# 忽略 SIGTERM，防止 kill_by_pattern 发送的信号在 WSL 中传播到自身
+trap '' SIGTERM
+
 COMPOSE_FILE="$PROJECT_ROOT/deploy/docker-compose.yml"
 INSTANCES_DIR="$(debezium_instances_dir)"
 NEO4J_EXTRACTED_DIR="$PROJECT_ROOT/dependencies/neo4j/extracted"
@@ -47,7 +50,7 @@ stop_services() {
         print_info "停止 Neo4j（原生）..."
         "$neo4j_home/bin/neo4j" stop 2>/dev/null || true
     fi
-    kill_by_pattern "neo4j"
+    kill_by_pattern "org.neo4j"
 
     # 3. 停止原生 Redis
     print_info "停止 Redis（原生）..."

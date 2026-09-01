@@ -11,7 +11,7 @@ init_log "install-neo4j"
 
 NEO4J_LOCAL_DIR="$PROJECT_ROOT/dependencies/neo4j/local"
 NEO4J_EXTRACTED_DIR="$PROJECT_ROOT/dependencies/neo4j/extracted"
-NEO4J_VERSION="5.26.27"
+NEO4J_VERSION="2026.07.1"
 NEO4J_PASSWORD="1234qwer"
 NEO4J_HOME_DIR=""
 
@@ -21,8 +21,8 @@ check_java() {
     print_info "检查 Java 版本..."
 
     if ! command -v java &> /dev/null; then
-        print_error "未找到 Java。Neo4j 5.x 需要 Java 17 或 21"
-        print_info "安装: sudo apt install -y openjdk-17-jdk"
+        print_error "未找到 Java。Neo4j 需要 Java 17 或更高版本"
+        print_info "安装: sudo dnf install -y java-21-openjdk-devel  或  sudo apt install -y openjdk-21-jdk"
         return 1
     fi
 
@@ -32,10 +32,28 @@ check_java() {
 
     local major
     major=$(echo "$java_ver" | grep -oP '"(\d+)' | tr -d '"')
-    if [ "$major" = "17" ] || [ "$major" = "21" ]; then
-        print_success "Java $major 支持 Neo4j 5.x"
+
+    # 根据 Neo4j 版本判断 Java 需求
+    # Neo4j 2025+ (日历版本) 需要 Java 21+
+    # Neo4j 5.x 需要 Java 17 或 21
+    local neo4j_major
+    neo4j_major=$(echo "$NEO4J_VERSION" | cut -d'.' -f1)
+    if [ "$neo4j_major" -ge 2025 ] 2>/dev/null; then
+        # Neo4j 2025+ 日历版本
+        if [ "$major" -ge 21 ] 2>/dev/null; then
+            print_success "Java $major 支持 Neo4j $NEO4J_VERSION"
+        else
+            print_error "Neo4j $NEO4J_VERSION 需要 Java 21 或更高版本，当前 Java $major"
+            print_info "安装: sudo dnf install -y java-21-openjdk-devel  或  sudo apt install -y openjdk-21-jdk"
+            return 1
+        fi
     else
-        print_warn "Java $major 非推荐版本，Neo4j 5.x 建议 Java 17 或 21"
+        # Neo4j 5.x 传统版本
+        if [ "$major" = "17" ] || [ "$major" = "21" ]; then
+            print_success "Java $major 支持 Neo4j"
+        else
+            print_warn "Java $major 非推荐版本，建议 Java 17 或 21"
+        fi
     fi
 }
 
@@ -44,7 +62,32 @@ check_java() {
 extract_neo4j() {
     print_info "解压 Neo4j..."
 
+    # 清理旧版解压目录，避免多版本冲突
+    if [ -d "$NEO4J_EXTRACTED_DIR" ]; then
+        local old_dirs
+        old_dirs=$(find "$NEO4J_EXTRACTED_DIR" -maxdepth 1 -type d -name "neo4j-community-*" 2>/dev/null)
+        if [ -n "$old_dirs" ]; then
+            print_info "清理旧版 Neo4j 解压目录..."
+            echo "$old_dirs" | while read -r dir; do
+                log_info "删除: $dir"
+                rm -rf "$dir"
+            done
+        fi
+    fi
+
     mkdir -p "$NEO4J_EXTRACTED_DIR"
+
+    # 检查分块文件并重新组装
+    local first_part
+    first_part=$(ls "$NEO4J_LOCAL_DIR"/neo4j-community-*.tar.gz.part00 2>/dev/null | head -1)
+    if [ -n "$first_part" ]; then
+        local base_name="${first_part%.part00}"
+        if [ ! -f "$base_name" ]; then
+            print_info "检测到分块文件，正在组装..."
+            cat "$NEO4J_LOCAL_DIR"/neo4j-community-*.tar.gz.part* > "$base_name"
+            print_success "安装包组装完成: $(basename "$base_name")"
+        fi
+    fi
 
     # 尝试从本地包解压
     local neo4j_archive
@@ -120,6 +163,13 @@ configure_neo4j() {
         echo "server.directories.transaction.logs.root=$data_dir/transactions" >> "$conf_file"
     fi
 
+    # 设置监听地址为 0.0.0.0（WSL2/Docker 环境需要）
+    if grep -q "^#\?server\.default_listen_address=" "$conf_file"; then
+        sed -i "s|^#\?server\.default_listen_address=.*|server.default_listen_address=0.0.0.0|" "$conf_file"
+    else
+        echo "server.default_listen_address=0.0.0.0" >> "$conf_file"
+    fi
+
     print_success "Neo4j 配置完成"
 }
 
@@ -157,11 +207,21 @@ start_neo4j() {
     # 设置 NEO4J_HOME
     export NEO4J_HOME="$NEO4J_HOME_DIR"
 
-    if run_cmd "启动 Neo4j" -- "$neo4j_bin" start; then
-        print_success "Neo4j 已启动"
+    # 判断是否可用 systemd（WSL 中 systemctl 存在但 systemd 未运行）
+    if systemctl is-system-running &>/dev/null; then
+        # 有 systemd，使用 daemon 模式
+        if run_cmd "启动 Neo4j" -- "$neo4j_bin" start; then
+            print_success "Neo4j 已启动"
+        else
+            print_warn "Neo4j 启动可能失败，查看日志: $NEO4J_HOME_DIR/logs/neo4j.log"
+            return 1
+        fi
     else
-        print_warn "Neo4j 启动可能失败，查看日志: $NEO4J_HOME_DIR/logs/neo4j.log"
-        return 1
+        # 无 systemd（WSL），使用 console 模式 + setsid 彻底分离进程
+        log_info "检测到无 systemd 环境，使用 console 模式启动 Neo4j..."
+        setsid "$neo4j_bin" console > "$PROJECT_ROOT/logs/neo4j-console.log" 2>&1 &
+        disown
+        print_success "Neo4j 已启动（console 模式）"
     fi
 
     # 等待就绪

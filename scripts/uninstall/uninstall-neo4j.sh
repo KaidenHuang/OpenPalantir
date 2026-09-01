@@ -8,6 +8,9 @@ source "$SCRIPT_DIR/../lib/helpers.sh"
 
 init_log "uninstall-neo4j"
 
+# 忽略 SIGTERM，防止 kill_by_pattern 发送的信号在 WSL 中传播到自身
+trap '' SIGTERM
+
 print_info "卸载 Neo4j..."
 
 # 查找 Neo4j 安装目录
@@ -20,7 +23,7 @@ if [ -n "$NEO4J_HOME_DIR" ] && [ -f "$NEO4J_HOME_DIR/bin/neo4j" ]; then
 fi
 
 # 停止所有 Neo4j Java 进程
-kill_by_pattern "neo4j"
+kill_by_pattern "org.neo4j"
 
 # 删除解压目录
 if [ -d "$NEO4J_EXTRACTED_DIR" ]; then
