@@ -110,6 +110,82 @@ start_neo4j_native() {
     return 1
 }
 
+# ── 后端 (FastAPI) ──────────────────────────────────────────
+
+start_backend() {
+    print_info "启动后端 (FastAPI)..."
+
+    if pgrep -f "uvicorn main:app" > /dev/null 2>&1; then
+        print_success "后端已在运行"
+        return 0
+    fi
+
+    local backend_dir
+    backend_dir=$(backend_dir)
+
+    if [ ! -f "$backend_dir/venv/bin/activate" ]; then
+        print_error "Python 虚拟环境不存在: $backend_dir/venv"
+        return 1
+    fi
+
+    cd "$backend_dir"
+    source venv/bin/activate
+    setsid uvicorn main:app --reload --host 0.0.0.0 --port 8000 \
+        >> "$PROJECT_ROOT/logs/backend.log" 2>&1 &
+    disown
+    cd "$PROJECT_ROOT"
+
+    print_info "等待后端就绪..."
+    local max_wait=30 waited=0
+    while [ $waited -lt $max_wait ]; do
+        if curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/docs 2>/dev/null | grep -q 200; then
+            print_success "后端已就绪 (http://localhost:8000)"
+            return 0
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+    print_warn "后端启动超时，请检查 logs/backend.log"
+    return 1
+}
+
+# ── 前端 (Vite) ─────────────────────────────────────────────
+
+start_frontend() {
+    print_info "启动前端 (Vite)..."
+
+    if pgrep -f "vite" > /dev/null 2>&1; then
+        print_success "前端已在运行"
+        return 0
+    fi
+
+    local frontend_dir
+    frontend_dir=$(frontend_dir)
+
+    if [ ! -f "$frontend_dir/package.json" ]; then
+        print_error "前端项目不存在: $frontend_dir"
+        return 1
+    fi
+
+    cd "$frontend_dir"
+    setsid npm run dev >> "$PROJECT_ROOT/logs/frontend.log" 2>&1 &
+    disown
+    cd "$PROJECT_ROOT"
+
+    print_info "等待前端就绪..."
+    local max_wait=30 waited=0
+    while [ $waited -lt $max_wait ]; do
+        if curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5175/ 2>/dev/null | grep -q 200; then
+            print_success "前端已就绪 (http://localhost:5175)"
+            return 0
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+    print_warn "前端启动超时，请检查 logs/frontend.log"
+    return 1
+}
+
 # ── Docker 回退 ─────────────────────────────────────────────
 
 start_docker() {
@@ -165,6 +241,12 @@ start_services() {
             return 1
         }
     fi
+
+    echo ""
+    print_info "启动应用服务 (后端 + 前端)..."
+
+    start_backend
+    start_frontend
 }
 
 start_services
@@ -174,3 +256,5 @@ print_info "端口:"
 echo "  Neo4j Bolt:     7687"
 echo "  Neo4j Browser:  7474 (http://localhost:7474)"
 echo "  Redis:          6379"
+echo "  后端 API:       8000 (http://localhost:8000)"
+echo "  前端页面:       5175 (http://localhost:5175)"

@@ -1,7 +1,8 @@
 """
 记忆提取器 — 使用 LLM 从对话轮次中提取短期记忆和长期记忆候选
+单 worker 线程串行处理，避免多线程竞争 MEMORY.md
 """
-import json
+import queue
 import threading
 from typing import Dict, List, Optional
 
@@ -10,10 +11,13 @@ from system.logger import logger
 
 
 class MemoryExtractor:
-    """LLM 记忆提取器"""
+    """LLM 记忆提取器（单 worker 线程）"""
 
     def __init__(self):
         self._model_client = None
+        self._task_queue = queue.Queue(maxsize=20)
+        self._worker = threading.Thread(target=self._run_worker, daemon=True)
+        self._worker.start()
 
     @property
     def model_client(self):
@@ -23,84 +27,94 @@ class MemoryExtractor:
 
     def extract_async(self, question: str, answer_summary: str,
                       session_id: str, domain: str):
-        """异步提取记忆（后台线程）"""
+        """提交提取任务到队列（非阻塞），由单 worker 线程串行处理"""
         if not self.model_client:
             logger.warning("[memory] LLM 不可用，跳过记忆提取")
             return
 
-        thread = threading.Thread(
-            target=self._extract_and_store,
-            args=(question, answer_summary, session_id, domain),
-            daemon=True,
-        )
-        thread.start()
+        try:
+            self._task_queue.put_nowait(
+                (question, answer_summary, session_id, domain)
+            )
+        except queue.Full:
+            logger.warning("[memory] 任务队列已满，跳过本次记忆提取")
+
+    def _run_worker(self):
+        """单 worker 线程，串行处理所有提取任务"""
+        while True:
+            try:
+                question, answer_summary, session_id, domain = (
+                    self._task_queue.get(timeout=30)
+                )
+            except queue.Empty:
+                continue
+            try:
+                self._extract_and_store(
+                    question, answer_summary, session_id, domain
+                )
+            except Exception as e:
+                logger.error(f"[memory] worker 处理失败: {e}")
 
     def _extract_and_store(self, question: str, answer_summary: str,
                            session_id: str, domain: str):
         """提取记忆并存储到 MemoryManager"""
-        try:
-            result = self._call_llm_extract(question, answer_summary)
+        result = self._call_llm_extract(question, answer_summary)
 
-            if not result:
-                return
+        if not result:
+            return
 
-            # 导入放在这里避免循环依赖
-            from decision_engine.memory.memory_manager import memory_manager
+        # 导入放在这里避免循环依赖
+        from decision_engine.memory.memory_manager import memory_manager
 
-            # 存储短期记忆
-            short_term = result.get("short_term", [])
-            if short_term:
-                for entry in short_term:
-                    memory_manager.add_short_term(
-                        content=entry.get("content", ""),
-                        category=entry.get("category", "fact"),
-                        importance=entry.get("importance", 0.5),
-                        session_id=session_id,
-                        domain=domain,
+        # 存储短期记忆
+        short_term = result.get("short_term", [])
+        if short_term:
+            for entry in short_term:
+                memory_manager.add_short_term(
+                    content=entry.get("content", ""),
+                    category=entry.get("category", "fact"),
+                    importance=entry.get("importance", 0.5),
+                    session_id=session_id,
+                    domain=domain,
+                )
+            logger.info(f"[memory] 提取了 {len(short_term)} 条短期记忆")
+
+        # 长期记忆：原子更新（读-合并-去重-写在锁内一步完成）
+        long_term_candidates = result.get("long_term_candidates", [])
+        if long_term_candidates:
+            new_prefs = [
+                c["content"] for c in long_term_candidates
+                if c.get("category") == "preference"
+            ]
+            new_decs = [
+                c["content"] for c in long_term_candidates
+                if c.get("category") == "decision"
+            ]
+            if new_prefs or new_decs:
+                # 检查是否需要提炼（先读取现有数据判断总数）
+                existing = memory_manager.read_long_term_memories() or {
+                    "preferences": [], "decisions": []
+                }
+                total = (
+                    len(existing["preferences"]) + len(new_prefs) +
+                    len(existing["decisions"]) + len(new_decs)
+                )
+                if total > 10:
+                    condensed = self._condense_long_term(
+                        existing, new_prefs, new_decs
                     )
-                logger.info(f"[memory] 提取了 {len(short_term)} 条短期记忆")
-
-            # 合并长期记忆候选
-            long_term_candidates = result.get("long_term_candidates", [])
-            if long_term_candidates:
-                new_prefs = [
-                    c["content"] for c in long_term_candidates
-                    if c.get("category") == "preference"
-                ]
-                new_decs = [
-                    c["content"] for c in long_term_candidates
-                    if c.get("category") == "decision"
-                ]
-                if new_prefs or new_decs:
-                    # 检查是否需要提炼
-                    existing = memory_manager.read_long_term_memories() or {
-                        "preferences": [], "decisions": []
-                    }
-                    total = (
-                        len(existing["preferences"]) + len(new_prefs) +
-                        len(existing["decisions"]) + len(new_decs)
+                    if condensed:
+                        memory_manager.write_long_term_memories(
+                            condensed["preferences"],
+                            condensed["decisions"],
+                        )
+                        logger.info("[memory] 长期记忆已提炼更新")
+                else:
+                    memory_manager.update_long_term(new_prefs, new_decs)
+                    logger.info(
+                        f"[memory] 长期记忆候选: "
+                        f"偏好={len(new_prefs)}条, 决策={len(new_decs)}条"
                     )
-                    if total > 10:
-                        condensed = self._condense_long_term(
-                            existing, new_prefs, new_decs
-                        )
-                        if condensed:
-                            memory_manager.write_long_term_memories(
-                                condensed["preferences"],
-                                condensed["decisions"],
-                            )
-                            logger.info("[memory] 长期记忆已提炼更新")
-                    else:
-                        memory_manager.merge_long_term_memories(
-                            new_prefs, new_decs
-                        )
-                        logger.info(
-                            f"[memory] 长期记忆候选: "
-                            f"偏好={len(new_prefs)}条, 决策={len(new_decs)}条"
-                        )
-
-        except Exception as e:
-            logger.error(f"[memory] 记忆提取失败: {e}")
 
     def _call_llm_extract(self, question: str,
                           answer_summary: str) -> Optional[dict]:

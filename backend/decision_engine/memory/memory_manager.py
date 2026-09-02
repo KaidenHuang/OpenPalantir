@@ -4,6 +4,7 @@
 import hashlib
 import os
 import re
+import threading
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
@@ -28,6 +29,9 @@ MAX_LONG_TERM_CHARS = 300
 
 class MemoryManager:
     """记忆管理器 — 短期记忆（SQLite）+ 长期记忆（MEMORY.md）"""
+
+    def __init__(self):
+        self._lock = threading.Lock()
 
     # ─── 短期记忆 ────────────────────────────────────────
 
@@ -166,54 +170,70 @@ class MemoryManager:
 
     def read_long_term_memories(self) -> Optional[dict]:
         """读取 MEMORY.md，返回 {preferences: [...], decisions: [...]}"""
-        try:
-            if not os.path.isfile(_MEMORY_FILE):
-                self._ensure_memory_file()
+        with self._lock:
+            try:
+                if not os.path.isfile(_MEMORY_FILE):
+                    return None
+
+                with open(_MEMORY_FILE, "r", encoding="utf-8") as f:
+                    content = f.read()
+
+                return self._parse_memory_md(content)
+            except Exception as e:
+                logger.error(f"[memory] 读取长期记忆失败: {e}")
                 return None
-
-            with open(_MEMORY_FILE, "r", encoding="utf-8") as f:
-                content = f.read()
-
-            return self._parse_memory_md(content)
-        except Exception as e:
-            logger.error(f"[memory] 读取长期记忆失败: {e}")
-            return None
 
     def merge_long_term_memories(self, new_prefs: List[str],
                                  new_decisions: List[str]) -> bool:
-        """合并新的长期记忆候选，自动去重和超限提炼"""
-        existing = self.read_long_term_memories() or {"preferences": [], "decisions": []}
+        """[已废弃] 请使用 update_long_term() 代替"""
+        return self.update_long_term(new_prefs, new_decisions)
 
-        # 去重合并
-        all_prefs = existing["preferences"] + [
-            p for p in new_prefs
-            if not any(self._is_similar(p, ep) for ep in existing["preferences"])
-        ]
-        all_decs = existing["decisions"] + [
-            d for d in new_decisions
-            if not any(self._is_similar(d, ed) for ed in existing["decisions"])
-        ]
-
-        return self._write_long_term(all_prefs, all_decs)
+    def update_long_term(self, new_prefs: List[str],
+                         new_decisions: List[str]) -> bool:
+        """原子更新长期记忆：读取现有 → 去重合并 → 写入（锁内一步完成）"""
+        with self._lock:
+            existing = self._read_existing()
+            all_prefs = existing["preferences"] + [
+                p for p in new_prefs
+                if not any(self._is_similar(p, ep) for ep in existing["preferences"])
+            ]
+            all_decs = existing["decisions"] + [
+                d for d in new_decisions
+                if not any(self._is_similar(d, ed) for ed in existing["decisions"])
+            ]
+            return self._write_long_term_locked(all_prefs, all_decs)
 
     def write_long_term_memories(self, preferences: List[str],
                                  decisions: List[str]) -> bool:
-        """写入长期记忆（公开接口，用于提炼后的记忆覆写）"""
-        return self._write_long_term(preferences, decisions)
+        """覆写长期记忆（用于提炼后的记忆覆写）"""
+        with self._lock:
+            return self._write_long_term_locked(preferences, decisions)
 
     def get_long_term_hash(self) -> str:
         """获取 MEMORY.md 内容的 MD5 hash，用于多轮去重"""
+        with self._lock:
+            try:
+                if not os.path.isfile(_MEMORY_FILE):
+                    return ""
+                with open(_MEMORY_FILE, "r", encoding="utf-8") as f:
+                    return hashlib.md5(f.read().encode()).hexdigest()
+            except Exception:
+                return ""
+
+    def _read_existing(self) -> dict:
+        """在锁内读取现有长期记忆，文件不存在时返回空结构（调用方必须持有 _lock）"""
         try:
             if not os.path.isfile(_MEMORY_FILE):
-                return ""
+                return {"preferences": [], "decisions": []}
             with open(_MEMORY_FILE, "r", encoding="utf-8") as f:
-                return hashlib.md5(f.read().encode()).hexdigest()
-        except Exception:
-            return ""
+                return self._parse_memory_md(f.read())
+        except Exception as e:
+            logger.error(f"[memory] 锁内读取长期记忆失败: {e}")
+            return {"preferences": [], "decisions": []}
 
-    def _write_long_term(self, preferences: List[str],
-                         decisions: List[str]) -> bool:
-        """写入 MEMORY.md，自动检查限值，超限则调用 LLM 提炼"""
+    def _write_long_term_locked(self, preferences: List[str],
+                                 decisions: List[str]) -> bool:
+        """写入 MEMORY.md（调用方必须持有 _lock）"""
         try:
             # 检查是否超限
             total = len(preferences) + len(decisions)
@@ -222,10 +242,8 @@ class MemoryManager:
             if total > MAX_LONG_TERM_ITEMS or total_chars > MAX_LONG_TERM_CHARS:
                 logger.info(
                     f"[memory] 长期记忆超限 (条目={total}/{MAX_LONG_TERM_ITEMS}, "
-                    f"字数={total_chars}/{MAX_LONG_TERM_CHARS})，需要提炼"
+                    f"字数={total_chars}/{MAX_LONG_TERM_CHARS})，截断保留最新"
                 )
-                # 超限提炼由 MemoryExtractor._condense_long_term() 处理
-                # 这里先按简单策略截断：保留最新的
                 preferences = preferences[-MAX_LONG_TERM_ITEMS // 2:]
                 decisions = decisions[-MAX_LONG_TERM_ITEMS // 2:]
 

@@ -52,7 +52,8 @@ class _ConversationManager:
     def add_turn(self, session_id: str, question: str,
                  analyzed_query: AnalyzedQuery, answer: DecisionAnswer,
                  evidence: Optional[List[EvidenceItem]] = None,
-                 evidence_citations: Optional[List[EvidenceCitation]] = None) -> str:
+                 evidence_citations: Optional[List[EvidenceCitation]] = None,
+                 response_type: str = "normal") -> str:
         session = self._cache.get(session_id) or self._load(session_id)
         if not session:
             session_id = self.get_or_create(session_id)
@@ -64,6 +65,7 @@ class _ConversationManager:
             evidence=evidence or [],
             evidence_citations=evidence_citations or [],
             timestamp=datetime.now().isoformat(),
+            response_type=response_type,
         ))
         session.updated_at = datetime.now().isoformat()
         self._save(session)

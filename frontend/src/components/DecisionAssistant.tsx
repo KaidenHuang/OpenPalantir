@@ -75,6 +75,7 @@ interface DecisionResponse {
   answer: DecisionAnswer;
   skill_trace?: SkillTraceStep[];
   decision_mode?: string;
+  response_type?: string;  // "normal" | "simple" | "no_data"
 }
 
 interface ChatMessage {
@@ -180,6 +181,7 @@ function DecisionAssistant() {
               evidence: turn.evidence || [],
               evidence_citations: turn.evidence_citations || [],
               answer: turn.answer,
+              response_type: turn.response_type || 'normal',
             },
           });
         }
@@ -284,113 +286,152 @@ function DecisionAssistant() {
                     {msg.content && <p style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</p>}
                     {msg.result && (
                       <div className="decision-result">
-                        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
-                          <div><strong>场景：</strong>{msg.result.domain}</div>
-                          <div><strong>意图：</strong>{msg.result.intent}</div>
-                        </div>
-
-                        {msg.result.answer.key_issues?.length > 0 && (
-                          <div style={{ marginBottom: 8 }}>
-                            <h4>关键问题</h4>
-                            {msg.result.answer.key_issues.map((ki, idx) => (
-                              <div key={idx} className="decision-card" style={{ marginBottom: 6 }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                                  <span style={severityBadge(ki.severity)}>{ki.severity}</span>
-                                  <strong>{ki.issue}</strong>
-                                </div>
-                                {ki.evidence?.length > 0 && (
-                                  <div style={{ fontSize: 12, color: '#666' }}>
-                                    证据：{ki.evidence.join(', ')}
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        {msg.result.answer.options?.length > 0 && (
-                          <div style={{ marginBottom: 8 }}>
-                            <h4>可选方案</h4>
-                            {msg.result.answer.options.map((opt, idx) => (
-                              <div key={idx} className="decision-card" style={{ marginBottom: 8 }}>
-                                <strong>{opt.name}</strong>
-                                <p style={{ margin: '4px 0', fontSize: 12, color: '#555' }}>{opt.description}</p>
-                                {opt.pros?.length > 0 && (
-                                  <div style={{ fontSize: 12, color: '#27ae60' }}>优势：{opt.pros.join('、')}</div>
-                                )}
-                                {opt.cons?.length > 0 && (
-                                  <div style={{ fontSize: 12, color: '#e74c3c' }}>劣势：{opt.cons.join('、')}</div>
-                                )}
-                                {opt.risks?.length > 0 && (
-                                  <div style={{ fontSize: 12, color: '#f39c12' }}>风险：{opt.risks.join('、')}</div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        {msg.result.answer.recommendation && (
-                          <div style={{ marginBottom: 8, padding: '8px 10px', background: '#e8f5e9', borderRadius: 6 }}>
-                            <strong>推荐方案：</strong>{msg.result.answer.recommendation}
-                          </div>
-                        )}
-
-                        {msg.result.answer.work_orders?.length > 0 && (
-                          <div style={{ marginBottom: 8 }}>
-                            <h4>行动工单</h4>
-                            <div className="decision-workorders">
-                              {msg.result.answer.work_orders.map((wo, idx) => (
-                                <div className="decision-card" key={`${wo.title}-${idx}`}>
-                                  <div><strong>{wo.title}</strong></div>
-                                  <div style={{ fontSize: 12, marginTop: 4 }}>
-                                    <span style={{ ...severityBadge(prioritySeverity(wo.priority)), marginRight: 6 }}>
-                                      {wo.priority}
-                                    </span>
-                                    <span>{wo.owner_role}</span>
-                                  </div>
-                                  {wo.steps?.length > 0 && (
-                                    <div style={{ marginTop: 6, fontSize: 12 }}>
-                                      <strong>步骤：</strong>
-                                      <ol style={{ margin: '4px 0', paddingLeft: 18 }}>
-                                        {wo.steps.map((s, si) => <li key={si}>{s}</li>)}
-                                      </ol>
-                                    </div>
-                                  )}
-                                  {wo.acceptance_criteria?.length > 0 && (
-                                    <div style={{ marginTop: 4, fontSize: 12 }}>
-                                      <strong>验收标准：</strong>
-                                      <ul style={{ margin: '4px 0', paddingLeft: 18 }}>
-                                        {wo.acceptance_criteria.map((ac, ai) => <li key={ai}>{ac}</li>)}
-                                      </ul>
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
+                        {/* 简单响应：只显示纯文本，隐藏所有决策面板 */}
+                        {msg.result.response_type !== 'simple' && (
+                          <>
+                            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
+                              <div><strong>场景：</strong>{msg.result.domain}</div>
+                              <div><strong>意图：</strong>{msg.result.intent}</div>
                             </div>
-                          </div>
-                        )}
 
-                        {msg.result.evidence_citations?.length > 0 && (
-                          <div style={{ marginTop: 8 }}>
-                            <h4
-                              onClick={() => toggleSection(`citations-${msg.id}`)}
-                              style={{ cursor: 'pointer', userSelect: 'none', fontSize: 13, margin: 0 }}
-                            >
-                              {expandedSections[`citations-${msg.id}`] ? '▼ ' : '▶ '}证据引用
-                            </h4>
-                            {expandedSections[`citations-${msg.id}`] && (
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
-                                {msg.result.evidence_citations.map((cit, idx) => (
-                                  <span key={idx} style={{
-                                    fontSize: 11, padding: '2px 8px', background: '#eef',
-                                    borderRadius: 12, color: '#446',
-                                  }}>
-                                    {cit.citation}
-                                  </span>
+                            {msg.result.answer.key_issues?.length > 0 && (
+                              <div style={{ marginBottom: 8 }}>
+                                <h4>关键问题</h4>
+                                {msg.result.answer.key_issues.map((ki, idx) => (
+                                  <div key={idx} className="decision-card" style={{ marginBottom: 6 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                                      <span style={severityBadge(ki.severity)}>{ki.severity}</span>
+                                      <strong>{ki.issue}</strong>
+                                    </div>
+                                    {ki.evidence?.length > 0 && (
+                                      <div style={{ fontSize: 12, color: '#666' }}>
+                                        证据：{ki.evidence.join(', ')}
+                                      </div>
+                                    )}
+                                  </div>
                                 ))}
                               </div>
                             )}
+
+                            {msg.result.answer.options?.length > 0 && (
+                              <div style={{ marginBottom: 8 }}>
+                                <h4>可选方案</h4>
+                                {msg.result.answer.options.map((opt, idx) => (
+                                  <div key={idx} className="decision-card" style={{ marginBottom: 8 }}>
+                                    <strong>{opt.name}</strong>
+                                    <p style={{ margin: '4px 0', fontSize: 12, color: '#555' }}>{opt.description}</p>
+                                    {opt.pros?.length > 0 && (
+                                      <div style={{ fontSize: 12, color: '#27ae60' }}>优势：{opt.pros.join('、')}</div>
+                                    )}
+                                    {opt.cons?.length > 0 && (
+                                      <div style={{ fontSize: 12, color: '#e74c3c' }}>劣势：{opt.cons.join('、')}</div>
+                                    )}
+                                    {opt.risks?.length > 0 && (
+                                      <div style={{ fontSize: 12, color: '#f39c12' }}>风险：{opt.risks.join('、')}</div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {msg.result.answer.recommendation && (
+                              <div style={{ marginBottom: 8, padding: '8px 10px', background: '#e8f5e9', borderRadius: 6 }}>
+                                <strong>推荐方案：</strong>{msg.result.answer.recommendation}
+                              </div>
+                            )}
+
+                            {msg.result.answer.work_orders?.length > 0 && (
+                              <div style={{ marginBottom: 8 }}>
+                                <h4>行动工单</h4>
+                                <div className="decision-workorders">
+                                  {msg.result.answer.work_orders.map((wo, idx) => (
+                                    <div className="decision-card" key={`${wo.title}-${idx}`}>
+                                      <div><strong>{wo.title}</strong></div>
+                                      <div style={{ fontSize: 12, marginTop: 4 }}>
+                                        <span style={{ ...severityBadge(prioritySeverity(wo.priority)), marginRight: 6 }}>
+                                          {wo.priority}
+                                        </span>
+                                        <span>{wo.owner_role}</span>
+                                      </div>
+                                      {wo.steps?.length > 0 && (
+                                        <div style={{ marginTop: 6, fontSize: 12 }}>
+                                          <strong>步骤：</strong>
+                                          <ol style={{ margin: '4px 0', paddingLeft: 18 }}>
+                                            {wo.steps.map((s, si) => <li key={si}>{s}</li>)}
+                                          </ol>
+                                        </div>
+                                      )}
+                                      {wo.acceptance_criteria?.length > 0 && (
+                                        <div style={{ marginTop: 4, fontSize: 12 }}>
+                                          <strong>验收标准：</strong>
+                                          <ul style={{ margin: '4px 0', paddingLeft: 18 }}>
+                                            {wo.acceptance_criteria.map((ac, ai) => <li key={ai}>{ac}</li>)}
+                                          </ul>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        )}
+
+                        {/* 无数据响应：额外提示横幅 */}
+                        {msg.result.response_type === 'no_data' && (
+                          <div style={{ marginTop: 8, padding: '8px 10px', background: '#fff3e0', borderRadius: 6, fontSize: 12 }}>
+                            <strong>提示：</strong>未找到相关数据，请尝试调整查询条件或确认数据源已接入。
                           </div>
+                        )}
+
+                        {/* 证据引用和证据详情：仅 normal 响应展示 */}
+                        {msg.result.response_type !== 'simple' && msg.result.response_type !== 'no_data' && (
+                          <>
+                            {msg.result.evidence_citations?.length > 0 && (
+                              <div style={{ marginTop: 8 }}>
+                                <h4
+                                  onClick={() => toggleSection(`citations-${msg.id}`)}
+                                  style={{ cursor: 'pointer', userSelect: 'none', fontSize: 13, margin: 0 }}
+                                >
+                                  {expandedSections[`citations-${msg.id}`] ? '▼ ' : '▶ '}证据引用
+                                </h4>
+                                {expandedSections[`citations-${msg.id}`] && (
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                                    {msg.result.evidence_citations.map((cit, idx) => (
+                                      <span key={idx} style={{
+                                        fontSize: 11, padding: '2px 8px', background: '#eef',
+                                        borderRadius: 12, color: '#446',
+                                      }}>
+                                        {cit.citation}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {msg.result.evidence?.length > 0 && (
+                              <div style={{ marginTop: 8 }}>
+                                <h4
+                                  onClick={() => toggleSection(`details-${msg.id}`)}
+                                  style={{ cursor: 'pointer', userSelect: 'none', fontSize: 13, margin: 0 }}
+                                >
+                                  {expandedSections[`details-${msg.id}`] ? '▼ ' : '▶ '}证据详情
+                                </h4>
+                                {expandedSections[`details-${msg.id}`] && (
+                                  <ul style={{ marginTop: 6, marginBottom: 0 }}>
+                                    {msg.result.evidence.map((e) => (
+                                      <li key={e.evidence_id} style={{ fontSize: 12, marginBottom: 4 }}>
+                                        <span style={{ color: '#888' }}>[{e.source_type}]</span>{' '}
+                                        {e.citation && <span style={{ color: '#446', fontWeight: 600 }}>{e.citation}</span>}
+                                        <span style={{ color: '#666' }}> — {e.summary?.slice(0, 120)}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            )}
+                          </>
                         )}
 
                         {msg.result.skill_trace && msg.result.skill_trace.length > 0 && (
@@ -430,28 +471,6 @@ function DecisionAssistant() {
                                   </div>
                                 ))}
                               </div>
-                            )}
-                          </div>
-                        )}
-
-                        {msg.result.evidence?.length > 0 && (
-                          <div style={{ marginTop: 8 }}>
-                            <h4
-                              onClick={() => toggleSection(`details-${msg.id}`)}
-                              style={{ cursor: 'pointer', userSelect: 'none', fontSize: 13, margin: 0 }}
-                            >
-                              {expandedSections[`details-${msg.id}`] ? '▼ ' : '▶ '}证据详情
-                            </h4>
-                            {expandedSections[`details-${msg.id}`] && (
-                              <ul style={{ marginTop: 6, marginBottom: 0 }}>
-                                {msg.result.evidence.map((e) => (
-                                  <li key={e.evidence_id} style={{ fontSize: 12, marginBottom: 4 }}>
-                                    <span style={{ color: '#888' }}>[{e.source_type}]</span>{' '}
-                                    {e.citation && <span style={{ color: '#446', fontWeight: 600 }}>{e.citation}</span>}
-                                    <span style={{ color: '#666' }}> — {e.summary?.slice(0, 120)}</span>
-                                  </li>
-                                ))}
-                              </ul>
                             )}
                           </div>
                         )}

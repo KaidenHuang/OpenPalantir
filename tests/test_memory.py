@@ -145,12 +145,12 @@ class TestMemoryManager:
         assert "薪资调整采用市场对标法" in result["decisions"], "应包含决策"
 
     def test_merge_long_term_dedup(self):
-        """合并长期记忆时自动去重"""
+        """原子更新长期记忆时自动去重"""
         self.mm.write_long_term_memories(
             preferences=["关注研发部门"],
             decisions=["Q3 完成组织调整"],
         )
-        self.mm.merge_long_term_memories(
+        self.mm.update_long_term(
             new_prefs=["关注研发部门"],  # 重复
             new_decisions=["启动新项目"],
         )
@@ -174,14 +174,19 @@ class TestMemoryManager:
         assert hash1 != hash2, "内容变化后 hash 应不同"
 
     def test_memory_file_auto_create(self):
-        """MEMORY.md 不存在时自动创建"""
+        """MEMORY.md 不存在时返回 None，写入时自动创建"""
         # 删除文件
         if os.path.isfile(self._memory_file):
             os.remove(self._memory_file)
 
         result = self.mm.read_long_term_memories()
-        # 应该自动创建空模板文件（首次创建时返回 None，因为尚无数据）
-        assert os.path.isfile(self._memory_file), "MEMORY.md 应自动创建"
+        # 文件不存在时返回 None，不自动创建（避免并发竞态覆盖）
+        assert result is None, "文件不存在时应返回 None"
+        assert not os.path.isfile(self._memory_file), "读取不应自动创建文件"
+
+        # 写入时自动创建文件
+        self.mm.write_long_term_memories(["测试偏好"], ["测试决策"])
+        assert os.path.isfile(self._memory_file), "写入时应自动创建文件"
 
     # ── 工具方法 ────────────────────────────────────────
 

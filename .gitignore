@@ -38,6 +38,7 @@ Thumbs.db
 backend/data/
 logs/
 *.log
+dump.rdb
 
 # ===== Neo4j =====
 dependencies/neo4j/extracted/

@@ -16,6 +16,7 @@ class AnalyzedQuery(BaseModel):
     required_sources: List[str] = Field(default_factory=list)
     sub_questions: List[str] = Field(default_factory=list)
     reasoning: str = ""
+    direct_answer: str = ""  # 简单问题（问候/身份/能力等）的直接回答，正常问题为空
 
 
 class RawEvidence(BaseModel):
@@ -121,6 +122,7 @@ class ConversationTurn(BaseModel):
     evidence: List[EvidenceItem] = Field(default_factory=list)
     evidence_citations: List[EvidenceCitation] = Field(default_factory=list)
     timestamp: str = ""
+    response_type: str = "normal"  # "normal" | "simple" | "no_data"
 
 
 class ConversationSession(BaseModel):
@@ -163,4 +165,5 @@ class DecisionResponse(BaseModel):
     answer: DecisionAnswer = Field(default_factory=DecisionAnswer)
     skill_trace: List[ToolTrace] = Field(default_factory=list)
     decision_mode: str = "rag_pipeline"  # "rag_pipeline" | "skill_reasoning"
+    response_type: str = "normal"  # "normal" | "simple" | "no_data"
     metadata: Dict[str, Any] = Field(default_factory=dict)

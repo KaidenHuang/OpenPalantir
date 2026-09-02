@@ -103,6 +103,65 @@ class BaseDecisionPlugin(ABC):
         except Exception as e:
             logger.error(f"[plugin:{self.domain}] 记忆提取调度失败: {e}")
 
+    def _build_simple_response(self, request: DecisionRequest,
+                               analyzed: AnalyzedQuery, session_id: str) -> dict:
+        """为简单问题（问候/身份/能力/告别/感谢）构建快速响应，跳过检索和推理"""
+        answer = DecisionAnswer(
+            summary=analyzed.direct_answer,
+            situation_analysis=analyzed.direct_answer,
+        )
+        self.conv_manager.add_turn(
+            session_id, request.question, analyzed, answer,
+            response_type="simple",
+        )
+        logger.info(f"[plugin:{self.domain}] simple_response intent={analyzed.intent}")
+        return {
+            "domain": self.domain,
+            "intent": analyzed.intent,
+            "session_id": session_id,
+            "analyzed_query": analyzed,
+            "evidence": [],
+            "evidence_citations": [],
+            "answer": answer,
+            "response_type": "simple",
+            "metadata": {"plugin": self.domain},
+        }
+
+    def _build_no_data_response(self, request: DecisionRequest,
+                                analyzed: AnalyzedQuery, session_id: str,
+                                history: list) -> dict:
+        """检索证据为空时，跳过 LLM 推理，直接返回友好提示"""
+        answer = DecisionAnswer(
+            summary=f"在当前知识库中未找到与「{request.question}」直接相关的数据。\n\n"
+                    f"建议：\n"
+                    f"- 确认已导入相关文档或数据库\n"
+                    f"- 尝试用更具体的关键词重新提问\n"
+                    f"- 在「图谱可视化」页面查看已有数据范围",
+            situation_analysis=f"未找到与「{request.question}」相关的数据。",
+        )
+        self.conv_manager.add_turn(
+            session_id, request.question, analyzed, answer,
+            response_type="no_data",
+        )
+        # 无数据时仍提取记忆（用户问题本身可能揭示偏好或关注领域）
+        self._extract_memories_async(
+            session_id, request.question, answer, self.domain)
+        logger.info(f"[plugin:{self.domain}] no_data_response")
+        return {
+            "domain": self.domain,
+            "intent": analyzed.intent,
+            "session_id": session_id,
+            "analyzed_query": analyzed,
+            "evidence": [],
+            "evidence_citations": [],
+            "answer": answer,
+            "response_type": "no_data",
+            "metadata": {
+                "plugin": self.domain,
+                "history_depth": len(history),
+            },
+        }
+
     def _run_rag_mode(self, request: DecisionRequest) -> dict:
         """完整 RAG 管道"""
         logger.info(f"[plugin:{self.domain}] run question={request.question[:60]}")
@@ -117,6 +176,21 @@ class BaseDecisionPlugin(ABC):
 
         analyzed = self.query_analyzer.analyze(request.question, history)
         logger.info(f"[plugin:{self.domain}] intent={analyzed.intent}, sources={analyzed.required_sources}")
+
+        # 简单问题快速出口：QueryAnalyzer 已识别并生成直接回答
+        SIMPLE_INTENTS = {"greeting", "identity", "capability", "farewell", "thanks"}
+        SIMPLE_DEFAULTS = {
+            "greeting": "您好！我是智能决策助手，请问有什么可以帮您的？",
+            "identity": "我是智能决策助手，专注于数据分析和决策支持。",
+            "capability": "我可以帮您分析知识图谱、检索文档和数据库、提供决策建议和行动方案。请问您想了解什么？",
+            "farewell": "再见！如有需要随时找我。",
+            "thanks": "不客气！如有其他问题，随时告诉我。",
+        }
+        if analyzed.intent in SIMPLE_INTENTS:
+            if not analyzed.direct_answer:
+                analyzed.direct_answer = SIMPLE_DEFAULTS.get(analyzed.intent, "")
+            return self._build_simple_response(request, analyzed, session_id)
+
         logger.info(f"[plugin:{self.domain}] entities={analyzed.entities}, entity_types={analyzed.entity_types}")
         logger.info(f"[plugin:{self.domain}] sub_questions={analyzed.sub_questions}")
 
@@ -129,6 +203,10 @@ class BaseDecisionPlugin(ABC):
 
         evidence = self.evidence_fusion.fuse(raw_evidence, analyzed)
         logger.info(f"[plugin:{self.domain}] evidence fused count={len(evidence)} (entity={sum(1 for e in evidence if e.source_type=='entity')}, db_summary={sum(1 for e in evidence if e.source_type=='database_summary')}, doc_summary={sum(1 for e in evidence if e.source_type=='document_summary')}, relation={sum(1 for e in evidence if e.source_type=='graph_relation')})")
+
+        # 无数据快速出口：检索证据为空时跳过 LLM 推理
+        if not evidence:
+            return self._build_no_data_response(request, analyzed, session_id, history)
 
         structured_ctx = self.context_builder.build(
             question=request.question,

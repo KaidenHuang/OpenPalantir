@@ -50,6 +50,7 @@ class QueryAnalyzer:
                     entity_types=entity_types,
                     sub_questions=response.get("sub_questions", []),
                     reasoning=response.get("reasoning", ""),
+                    direct_answer=response.get("direct_answer", ""),
                 )
             except Exception as e:
                 logger.warning(f"[query_analyzer] parse failed: {e}")

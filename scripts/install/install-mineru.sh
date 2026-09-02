@@ -18,7 +18,7 @@ check_python() {
     print_info "检查 Python 环境..."
 
     if ! command -v python3 &> /dev/null; then
-        print_error "未找到 python3。MinerU 需要 Python 3.10+"
+        print_error "未找到 python3。MinerU 需要 Python 3.10 ~ 3.13"
         return 1
     fi
 
@@ -28,12 +28,16 @@ check_python() {
     major=$(echo "$py_ver" | cut -d'.' -f1)
     minor=$(echo "$py_ver" | cut -d'.' -f2)
 
-    if [ "$major" -ge 3 ] && [ "$minor" -ge 10 ] 2>/dev/null; then
-        print_success "Python $py_ver 满足要求（需要 3.10+）"
+    if [ "$major" -eq 3 ] && [ "$minor" -ge 10 ] && [ "$minor" -le 13 ] 2>/dev/null; then
+        print_success "Python $py_ver 满足要求（需要 3.10 ~ 3.13）"
     elif [ "$major" -gt 3 ] 2>/dev/null; then
-        print_success "Python $py_ver 满足要求"
+        print_warn "Python $py_ver 可能不兼容，建议使用 3.10 ~ 3.13"
     else
-        print_error "Python $py_ver 不满足要求，需要 3.10+"
+        print_error "Python $py_ver 不满足要求，需要 3.10 ~ 3.13"
+        if [ "$major" -eq 3 ] && [ "$minor" -ge 14 ] 2>/dev/null; then
+            print_info "Python 3.14+ 太新，magic-pdf 依赖尚未支持。请使用 Python 3.12 或 3.13"
+            print_info "  创建虚拟环境: python3.12 -m venv backend/venv"
+        fi
         return 1
     fi
 }
@@ -122,26 +126,24 @@ install_magic_pdf() {
         if run_cmd "pip 安装 magic-pdf（阿里云镜像）" -- \
             $pip_cmd "$MAGIC_PDF_PACKAGE" \
                 -i https://mirrors.aliyun.com/pypi/simple \
-                --extra-index-url https://wheels.myhloli.com; then
+                --trusted-host mirrors.aliyun.com; then
             print_success "magic-pdf 安装完成"
         else
             log_warn "阿里云镜像安装失败，尝试默认源..."
             run_cmd "pip 安装 magic-pdf（默认源）" -- \
-                $pip_cmd "$MAGIC_PDF_PACKAGE" \
-                    --extra-index-url https://wheels.myhloli.com
+                $pip_cmd "$MAGIC_PDF_PACKAGE"
             print_success "magic-pdf 安装完成"
         fi
     else
         if run_cmd "pip 安装 magic-pdf（阿里云镜像）" -- \
             $pip_cmd install -U "$MAGIC_PDF_PACKAGE" \
                 -i https://mirrors.aliyun.com/pypi/simple \
-                --extra-index-url https://wheels.myhloli.com; then
+                --trusted-host mirrors.aliyun.com; then
             print_success "magic-pdf 安装完成"
         else
             log_warn "阿里云镜像安装失败，尝试默认源..."
             run_cmd "pip 安装 magic-pdf（默认源）" -- \
-                $pip_cmd install -U "$MAGIC_PDF_PACKAGE" \
-                    --extra-index-url https://wheels.myhloli.com
+                $pip_cmd install -U "$MAGIC_PDF_PACKAGE"
             print_success "magic-pdf 安装完成"
         fi
     fi

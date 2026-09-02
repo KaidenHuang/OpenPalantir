@@ -59,7 +59,15 @@ stop_services() {
     redis-cli shutdown 2>/dev/null || true
     kill_by_pattern "redis-server"
 
-    # 4. 停止 Docker 容器
+    # 4. 停止后端 (FastAPI)
+    print_info "停止后端 (FastAPI)..."
+    kill_by_pattern "uvicorn main:app"
+
+    # 5. 停止前端 (Vite)
+    print_info "停止前端 (Vite)..."
+    kill_by_pattern "vite"
+
+    # 6. 停止 Docker 容器
     if [ -f "$COMPOSE_FILE" ] && docker info &>/dev/null 2>&1; then
         print_info "停止 Docker 容器..."
         run_cmd_no_fail "停止 Neo4j + Redis 容器" -- docker compose -f "$COMPOSE_FILE" down
