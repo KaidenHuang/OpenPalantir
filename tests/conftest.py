@@ -3,16 +3,21 @@
 
 提供 Neo4j Mock、SQLite 临时库、LLM Mock 等测试基础设施。
 """
+from __future__ import annotations
+
 import os
 import sys
 import tempfile
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from models.memory import ShortTermMemory
 
 # 确保 backend 在 sys.path 中
 _BACKEND_DIR = Path(__file__).resolve().parent.parent / "backend"
@@ -80,7 +85,7 @@ class MockModelClient:
 
     def __init__(self):
         self.call_count = 0
-        self._responses: Dict[str, str] = {}
+        self._responses: dict[str, str] = {}
         self._default_response = "{}"
 
     def set_response(self, prompt_keyword: str, response: str):
@@ -89,7 +94,7 @@ class MockModelClient:
     def set_default_response(self, response: str):
         self._default_response = response
 
-    def chat_completion(self, messages: List[Dict], **kwargs) -> str:
+    def chat_completion(self, messages: list[dict], **kwargs) -> str:
         self.call_count += 1
         prompt_text = str(messages)
         for keyword, response in self._responses.items():
@@ -97,7 +102,7 @@ class MockModelClient:
                 return response
         return self._default_response
 
-    def call_with_tools(self, messages: List[Dict], tools: List[Dict], **kwargs) -> Dict:
+    def call_with_tools(self, messages: list[dict], tools: list[dict], **kwargs) -> dict:
         self.call_count += 1
         return {"content": self._default_response, "tool_calls": []}
 
@@ -115,7 +120,7 @@ def mock_model_client():
 # ============================================================
 
 @pytest.fixture
-def sample_query() -> Dict[str, Any]:
+def sample_query() -> dict[str, Any]:
     """示例查询分析结果"""
     return {
         "domain": "general",
@@ -131,7 +136,7 @@ def sample_query() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def sample_raw_evidence() -> List[Dict]:
+def sample_raw_evidence() -> list[dict]:
     """示例原始证据"""
     from decision_engine.contracts import RawEvidence
     return [
@@ -160,7 +165,7 @@ def sample_raw_evidence() -> List[Dict]:
 
 
 @pytest.fixture
-def sample_decision_request() -> Dict[str, Any]:
+def sample_decision_request() -> dict[str, Any]:
     """示例决策请求"""
     return {
         "question": "张三和李四是什么关系？",
@@ -211,7 +216,7 @@ def sample_schema_cache():
 
 
 @pytest.fixture
-def sample_debezium_event_insert() -> Dict[str, Any]:
+def sample_debezium_event_insert() -> dict[str, Any]:
     """示例 Debezium INSERT 事件"""
     return {
         "op": "c",
@@ -221,7 +226,7 @@ def sample_debezium_event_insert() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def sample_debezium_event_update() -> Dict[str, Any]:
+def sample_debezium_event_update() -> dict[str, Any]:
     """示例 Debezium UPDATE 事件"""
     return {
         "op": "u",
@@ -232,7 +237,7 @@ def sample_debezium_event_update() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def sample_debezium_event_delete() -> Dict[str, Any]:
+def sample_debezium_event_delete() -> dict[str, Any]:
     """示例 Debezium DELETE 事件"""
     return {
         "op": "d",
@@ -270,7 +275,7 @@ def make_short_term_memory(
     session_id: str = "test",
     domain: str = "general",
     days_ago: int = 0,
-) -> "ShortTermMemory":
+) -> ShortTermMemory:
     """创建短期记忆 ORM 对象"""
     from models.memory import ShortTermMemory
 

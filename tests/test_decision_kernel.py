@@ -5,8 +5,6 @@
 """
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from decision_engine.contracts import (
     DecisionAnswer,
     DecisionRequest,

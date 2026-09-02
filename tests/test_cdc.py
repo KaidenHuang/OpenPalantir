@@ -8,7 +8,6 @@ import hashlib
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from cdc.event_processor import EventProcessor
 
 
@@ -182,7 +181,7 @@ class TestEventProcessor:
             # 查询现有 FK 关系
             [{
                 "rel_id": hashlib.md5(
-                    f"orders:1_Foreign key_users:42".encode()
+                    b"orders:1_Foreign key_users:42"
                 ).hexdigest(),
                 "target_name": "users:42",
             }],

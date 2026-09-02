@@ -3,10 +3,9 @@
 
 测试去重、排序、citation 生成、源优先级等核心逻辑。
 """
-import pytest
 
 from decision_engine.contracts import AnalyzedQuery, RawEvidence
-from decision_engine.evidence_fusion import EvidenceFusion, SOURCE_PRIORITY
+from decision_engine.evidence_fusion import SOURCE_PRIORITY, EvidenceFusion
 
 
 class TestEvidenceFusion:

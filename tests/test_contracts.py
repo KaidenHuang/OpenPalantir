@@ -3,10 +3,7 @@
 
 测试 Pydantic 数据模型的序列化/反序列化。
 """
-import json
 from datetime import datetime
-
-import pytest
 
 from decision_engine.contracts import (
     AnalyzedQuery,
@@ -15,13 +12,9 @@ from decision_engine.contracts import (
     DecisionAnswer,
     DecisionRequest,
     DecisionResponse,
-    EvidenceCitation,
     EvidenceItem,
     MemoryEntry,
-    RawEvidence,
-    StructuredContext,
     ToolTrace,
-    WorkOrder,
 )
 
 
