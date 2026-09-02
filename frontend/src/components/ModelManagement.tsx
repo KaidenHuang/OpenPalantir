@@ -3,6 +3,7 @@ import { Input, Button, Select, message, Modal, Form, Spin } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import { API_CONFIG } from '../config/apiConfig';
+import { useModelStore } from '../stores/modelStore';
 
 const { Option } = Select;
 
@@ -36,6 +37,8 @@ interface PlatformConfig {
 }
 
 const ModelManagement: React.FC = () => {
+  const { fetchPlatforms, fetchOllamaModels: storeFetchOllama, createModel: storeCreateModel, updateModel: storeUpdateModel } = useModelStore();
+
   const [platforms, setPlatforms] = useState<ModelPlatform[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [searchText, setSearchText] = useState('');
@@ -78,25 +81,15 @@ const ModelManagement: React.FC = () => {
   // 获取Ollama模型列表
   const fetchOllamaModels = async () => {
     try {
-      // 从配置中获取Ollama API地址
       const ollamaConfig = models.find(m => m.name.toLowerCase() === 'ollama');
-      // 确保apiUrl不为undefined，使用默认值
       const apiUrl = ollamaConfig?.api_url ? ollamaConfig.api_url : 'http://localhost:11434';
-      
-      // 确保apiUrl是有效的URL格式
       let validApiUrl = apiUrl;
       if (!validApiUrl.startsWith('http://') && !validApiUrl.startsWith('https://')) {
         validApiUrl = `http://${validApiUrl}`;
       }
-      
-      const response = await axios.get(`${validApiUrl}/api/tags`);
-      if (response.status === 200) {
-        const data = response.data;
-        const modelList = data.models?.map((m: { name: string }) => m.name) || [];
-        setOllamaModels(modelList);
-      }
-    } catch (error) {
-      console.error('Failed to fetch Ollama models:', error);
+      await storeFetchOllama(validApiUrl);
+      setOllamaModels(useModelStore.getState().ollamaModels);
+    } catch {
       setOllamaModels([]);
     }
   };
@@ -105,34 +98,29 @@ const ModelManagement: React.FC = () => {
   const loadModelsFromBackend = async () => {
     try {
       setInitialLoading(true);
-      const response = await axios.get(API_CONFIG.endpoints.model.list);
-      if (response.data.status === 'success') {
-        const modelList = response.data.models;
-        setModels(modelList);
+      await fetchPlatforms();
+      const state = useModelStore.getState();
+      const modelList = state.models;
+      setModels(modelList as unknown as Model[]);
 
-        // 转换为前端需要的格式，已启用的排最前面
-        const updatedPlatforms = modelList
-          .map((model: Model) => ({
-            id: model.name.toLowerCase(),
-            name: model.name,
-            selected: model.name.toLowerCase() === selectedPlatform,
-            status: model.status,
-            type: model.type,
-            enabled: model.enabled,
-          }))
-          .sort((a: ModelPlatform, b: ModelPlatform) => (b.enabled ? 1 : 0) - (a.enabled ? 1 : 0));
+      const updatedPlatforms = modelList
+        .map((model) => ({
+          id: model.name.toLowerCase(),
+          name: model.name,
+          selected: model.name.toLowerCase() === selectedPlatform,
+          status: (model as unknown as Record<string, unknown>).status as ModelPlatform['status'] || 'unknown',
+          type: model.model_type as ModelPlatform['type'],
+          enabled: model.enabled,
+        }))
+        .sort((a, b) => (b.enabled ? 1 : 0) - (a.enabled ? 1 : 0));
 
-        setPlatforms(updatedPlatforms);
+      setPlatforms(updatedPlatforms);
 
-        // 设置默认选中的平台
-        if (updatedPlatforms.length > 0 && !selectedPlatform) {
-          setSelectedPlatform(updatedPlatforms[0].id);
-        }
+      if (updatedPlatforms.length > 0 && !selectedPlatform) {
+        setSelectedPlatform(updatedPlatforms[0].id);
       }
-    } catch (error) {
-      console.error('Failed to load models from backend:', error);
+    } catch {
       message.error('加载模型列表失败');
-      // 如果API调用失败，使用默认数据
       setPlatforms([
         { id: 'openai', name: 'OpenAI', selected: true, status: 'unknown', type: 'cloud', enabled: false },
         { id: 'ollama', name: 'Ollama', selected: false, status: 'unknown', type: 'local', enabled: false },
@@ -210,20 +198,15 @@ const ModelManagement: React.FC = () => {
       }
 
       // 更新模型配置
-      const response = await axios.put(API_CONFIG.endpoints.model.update(platform.id), {
+      await storeUpdateModel(platform.id, {
         api_url: config.apiUrl,
         api_key: config.apiKey,
         models: [config.model],
-        status // 使用测试的结果作为状态
+        status
       });
-      
-      if (response.data.status === 'success') {
-        message.success('配置保存成功');
-        // 保存成功后重新加载模型列表
-        loadModelsFromBackend();
-      } else {
-        message.error(`配置保存失败: ${response.data.message || '未知错误'}`);
-      }
+
+      message.success('配置保存成功');
+      loadModelsFromBackend();
     } catch (error: unknown) {
       const err = error as { response?: { data?: { detail?: string } }; message?: string };
       message.error(`配置保存失败: ${err.response?.data?.detail || err.message || '未知错误'}`);
@@ -258,21 +241,13 @@ const ModelManagement: React.FC = () => {
     }
     
     try {
-      const response = await axios.post(API_CONFIG.endpoints.model.create, {
-        name: newModelName,
-        type: newModelType
-      });
-      
-      if (response.data.status === 'success') {
-        message.success('模型添加成功');
-        setIsAddModalVisible(false);
-        setNewModelName('');
-        setNewModelType('cloud');
-        // 刷新模型列表
-        loadModelsFromBackend();
-      } else {
-        message.error(`模型添加失败: ${response.data.message || '未知错误'}`);
-      }
+      await storeCreateModel(newModelName, newModelType);
+
+      message.success('模型添加成功');
+      setIsAddModalVisible(false);
+      setNewModelName('');
+      setNewModelType('cloud');
+      loadModelsFromBackend();
     } catch (error: unknown) {
       const err = error as { response?: { data?: { detail?: string } }; message?: string };
       message.error(`模型添加失败: ${err.response?.data?.detail || err.message || '未知错误'}`);
