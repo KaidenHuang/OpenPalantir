@@ -37,6 +37,8 @@ interface SourceState {
   summarize: (sourceId: string, filePath: string) => Promise<string>;
   extractEntities: (sourceId: string, filePath: string) => Promise<void>;
   setTaskId: (id: string | null) => void;
+  setSummary: (data: SummaryData | null) => void;
+  setEntities: (data: Entity[]) => void;
 }
 
 export const useSourceStore = create<SourceState>()((set, get) => ({
@@ -123,4 +125,6 @@ export const useSourceStore = create<SourceState>()((set, get) => ({
   },
 
   setTaskId: (id) => set({ taskId: id }),
+  setSummary: (data: SummaryData | null) => set({ summary: data }),
+  setEntities: (data: Entity[]) => set({ entities: data }),
 }));

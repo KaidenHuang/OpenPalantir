@@ -2,17 +2,12 @@ import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { message, Tree, Spin, Modal, Input, Select, Button, Tag, Switch } from 'antd';
 import {
-  FolderOutlined,
-  FileOutlined,
-  PlusOutlined,
-  DeleteOutlined,
-  UndoOutlined,
-  NodeIndexOutlined,
-  TeamOutlined,
-  ReloadOutlined,
+  FolderOutlined, FileOutlined, PlusOutlined, DeleteOutlined,
+  UndoOutlined, NodeIndexOutlined, TeamOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 import { logger } from '../services/logger';
 import { API_CONFIG } from '../config/apiConfig';
+import { useSourceStore } from '../stores/sourceStore';
 
 interface Source {
   id: string;
@@ -32,13 +27,6 @@ interface FileEntry {
   ext?: string;
 }
 
-interface Entity {
-  name: string;
-  type: string;
-  confidence: number;
-  count?: number;
-}
-
 interface SummaryNode {
   title: string;
   node_id?: string;
@@ -49,18 +37,16 @@ interface SummaryNode {
   nodes?: SummaryNode[];
 }
 
-interface SummaryData {
-  doc_name?: string;
-  doc_description?: string;
-  structure?: SummaryNode[];
-}
-
 type AxiosErrorLike = { response?: { data?: { detail?: string } }; message?: string };
 
 const DocumentViewer: React.FC = () => {
-  // Source state
-  const [sources, setSources] = useState<Source[]>([]);
-  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
+  const {
+    sources, selectedSourceId, fetchSources, createSource,
+    deleteSource: deleteSourceAction, restoreSource: restoreSourceAction,
+    setSelectedSourceId, setSelectedFile, setSummary, setEntities,
+  } = useSourceStore();
+
+  // UI state
   const [sourcesLoading, setSourcesLoading] = useState(false);
   const [addSourceModalVisible, setAddSourceModalVisible] = useState(false);
   const [newSourceName, setNewSourceName] = useState('');
@@ -76,44 +62,41 @@ const DocumentViewer: React.FC = () => {
   const [currentPath, setCurrentPath] = useState('');
   const [filesLoading, setFilesLoading] = useState(false);
 
-  // Selected file & summary state
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [summary, setSummary] = useState<SummaryData | null>(null);
-  const [summarizing, setSummarizing] = useState(false);
+  // Selected file & summary state (mirrored from store)
+  const selectedFile = useSourceStore((s) => s.selectedFile);
+  const summary = useSourceStore((s) => s.summary);
+  const entities = useSourceStore((s) => s.entities);
   const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summarizing, setSummarizing] = useState(false);
 
   // Task polling state
   const [taskId, setTaskId] = useState<string | null>(null);
 
-  // Entity state
-  const [entities, setEntities] = useState<Entity[]>([]);
+  // Entity extraction state
   const [extracting, setExtracting] = useState(false);
 
-  const filteredSources = sources.filter(s =>
+  const filteredSources = (sources as Source[]).filter(s =>
     s.name.toLowerCase().includes(sourceSearchText.toLowerCase()) ||
     s.path.toLowerCase().includes(sourceSearchText.toLowerCase())
   );
-  const selectedSourceData = sources.find(s => s.id === selectedSourceId) || null;
+  const selectedSourceData = (sources as Source[]).find(s => s.id === selectedSourceId) || null;
 
   // ── Fetch sources ──────────────────────────────────────────────
 
-  const fetchSources = useCallback(async () => {
+  const loadSources = useCallback(async () => {
     setSourcesLoading(true);
     try {
-      const res = await axios.get(API_CONFIG.endpoints.source.list, {
-        params: { include_deleted: showDeletedSources }
-      });
-      setSources(res.data.sources || []);
+      await fetchSources(showDeletedSources);
     } catch (err) {
       logger.error('DocumentViewer', '获取文档源列表失败', err);
     } finally {
       setSourcesLoading(false);
     }
-  }, [showDeletedSources]);
+  }, [fetchSources, showDeletedSources]);
 
   useEffect(() => {
-    fetchSources();
-  }, [fetchSources]);
+    loadSources();
+  }, [loadSources]);
 
   // ── Source CRUD ────────────────────────────────────────────────
 
@@ -121,16 +104,12 @@ const DocumentViewer: React.FC = () => {
     if (!newSourceName.trim() || !newSourcePath.trim()) return;
     setAddingSource(true);
     try {
-      await axios.post(API_CONFIG.endpoints.source.create, {
-        name: newSourceName.trim(),
-        path: newSourcePath.trim(),
-        source_type: newSourceType,
-      });
+      await createSource(newSourceName.trim(), newSourcePath.trim(), newSourceType);
       message.success('文档源添加成功');
       setAddSourceModalVisible(false);
       setNewSourceName('');
       setNewSourcePath('');
-      await fetchSources();
+      await loadSources();
     } catch (err: unknown) {
       const e = err as AxiosErrorLike;
       message.error(`添加失败: ${e.response?.data?.detail || e.message}`);
@@ -141,7 +120,7 @@ const DocumentViewer: React.FC = () => {
 
   const handleDeleteSource = async (sourceId: string) => {
     try {
-      await axios.delete(API_CONFIG.endpoints.source.delete(sourceId));
+      await deleteSourceAction(sourceId);
       message.success('文档源已删除');
       if (selectedSourceId === sourceId) {
         setSelectedSourceId(null);
@@ -150,7 +129,7 @@ const DocumentViewer: React.FC = () => {
         setSummary(null);
         setEntities([]);
       }
-      await fetchSources();
+      await loadSources();
     } catch (err: unknown) {
       const e = err as AxiosErrorLike;
       message.error(`删除失败: ${e.response?.data?.detail || e.message}`);
@@ -160,9 +139,9 @@ const DocumentViewer: React.FC = () => {
   const handleRestoreSource = async (sourceId: string) => {
     setRestoringSourceId(sourceId);
     try {
-      await axios.post(API_CONFIG.endpoints.source.restore(sourceId));
+      await restoreSourceAction(sourceId);
       message.success('文档源已恢复');
-      await fetchSources();
+      await loadSources();
     } catch (err: unknown) {
       const e = err as AxiosErrorLike;
       message.error(`恢复失败: ${e.response?.data?.detail || e.message}`);
@@ -311,7 +290,7 @@ const DocumentViewer: React.FC = () => {
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [taskId, selectedSourceId, selectedFile]);
+  }, [taskId, selectedSourceId, selectedFile]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleExtract = async () => {
     if (!selectedSourceId || !selectedFile) return;
@@ -401,7 +380,7 @@ const DocumentViewer: React.FC = () => {
               删除源
             </Button>
           )}
-          <Button icon={<ReloadOutlined />} onClick={fetchSources}>
+          <Button icon={<ReloadOutlined />} onClick={loadSources}>
             刷新
           </Button>
           <Input.Search
@@ -523,18 +502,18 @@ const DocumentViewer: React.FC = () => {
                   <div className="dv-loading"><Spin /> 加载概要...</div>
                 ) : summary ? (
                   <>
-                    {summary.doc_description && (
+                    {summary.doc_description != null && (
                       <div className="dv-doc-description">
                         <strong>文档描述：</strong>
-                        <p>{summary.doc_description}</p>
+                        <p>{String(summary.doc_description)}</p>
                       </div>
                     )}
 
-                    {summary.structure && summary.structure.length > 0 && (
+                    {summary.structure != null && (summary.structure as unknown as SummaryNode[]).length > 0 && (
                       <div className="dv-summary-tree">
                         <h5>目录结构</h5>
                         <Tree
-                          treeData={convertSummaryToTree(summary.structure)}
+                          treeData={convertSummaryToTree(summary.structure as unknown as SummaryNode[])}
                           showIcon
                           defaultExpandAll
                           titleRender={(node: { title?: string; summary?: string }) => (
