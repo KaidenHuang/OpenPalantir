@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Table, Input, Select, Button, Tag, message } from 'antd';
+import React, { useState, useEffect } from 'react';
+import { Table, Input, Select, Button, Tag } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
-import { entityService } from '../services/entityService';
+import { useEntityStore } from '../stores/entityStore';
 
 interface Entity {
   id: string;
@@ -28,69 +28,18 @@ interface Relationship {
 }
 
 const entityTypeColors: Record<string, string> = {
-  person: '#FF6B6B',
-  organization: '#4ECDC4',
-  location: '#45B7D1',
-  event: '#96CEB4',
-  concept: '#F39C12',
-  default: '#95A5A6',
+  person: '#FF6B6B', organization: '#4ECDC4', location: '#45B7D1',
+  event: '#96CEB4', concept: '#F39C12', default: '#95A5A6',
 };
 
 const EntityManagement: React.FC = () => {
-  const [entities, setEntities] = useState<Entity[]>([]);
-  const [selectedEntity, setSelectedEntity] = useState<Entity | null>(null);
-  const [loading, setLoading] = useState(false);
+  const {
+    entities, selectedEntity, pagination, loading,
+    fetchEntities, selectEntity, setPagination,
+  } = useEntityStore();
+
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
-  const [pagination, setPagination] = useState({
-    current: 1,
-    pageSize: 50,
-    total: 0,
-  });
-
-  const fetchEntities = useCallback(async (
-    page: number,
-    pageSize: number,
-    search: string,
-    type: string,
-  ) => {
-    setLoading(true);
-    try {
-      const entityType = type === 'all' ? undefined : type;
-      const response = search.trim()
-        ? await entityService.searchEntities({
-            query: search.trim(),
-            page,
-            limit: pageSize,
-            entity_type: entityType,
-          })
-        : await entityService.listEntities(page, pageSize, entityType, search.trim() || undefined);
-
-      if (response.status === 'success' && response.data) {
-        const mapped = (response.data.entities || []).map((entity) => ({
-          ...entity,
-          id: entity.id || (entity as unknown as Record<string, unknown>).entity_id || `e_${Math.random().toString(36).slice(2, 8)}`,
-          count: entity.count ?? entity.count,
-        })) as Entity[];
-        setEntities(mapped);
-        setPagination({
-          current: response.data.pagination.current_page,
-          pageSize: response.data.pagination.page_size,
-          total: response.data.pagination.total_count,
-        });
-      } else {
-        setEntities([]);
-        setPagination(prev => ({ ...prev, total: 0, current: 1 }));
-      }
-    } catch (error) {
-      message.error('获取实体列表失败');
-      console.error('Error fetching entities:', error);
-      setEntities([]);
-      setPagination(prev => ({ ...prev, total: 0, current: 1 }));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
 
   useEffect(() => {
     fetchEntities(1, pagination.pageSize, searchTerm, filterType);
@@ -100,19 +49,19 @@ const EntityManagement: React.FC = () => {
   const handleTableChange = (pag: TablePaginationConfig) => {
     const p = pag.current || 1;
     const ps = pag.pageSize || 10;
-    setPagination(prev => ({ ...prev, current: p, pageSize: ps }));
+    setPagination({ current: p, pageSize: ps });
     fetchEntities(p, ps, searchTerm, filterType);
   };
 
   const handleSearch = (value: string) => {
     setSearchTerm(value);
-    setPagination(prev => ({ ...prev, current: 1 }));
+    setPagination({ current: 1 });
     fetchEntities(1, pagination.pageSize, value, filterType);
   };
 
   const handleTypeChange = (value: string) => {
     setFilterType(value);
-    setPagination(prev => ({ ...prev, current: 1 }));
+    setPagination({ current: 1 });
     fetchEntities(1, pagination.pageSize, searchTerm, value);
   };
 
@@ -120,61 +69,22 @@ const EntityManagement: React.FC = () => {
     fetchEntities(pagination.current, pagination.pageSize, searchTerm, filterType);
   };
 
-  const handleEntitySelect = async (entity: Entity) => {
-    try {
-      const response = await entityService.getEntity(entity.id);
-      if (response.status === 'success' && response.data) {
-        const { entity: entityData } = response.data;
-        setSelectedEntity(entityData);
-        const relationshipsResponse = await entityService.getEntityRelationships(entity.id);
-        if (relationshipsResponse.status === 'success' && relationshipsResponse.data) {
-          setSelectedEntity({
-            ...entityData,
-            relationships: relationshipsResponse.data.relationships || [],
-          });
-        }
-      } else {
-        setSelectedEntity(entity);
-      }
-    } catch (error) {
-      console.error('Error fetching entity details:', error);
-      setSelectedEntity(entity);
-    }
-  };
-
   const columns: ColumnsType<Entity> = [
     {
-      title: '实体名称',
-      dataIndex: 'name',
-      key: 'name',
-      ellipsis: true,
-      width: '35%',
+      title: '实体名称', dataIndex: 'name', key: 'name', ellipsis: true, width: '35%',
     },
     {
-      title: '类型',
-      dataIndex: 'type',
-      key: 'type',
-      width: '25%',
+      title: '类型', dataIndex: 'type', key: 'type', width: '25%',
       render: (type: string) => (
-        <Tag color={entityTypeColors[type] || entityTypeColors.default}>
-          {type}
-        </Tag>
+        <Tag color={entityTypeColors[type] || entityTypeColors.default}>{type}</Tag>
       ),
     },
     {
-      title: '置信度',
-      dataIndex: 'confidence',
-      key: 'confidence',
-      align: 'center',
-      width: '20%',
+      title: '置信度', dataIndex: 'confidence', key: 'confidence', align: 'center', width: '20%',
       render: (confidence: number) => `${((confidence || 0) * 100).toFixed(1)}%`,
     },
     {
-      title: '出现次数',
-      dataIndex: 'count',
-      key: 'count',
-      align: 'center',
-      width: '20%',
+      title: '出现次数', dataIndex: 'count', key: 'count', align: 'center', width: '20%',
       render: (count: number) => count ?? 0,
     },
   ];
@@ -183,20 +93,9 @@ const EntityManagement: React.FC = () => {
     <div className="entity-management">
       <div className="entity-header">
         <div className="entity-search" style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
-          <Button icon={<ReloadOutlined />} onClick={handleRefresh}>
-            刷新
-          </Button>
-          <Input.Search
-            placeholder="搜索实体..."
-            allowClear
-            onSearch={handleSearch}
-            style={{ width: 280 }}
-          />
-          <Select
-            value={filterType}
-            onChange={handleTypeChange}
-            style={{ width: 130 }}
-          >
+          <Button icon={<ReloadOutlined />} onClick={handleRefresh}>刷新</Button>
+          <Input.Search placeholder="搜索实体..." allowClear onSearch={handleSearch} style={{ width: 280 }} />
+          <Select value={filterType} onChange={handleTypeChange} style={{ width: 130 }}>
             <Select.Option value="all">所有类型</Select.Option>
             <Select.Option value="person">人物</Select.Option>
             <Select.Option value="organization">组织</Select.Option>
@@ -220,16 +119,12 @@ const EntityManagement: React.FC = () => {
               total: pagination.total,
               showSizeChanger: true,
               pageSizeOptions: ['10', '20', '50', '100'],
-              showTotal: (total, range) =>
-                `第 ${range[0]}-${range[1]} 条，共 ${total} 条`,
+              showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条，共 ${total} 条`,
             }}
             onChange={handleTableChange}
             onRow={(record) => ({
-              onClick: () => handleEntitySelect(record),
-              style: {
-                cursor: 'pointer',
-                background: selectedEntity?.id === record.id ? '#e6f7ff' : undefined,
-              },
+              onClick: () => selectEntity(record),
+              style: { cursor: 'pointer', background: selectedEntity?.id === record.id ? '#e6f7ff' : undefined },
             })}
             size="small"
             scroll={{ y: 'calc(100vh - 320px)' }}
@@ -241,11 +136,8 @@ const EntityManagement: React.FC = () => {
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, paddingBottom: 6, borderBottom: '1px solid #e0e0e0' }}>
                 <h3 style={{ margin: 0, fontSize: 16 }}>{selectedEntity.name}</h3>
-                <Tag color={entityTypeColors[selectedEntity.type] || entityTypeColors.default}>
-                  {selectedEntity.type}
-                </Tag>
+                <Tag color={entityTypeColors[selectedEntity.type] || entityTypeColors.default}>{selectedEntity.type}</Tag>
               </div>
-
               <div style={{ marginBottom: 12 }}>
                 <h4 style={{ margin: '0 0 6px 0', fontSize: 13, fontWeight: 'bold' }}>实体属性</h4>
                 <div style={{ backgroundColor: '#f9f9f9', padding: 8, borderRadius: 4 }}>
@@ -277,7 +169,6 @@ const EntityManagement: React.FC = () => {
                   ))}
                 </div>
               </div>
-
               {selectedEntity.relationships && selectedEntity.relationships.length > 0 && (
                 <div style={{ marginBottom: 12 }}>
                   <h4 style={{ margin: '0 0 6px 0', fontSize: 13, fontWeight: 'bold' }}>关联关系</h4>
@@ -292,12 +183,8 @@ const EntityManagement: React.FC = () => {
                           </div>
                           <div style={{ fontSize: 11, color: '#666', marginTop: 3 }}>
                             <span>置信度: {((relationship.confidence || 0) * 100).toFixed(1)}%</span>
-                            {relationship.occurrence_time && (
-                              <span style={{ marginLeft: 10 }}>时间: {relationship.occurrence_time}</span>
-                            )}
-                            {relationship.description && (
-                              <div style={{ marginTop: 2 }}>描述: {relationship.description}</div>
-                            )}
+                            {relationship.occurrence_time && <span style={{ marginLeft: 10 }}>时间: {relationship.occurrence_time}</span>}
+                            {relationship.description && <div style={{ marginTop: 2 }}>描述: {relationship.description}</div>}
                           </div>
                         </li>
                       ))}
@@ -305,14 +192,11 @@ const EntityManagement: React.FC = () => {
                   </div>
                 </div>
               )}
-
               <div>
                 <h4 style={{ margin: '0 0 6px 0', fontSize: 13, fontWeight: 'bold' }}>数据来源</h4>
                 {selectedEntity.datasource ? (
                   <div style={{ backgroundColor: '#f9f9f9', padding: 8, borderRadius: 4 }}>
-                    <div style={{ fontSize: 12, color: '#333', wordBreak: 'break-all' }}>
-                      {selectedEntity.datasource}
-                    </div>
+                    <div style={{ fontSize: 12, color: '#333', wordBreak: 'break-all' }}>{selectedEntity.datasource}</div>
                   </div>
                 ) : (
                   <p style={{ margin: 0, color: '#999', fontSize: 12 }}>暂无数据来源信息</p>
