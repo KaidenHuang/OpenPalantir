@@ -4,6 +4,7 @@ import { Button, Input, Switch, message } from 'antd';
 import { ReloadOutlined, UndoOutlined } from '@ant-design/icons';
 import { API_CONFIG } from '../config/apiConfig';
 import { logger } from '../services/logger';
+import { useDatabaseStore } from '../stores/databaseStore';
 import ERDiagram from './ERDiagram';
 
 const DB_STATUS = { EXTRACTED: 'extracted', DELETED: 'deleted' } as const;
@@ -102,6 +103,13 @@ const DB_DEFAULT_PORTS: Record<DbType, number> = {
 };
 
 function DatabaseManagement() {
+  const { fetchConnections: storeFetchConnections, fetchSchema: storeFetchSchema, fetchSummary: storeFetchSummary,
+    createConnection: storeCreateConnection, updateConnection: storeUpdateConnection,
+    deleteConnection: storeDeleteConnection, restoreConnection: storeRestoreConnection,
+    analyzeSchema: storeAnalyzeSchema, importToGraph: storeImportToGraph,
+    configureCdc: storeConfigureCdc, startCdc: storeStartCdc,
+  } = useDatabaseStore();
+
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
   const [selectedConnection, setSelectedConnection] = useState<DatabaseConnection | null>(null);
   const [schemaResult, setSchemaResult] = useState<SchemaResult | null>(null);
@@ -205,10 +213,8 @@ function DatabaseManagement() {
 
   const loadConnections = async () => {
     try {
-      const response = await axios.get(API_CONFIG.endpoints.database.connections, {
-        params: { include_deleted: showDeletedConnections }
-      });
-      setConnections(response.data);
+      await storeFetchConnections(showDeletedConnections);
+      setConnections(useDatabaseStore.getState().connections as unknown as DatabaseConnection[]);
     } catch (error) {
       logger.error('DatabaseManagement', '加载连接列表失败', error);
     }
@@ -244,18 +250,17 @@ function DatabaseManagement() {
   const loadSchema = async (connectionId: string, dbName?: string) => {
     try {
       setIsLoading(true);
-      const response = await axios.get(API_CONFIG.endpoints.database.analysisResult(connectionId));
-      const data = response.data;
+      await storeFetchSchema(connectionId);
+      const data = useDatabaseStore.getState().schemaResult;
       const targetDb = dbName || selectedDatabase;
-      if (data.analyzed_databases && !data.analyzed_databases.includes(targetDb)) {
+      if (data && (data as unknown as Record<string, unknown>).analyzed_databases && !((data as unknown as Record<string, unknown>).analyzed_databases as string[]).includes(targetDb || '')) {
         setSchemaResult(null);
       } else {
-        setSchemaResult(data);
+        setSchemaResult(data as unknown as SchemaResult);
       }
       setSelectedTable(null);
       loadDbSummary(connectionId);
-    } catch (error) {
-      logger.error('DatabaseManagement', '加载Schema失败', error);
+    } catch {
       setSchemaResult(null);
     } finally {
       setIsLoading(false);
@@ -264,8 +269,8 @@ function DatabaseManagement() {
 
   const loadDbSummary = async (connectionId: string) => {
     try {
-      const res = await axios.get(API_CONFIG.endpoints.database.summary(connectionId));
-      setDbSummary(res.data.summary);
+      await storeFetchSummary(connectionId);
+      setDbSummary(useDatabaseStore.getState().dbSummary as unknown as DbSummary);
     } catch {
       setDbSummary(null);
     }
@@ -286,19 +291,12 @@ function DatabaseManagement() {
     try {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { database: _db, ...payload } = newConnection;
-      await axios.post(API_CONFIG.endpoints.database.connections, payload);
+      await storeCreateConnection(payload as Record<string, unknown>);
       await loadConnections();
       setShowCreateModal(false);
       setNewConnection({
-        name: '',
-        type: 'mysql',
-        host: '',
-        port: 3306,
-        database: '',
-        username: '',
-        password: '',
-        service_name: '',
-        description: '',
+        name: '', type: 'mysql', host: '', port: 3306, database: '',
+        username: '', password: '', service_name: '', description: '',
       });
     } catch (error) {
       logger.error('DatabaseManagement', '创建连接失败', error);
@@ -308,10 +306,7 @@ function DatabaseManagement() {
   const handleUpdateConnection = async () => {
     if (!selectedConnection) return;
     try {
-      await axios.put(
-        API_CONFIG.endpoints.database.connection(selectedConnection.id),
-        newConnection
-      );
+      await storeUpdateConnection(selectedConnection.id, newConnection as unknown as Record<string, unknown>);
       await loadConnections();
       setShowEditModal(false);
       const updated = { ...selectedConnection, ...newConnection };
@@ -324,7 +319,7 @@ function DatabaseManagement() {
   const handleDeleteConnection = async (connectionId: string) => {
     if (!confirm('确定要删除这个连接吗？删除后可恢复。')) return;
     try {
-      await axios.delete(API_CONFIG.endpoints.database.connection(connectionId));
+      await storeDeleteConnection(connectionId);
       await loadConnections();
       if (selectedConnection?.id === connectionId) {
         setSelectedConnection(null);
@@ -339,7 +334,7 @@ function DatabaseManagement() {
   const handleRestoreConnection = async (connectionId: string) => {
     setRestoringConnectionId(connectionId);
     try {
-      await axios.post(API_CONFIG.endpoints.database.restore(connectionId));
+      await storeRestoreConnection(connectionId);
       await loadConnections();
     } catch (error) {
       logger.error('DatabaseManagement', '恢复连接失败', error);
@@ -383,11 +378,7 @@ function DatabaseManagement() {
   const handleAnalyze = async () => {
     if (!selectedConnection) return;
     try {
-      const response = await axios.post(
-        API_CONFIG.endpoints.database.analyze(selectedConnection.id),
-        { database: selectedDatabase }
-      );
-      const newTaskId = response.data.task_id;
+      const newTaskId = await storeAnalyzeSchema(selectedConnection.id);
       localStorage.setItem(`analyze_task_${selectedConnection.id}`, newTaskId);
       setTaskId(newTaskId);
       setTaskStatus('running');
@@ -400,10 +391,7 @@ function DatabaseManagement() {
     if (!selectedConnection || isImporting) return;
     setIsImporting(true);
     try {
-      const response = await axios.post(
-        API_CONFIG.endpoints.database.import(selectedConnection.id)
-      );
-      const newTaskId = response.data.task_id;
+      const newTaskId = await storeImportToGraph(selectedConnection.id);
       setImportTaskId(newTaskId);
       message.success(`导入任务已创建，任务ID: ${newTaskId}`);
     } catch (error) {
@@ -416,11 +404,8 @@ function DatabaseManagement() {
   const handleStartCdc = async () => {
     if (!selectedConnection || !selectedDatabase) return;
     try {
-      const response = await axios.post(
-        API_CONFIG.endpoints.cdc.startTask(selectedConnection.id),
-        { database_name: selectedDatabase }
-      );
-      alert(`增量同步任务已创建，任务ID: ${response.data.task_id}\n请到「任务管理」查看或停止`);
+      await storeStartCdc(selectedConnection.id);
+      alert(`增量同步任务已创建，请到「任务管理」查看或停止`);
     } catch (error) {
       logger.error('DatabaseManagement', '启动增量同步失败', error);
     }
@@ -434,16 +419,8 @@ function DatabaseManagement() {
     );
     if (!confirmed) return;
     try {
-      const response = await axios.post(
-        API_CONFIG.endpoints.cdc.configure(selectedConnection.id)
-      );
-      const data = response.data;
-      if (data.status === 'ok') {
-        const detail = (data.steps || []).map((s: { message: string }) => `• ${s.message}`).join('\n');
-        alert(`CDC 配置完成：\n${detail}\n\n请随后执行「导入图谱」（全量）再「增量同步」。`);
-      } else {
-        alert(`CDC 配置失败（${data.step}）：${data.message}`);
-      }
+      await storeConfigureCdc(selectedConnection.id);
+      alert(`CDC 配置完成，请随后执行「导入图谱」（全量）再「增量同步」。`);
     } catch (error: unknown) {
       const err = error as { response?: { data?: { detail?: string } }; message?: string };
       logger.error('DatabaseManagement', '配置 CDC 失败', error);
