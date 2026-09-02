@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import axios from 'axios';
-import { API_CONFIG } from '../config/apiConfig';
+import { useTaskStore } from '../stores/taskStore';
 
 interface TaskCreationProps {
   onTaskCreated: () => void;
 }
 
 const TaskCreation: React.FC<TaskCreationProps> = ({ onTaskCreated }) => {
+  const { createTask } = useTaskStore();
   const [taskType, setTaskType] = useState('relationship_extraction');
   const [payload, setPayload] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(false);
@@ -52,12 +52,9 @@ const TaskCreation: React.FC<TaskCreationProps> = ({ onTaskCreated }) => {
       setError(null);
       setSuccess(null);
       
-      const response = await axios.post(API_CONFIG.endpoints.task.create, {
-        task_type: taskType,
-        payload
-      });
-      
-      setSuccess(`任务创建成功！任务 ID: ${response.data.task_id}`);
+      const taskId = await createTask(taskType, payload);
+
+      setSuccess(`任务创建成功！任务 ID: ${taskId}`);
       onTaskCreated();
       
       // 重置表单
