@@ -8,7 +8,7 @@ interface TaskCreationProps {
 
 const TaskCreation: React.FC<TaskCreationProps> = ({ onTaskCreated }) => {
   const [taskType, setTaskType] = useState('relationship_extraction');
-  const [payload, setPayload] = useState<Record<string, any>>({});
+  const [payload, setPayload] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -112,7 +112,7 @@ const TaskCreation: React.FC<TaskCreationProps> = ({ onTaskCreated }) => {
                 type="text" 
                 id="documentId" 
                 name="document_id" 
-                value={payload.document_id || ''} 
+                value={payload.document_id as string || ''} 
                 onChange={handlePayloadChange}
                 className="form-control"
                 required
@@ -123,7 +123,7 @@ const TaskCreation: React.FC<TaskCreationProps> = ({ onTaskCreated }) => {
               <textarea 
                 id="content" 
                 name="content" 
-                value={payload.content || ''} 
+                value={payload.content as string || ''} 
                 onChange={handlePayloadChange}
                 className="form-control"
                 rows={4}
@@ -141,7 +141,7 @@ const TaskCreation: React.FC<TaskCreationProps> = ({ onTaskCreated }) => {
                 type="text" 
                 id="title" 
                 name="title" 
-                value={payload.title || ''} 
+                value={payload.title as string || ''} 
                 onChange={handlePayloadChange}
                 className="form-control"
                 required
@@ -152,7 +152,7 @@ const TaskCreation: React.FC<TaskCreationProps> = ({ onTaskCreated }) => {
               <textarea 
                 id="content" 
                 name="content" 
-                value={payload.content || ''} 
+                value={payload.content as string || ''} 
                 onChange={handlePayloadChange}
                 className="form-control"
                 rows={4}

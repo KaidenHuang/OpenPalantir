@@ -56,6 +56,7 @@ const ModelManagement: React.FC = () => {
   // 页面加载时从后端API加载模型列表
   useEffect(() => {
     loadModelsFromBackend();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 当选择平台变化时，更新配置
@@ -63,6 +64,7 @@ const ModelManagement: React.FC = () => {
     if (selectedPlatform) {
       updateConfigForPlatform(selectedPlatform);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPlatform]);
 
   // 当选择Ollama平台时，获取模型列表
@@ -70,6 +72,7 @@ const ModelManagement: React.FC = () => {
     if (selectedPlatform === 'ollama') {
       fetchOllamaModels();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPlatform, config.apiUrl]);
 
   // 获取Ollama模型列表
@@ -89,7 +92,7 @@ const ModelManagement: React.FC = () => {
       const response = await axios.get(`${validApiUrl}/api/tags`);
       if (response.status === 200) {
         const data = response.data;
-        const modelList = data.models?.map((m: any) => m.name) || [];
+        const modelList = data.models?.map((m: { name: string }) => m.name) || [];
         setOllamaModels(modelList);
       }
     } catch (error) {
@@ -221,8 +224,9 @@ const ModelManagement: React.FC = () => {
       } else {
         message.error(`配置保存失败: ${response.data.message || '未知错误'}`);
       }
-    } catch (error: any) {
-      message.error(`配置保存失败: ${error.response?.data?.detail || error.message || '未知错误'}`);
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { detail?: string } }; message?: string };
+      message.error(`配置保存失败: ${err.response?.data?.detail || err.message || '未知错误'}`);
       console.error('Failed to save config:', error);
     } finally {
       setSaving(false);
@@ -269,8 +273,9 @@ const ModelManagement: React.FC = () => {
       } else {
         message.error(`模型添加失败: ${response.data.message || '未知错误'}`);
       }
-    } catch (error: any) {
-      message.error(`模型添加失败: ${error.response?.data?.detail || error.message || '未知错误'}`);
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { detail?: string } }; message?: string };
+      message.error(`模型添加失败: ${err.response?.data?.detail || err.message || '未知错误'}`);
       console.error('Failed to add model:', error);
     }
   };
@@ -305,8 +310,9 @@ const ModelManagement: React.FC = () => {
       }
       // 无论测试结果如何，都刷新模型列表以更新状态
       loadModelsFromBackend();
-    } catch (error: any) {
-      message.error(`连接测试失败: ${error.response?.data?.detail || error.message || '未知错误'}`);
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { detail?: string } }; message?: string };
+      message.error(`连接测试失败: ${err.response?.data?.detail || err.message || '未知错误'}`);
       console.error('Failed to test connection:', error);
     } finally {
       setLoading(false);
@@ -323,8 +329,9 @@ const ModelManagement: React.FC = () => {
       } else {
         message.error('启用失败');
       }
-    } catch (error: any) {
-      message.error(`启用失败: ${error.response?.data?.detail || error.message || '未知错误'}`);
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { detail?: string } }; message?: string };
+      message.error(`启用失败: ${err.response?.data?.detail || err.message || '未知错误'}`);
       console.error('Failed to enable model:', error);
     }
   };

@@ -63,14 +63,14 @@ interface EntityUpdateRequest {
   name?: string;
   type?: string;
   description?: string;
-  attributes?: Record<string, any>;
+  attributes?: Record<string, unknown>;
 }
 
 export const entityService = {
   // 获取实体列表
   async listEntities(page: number = 1, limit: number = 10, entityType?: string, query?: string): Promise<EntityListResponse> {
     try {
-      const params: Record<string, any> = { page, limit };
+      const params: Record<string, unknown> = { page, limit };
       if (entityType) params.entity_type = entityType;
       if (query) params.query = query;
       const response = await axios.get(API_CONFIG.endpoints.graph.nodes, { params });

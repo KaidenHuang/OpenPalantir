@@ -50,7 +50,7 @@ interface EvidenceItem {
 interface SkillTraceStep {
   step: number;
   skill_name: string;
-  params: Record<string, any>;
+  params: Record<string, unknown>;
   result_summary: string;
   success: boolean;
   execution_time_ms: number;
@@ -60,7 +60,7 @@ interface AnalyzedQuery {
   domain: string;
   intent: string;
   entities: string[];
-  constraints: Record<string, any>;
+  constraints: Record<string, unknown>;
   sub_questions: string[];
   reasoning: string;
 }
@@ -244,13 +244,14 @@ function DecisionAssistant() {
             : m
         ));
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : '调用失败';
       if (mountedRef.current) {
         setMessages(prev => {
           const filtered = prev.filter(m => m.id !== loadingMsg.id);
           return [...filtered, {
             id: (Date.now() + 1).toString(), type: 'assistant',
-            content: `抱歉，发生错误：${err.message || '调用失败'}`,
+            content: `抱歉，发生错误：${message}`,
             timestamp: new Date(),
           }];
         });

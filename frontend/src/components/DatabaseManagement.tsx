@@ -58,11 +58,23 @@ interface ForeignKeyInfo {
   constraint_name?: string;
 }
 
+interface InferredRelationship {
+  source_table: string;
+  target_table: string;
+  relationship_type?: string;
+}
+
 interface SchemaResult {
   tables: TableInfo[];
   columns: ColumnInfo[];
   foreign_keys: ForeignKeyInfo[];
-  inferred_relationships?: any[];
+  inferred_relationships?: InferredRelationship[];
+}
+
+interface DbSummary {
+  db_description?: string;
+  business_domain?: string;
+  key_entities?: string;
 }
 
 interface DatabaseItem {
@@ -99,12 +111,12 @@ function DatabaseManagement() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(null);
   const isAnalyzing = taskId !== null;
-  const [_taskStatus, setTaskStatus] = useState<string>('');
+  const [, setTaskStatus] = useState<string>('');
   const [viewMode, setViewMode] = useState<'card' | 'er'>('card');
   const [sourceSearchText, setSourceSearchText] = useState('');
   const [showDeletedConnections, setShowDeletedConnections] = useState(false);
   const [restoringConnectionId, setRestoringConnectionId] = useState<string | null>(null);
-  const [dbSummary, setDbSummary] = useState<any>(null);
+  const [dbSummary, setDbSummary] = useState<DbSummary | null>(null);
 
   // Import state: prevent duplicate task creation
   const [importTaskId, setImportTaskId] = useState<string | null>(null);
@@ -134,6 +146,7 @@ function DatabaseManagement() {
 
   useEffect(() => {
     loadConnections();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showDeletedConnections]);
 
   // When connection changes, fetch all databases from server and load schema
@@ -152,6 +165,7 @@ function DatabaseManagement() {
       fetchDatabases(selectedConnection.id),
       loadSchema(selectedConnection.id, selectedConnection.database),
     ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedConnection]);
 
   useEffect(() => {
@@ -186,6 +200,7 @@ function DatabaseManagement() {
       }, 2000);
       return () => clearInterval(interval);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId, selectedConnection]);
 
   const loadConnections = async () => {
@@ -269,6 +284,7 @@ function DatabaseManagement() {
 
   const handleCreateConnection = async () => {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { database: _db, ...payload } = newConnection;
       await axios.post(API_CONFIG.endpoints.database.connections, payload);
       await loadConnections();
@@ -423,14 +439,15 @@ function DatabaseManagement() {
       );
       const data = response.data;
       if (data.status === 'ok') {
-        const detail = (data.steps || []).map((s: any) => `• ${s.message}`).join('\n');
+        const detail = (data.steps || []).map((s: { message: string }) => `• ${s.message}`).join('\n');
         alert(`CDC 配置完成：\n${detail}\n\n请随后执行「导入图谱」（全量）再「增量同步」。`);
       } else {
         alert(`CDC 配置失败（${data.step}）：${data.message}`);
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { detail?: string } }; message?: string };
       logger.error('DatabaseManagement', '配置 CDC 失败', error);
-      alert('配置 CDC 失败：' + (error?.response?.data?.detail || error?.message || '未知错误'));
+      alert('配置 CDC 失败：' + (err?.response?.data?.detail || err?.message || '未知错误'));
     }
   };
 
@@ -640,7 +657,7 @@ function DatabaseManagement() {
                             const fkOut = schemaResult.foreign_keys.filter(fk => fk.table_name === table.table_name);
                             const fkIn = schemaResult.foreign_keys.filter(fk => fk.referenced_table_name === table.table_name);
                             const rels = (schemaResult.inferred_relationships || []).filter(
-                              (r: any) => r.source_table === table.table_name || r.target_table === table.table_name
+                              (r) => r.source_table === table.table_name || r.target_table === table.table_name
                             );
                             return (
                               <div
@@ -684,7 +701,7 @@ function DatabaseManagement() {
                                         ))}
                                       </div>
                                     )}
-                                    {rels.map((r: any, i: number) => (
+                                    {rels.map((r, i: number) => (
                                       <div key={i} className="relation-line inferred">
                                         <span className="relation-label">业务:</span>
                                         <span className="inferred-text">

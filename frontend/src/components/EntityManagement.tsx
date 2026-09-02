@@ -67,11 +67,11 @@ const EntityManagement: React.FC = () => {
         : await entityService.listEntities(page, pageSize, entityType, search.trim() || undefined);
 
       if (response.status === 'success' && response.data) {
-        const mapped = (response.data.entities || []).map((entity: any) => ({
+        const mapped = (response.data.entities || []).map((entity) => ({
           ...entity,
-          id: entity.id || entity.entity_id || `e_${Math.random().toString(36).slice(2, 8)}`,
+          id: entity.id || (entity as unknown as Record<string, unknown>).entity_id || `e_${Math.random().toString(36).slice(2, 8)}`,
           count: entity.count ?? entity.count,
-        }));
+        })) as Entity[];
         setEntities(mapped);
         setPagination({
           current: response.data.pagination.current_page,

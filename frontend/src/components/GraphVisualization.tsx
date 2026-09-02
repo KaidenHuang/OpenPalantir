@@ -151,11 +151,11 @@ const GraphVisualization: React.FC = () => {
       setTruncated(isTruncated);
 
       // 转换为 ForceGraph3D 所需格式
-      const nodes: GraphNode[] = (rawNodes || []).map((node: any) => ({
-        id: node.id || node.name,
-        name: node.name,
-        type: node.type || 'Entity',
-        count: node.count ? Math.max(5, node.count * 2) : 10,
+      const nodes: GraphNode[] = (rawNodes || []).map((node: Record<string, unknown>) => ({
+        id: (node.id || node.name) as string,
+        name: node.name as string,
+        type: (node.type as string) || 'Entity',
+        count: node.count ? Math.max(5, (node.count as number) * 2) : 10,
         color: entityTypeColors[node.type as keyof typeof entityTypeColors] || '#95A5A6'
       }));
 
@@ -167,14 +167,14 @@ const GraphVisualization: React.FC = () => {
       });
 
       // 解析边的端点 ID：优先 UUID（subject_id/object_id），其次名称查表
-      const resolveSrcId = (edge: any): string => {
+      const resolveSrcId = (edge: Record<string, unknown>): string => {
         const sid = String(edge.subject_id || '');
         if (sid && nodeIdSet.has(sid)) return sid;
         const name = String(edge.source || '');
         if (name && nodeNameToId.has(name)) return nodeNameToId.get(name)!;
         return sid || name;
       };
-      const resolveTgtId = (edge: any): string => {
+      const resolveTgtId = (edge: Record<string, unknown>): string => {
         const oid = String(edge.object_id || '');
         if (oid && nodeIdSet.has(oid)) return oid;
         const name = String(edge.target || '');
@@ -184,7 +184,7 @@ const GraphVisualization: React.FC = () => {
 
       // 去重边（按 srcId + tgtId + type 去重）
       const linkMap = new Map<string, GraphLink>();
-      (rawEdges || []).forEach((edge: any) => {
+      (rawEdges || []).forEach((edge: Record<string, unknown>) => {
         const srcId = resolveSrcId(edge);
         const tgtId = resolveTgtId(edge);
         const linkKey = `${srcId}_${tgtId}_${edge.type || 'association'}`;
@@ -193,14 +193,14 @@ const GraphVisualization: React.FC = () => {
           linkMap.set(linkKey, {
             source: srcId,
             target: tgtId,
-            type: edge.type || 'association',
-            confidence: edge.confidence || 0.5,
-            width: Math.max(1, (edge.confidence || 0.5) * 5),
+            type: (edge.type as string) || 'association',
+            confidence: (edge.confidence as number) || 0.5,
+            width: Math.max(1, ((edge.confidence as number) || 0.5) * 5),
             color: relationshipTypeColors[edge.type as keyof typeof relationshipTypeColors] || '#95A5A6',
-            subject_id: edge.subject_id || '',
-            object_id: edge.object_id || '',
-            occurrence_time: edge.occurrence_time || '',
-            description: edge.description || ''
+            subject_id: (edge.subject_id as string) || '',
+            object_id: (edge.object_id as string) || '',
+            occurrence_time: (edge.occurrence_time as string) || '',
+            description: (edge.description as string) || ''
           });
         }
       });
@@ -210,9 +210,9 @@ const GraphVisualization: React.FC = () => {
       if (requestId === requestIdRef.current) {
         setGraphData({ nodes, links });
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       // AbortError 是预期行为（组件卸载或手动刷新），静默处理
-      if (error?.name !== 'AbortError') {
+      if ((error as { name?: string })?.name !== 'AbortError') {
         console.error('获取图谱数据失败:', error);
         if (requestId === requestIdRef.current) {
           setGraphData({ nodes: [], links: [] });
@@ -225,7 +225,7 @@ const GraphVisualization: React.FC = () => {
       }
       fetchingRef.current = false;
     }
-  }, [availableTypes, initialized, selectedEntityTypes.length]);
+  }, [availableTypes, initialized]);
 
   // 首次加载
   useEffect(() => {
@@ -248,22 +248,23 @@ const GraphVisualization: React.FC = () => {
     };
   }, [selectedEntityTypes, minEdgeCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleNodeClick = useCallback((node: any) => {
-    setSelectedNode(node as GraphNode);
+  const handleNodeClick = useCallback((node: Record<string, unknown>) => {
+    setSelectedNode(node as unknown as GraphNode);
   }, []);
 
-  const linkColorFn = useCallback((link: any) => {
-    const r = parseInt(link.color.slice(1, 3), 16);
-    const g = parseInt(link.color.slice(3, 5), 16);
-    const b = parseInt(link.color.slice(5, 7), 16);
+  const linkColorFn = useCallback((link: Record<string, unknown>) => {
+    const color = link.color as string;
+    const r = parseInt(color.slice(1, 3), 16);
+    const g = parseInt(color.slice(3, 5), 16);
+    const b = parseInt(color.slice(5, 7), 16);
     return `rgba(${r}, ${g}, ${b}, 0.6)`;
   }, []);
 
-  const linkLabelFn = useCallback((link: any) => {
-    return `关系类型: ${link.type}<br/>置信度: ${link.confidence.toFixed(2)}<br/>时间: ${link.occurrence_time || '-'}${link.description ? '<br/>描述: ' + link.description : ''}`;
+  const linkLabelFn = useCallback((link: Record<string, unknown>) => {
+    return `关系类型: ${link.type as string}<br/>置信度: ${(link.confidence as number).toFixed(2)}<br/>时间: ${link.occurrence_time as string || '-'}${link.description ? '<br/>描述: ' + (link.description as string) : ''}`;
   }, []);
 
-  const nodeValFn = useCallback((node: any) => node.count, []);
+  const nodeValFn = useCallback((node: Record<string, unknown>) => node.count as number, []);
 
   const handleRefresh = () => {
     // 取消防抖中的待执行请求，立即用最新过滤条件拉取
@@ -362,12 +363,12 @@ const GraphVisualization: React.FC = () => {
       <div className="graph-container" style={{ flex: 1, minHeight: '500px', width: '100%', overflow: 'hidden' }}>
         <ForceGraph3D
           key="graph-viz-main"
-          graphData={graphData}
-          nodeColor={(node: any) => node.color}
-          nodeLabel={(node: any) => node.name}
+          graphData={graphData as unknown as { nodes: Record<string, unknown>[]; links: Record<string, unknown>[] }}
+          nodeColor={(node: Record<string, unknown>) => node.color as string}
+          nodeLabel={(node: Record<string, unknown>) => node.name as string}
           nodeVal={nodeValFn}
           linkColor={linkColorFn}
-          linkWidth={(link: any) => link.width}
+          linkWidth={(link: Record<string, unknown>) => link.width as number}
           onNodeClick={handleNodeClick}
           linkLabel={linkLabelFn}
           linkDirectionalArrowLength={3.5}
@@ -402,10 +403,10 @@ const GraphVisualization: React.FC = () => {
                 const selId = String(selectedNode.id);
                 const selName = String(selectedNode.name);
                 return graphData.links.filter(l => {
-                  const sid = String(typeof l.source === 'object' ? (l.source as any).id : l.source);
-                  const tid = String(typeof l.target === 'object' ? (l.target as any).id : l.target);
-                  const sn = String(typeof l.source === 'object' ? (l.source as any).name : l.source);
-                  const tn = String(typeof l.target === 'object' ? (l.target as any).name : l.target);
+                  const sid = String(typeof l.source === 'object' ? (l.source as unknown as Record<string, unknown>).id : l.source);
+                  const tid = String(typeof l.target === 'object' ? (l.target as unknown as Record<string, unknown>).id : l.target);
+                  const sn = String(typeof l.source === 'object' ? (l.source as unknown as Record<string, unknown>).name : l.source);
+                  const tn = String(typeof l.target === 'object' ? (l.target as unknown as Record<string, unknown>).name : l.target);
                   return sid === selId || tid === selId || sn === selName || tn === selName;
                 }).length;
               })()
@@ -419,17 +420,17 @@ const GraphVisualization: React.FC = () => {
 
               const relatedLinks: RelatedLinkInfo[] = graphData.links
                 .filter(link => {
-                  const sid = String(typeof link.source === 'object' ? (link.source as any).id : link.source);
-                  const tid = String(typeof link.target === 'object' ? (link.target as any).id : link.target);
-                  const sn = String(typeof link.source === 'object' ? (link.source as any).name : link.source);
-                  const tn = String(typeof link.target === 'object' ? (link.target as any).name : link.target);
+                  const sid = String(typeof link.source === 'object' ? (link.source as unknown as Record<string, unknown>).id : link.source);
+                  const tid = String(typeof link.target === 'object' ? (link.target as unknown as Record<string, unknown>).id : link.target);
+                  const sn = String(typeof link.source === 'object' ? (link.source as unknown as Record<string, unknown>).name : link.source);
+                  const tn = String(typeof link.target === 'object' ? (link.target as unknown as Record<string, unknown>).name : link.target);
                   return sid === selId || tid === selId || sn === selName || tn === selName;
                 })
                 .map(link => {
-                  const sid = String(typeof link.source === 'object' ? (link.source as any).id : link.source);
-                  const sn = String(typeof link.source === 'object' ? (link.source as any).name : link.source);
-                  const tid = String(typeof link.target === 'object' ? (link.target as any).id : link.target);
-                  const tn = String(typeof link.target === 'object' ? (link.target as any).name : link.target);
+                  const sid = String(typeof link.source === 'object' ? (link.source as unknown as Record<string, unknown>).id : link.source);
+                  const sn = String(typeof link.source === 'object' ? (link.source as unknown as Record<string, unknown>).name : link.source);
+                  const tid = String(typeof link.target === 'object' ? (link.target as unknown as Record<string, unknown>).id : link.target);
+                  const tn = String(typeof link.target === 'object' ? (link.target as unknown as Record<string, unknown>).name : link.target);
 
                   const isSource = sid === selId || sn === selName;
                   const targetId = isSource ? tid : sid;

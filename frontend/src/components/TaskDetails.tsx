@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { API_CONFIG } from '../config/apiConfig';
 
@@ -6,8 +6,8 @@ interface Task {
   task_id: string;
   task_type: string;
   status: string;
-  payload: any;
-  result: any;
+  payload: unknown;
+  result: unknown;
   progress: number;
   error: string | null;
   created_at: string;
@@ -24,15 +24,8 @@ const TaskDetails: React.FC<TaskDetailsProps> = ({ taskId }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (taskId) {
-      fetchTaskDetails();
-    }
-  }, [taskId]);
-
-  const fetchTaskDetails = async () => {
+  const fetchTaskDetails = useCallback(async () => {
     if (!taskId) return;
-    
     try {
       setLoading(true);
       const response = await axios.get(API_CONFIG.endpoints.task.get(taskId));
@@ -44,7 +37,13 @@ const TaskDetails: React.FC<TaskDetailsProps> = ({ taskId }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [taskId]);
+
+  useEffect(() => {
+    if (taskId) {
+      fetchTaskDetails();
+    }
+  }, [taskId, fetchTaskDetails]);
 
   const getTaskTypeLabel = (type: string): string => {
     switch (type) {
@@ -144,7 +143,7 @@ const TaskDetails: React.FC<TaskDetailsProps> = ({ taskId }) => {
             </div>
           )}
           
-          {task.result && (
+          {task.result != null && (
             <div className="task-result">
               <h4>任务结果:</h4>
               <pre>{JSON.stringify(task.result, null, 2)}</pre>

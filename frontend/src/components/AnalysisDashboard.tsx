@@ -5,7 +5,7 @@ import './AnalysisDashboard.css';
 
 interface AnalysisResult {
   type: string;
-  data: any;
+  data: Record<string, unknown>;
 }
 
 const AnalysisDashboard: React.FC = () => {
@@ -51,8 +51,8 @@ const AnalysisDashboard: React.FC = () => {
         type: 'path',
         data: response.data
       }]);
-    } catch (error: any) {
-      setError(`路径分析失败: ${error.message || '未知错误'}`);
+    } catch (error: unknown) {
+      setError(`路径分析失败: ${(error as Error).message || '未知错误'}`);
       console.error('Error running path analysis:', error);
     } finally {
       setLoading(false);
@@ -70,8 +70,8 @@ const AnalysisDashboard: React.FC = () => {
         type: 'community',
         data: response.data
       }]);
-    } catch (error: any) {
-      setError(`社区分析失败: ${error.message || '未知错误'}`);
+    } catch (error: unknown) {
+      setError(`社区分析失败: ${(error as Error).message || '未知错误'}`);
       console.error('Error running community analysis:', error);
     } finally {
       setLoading(false);
@@ -91,8 +91,8 @@ const AnalysisDashboard: React.FC = () => {
         type: 'centrality',
         data: response.data
       }]);
-    } catch (error: any) {
-      setError(`中心性分析失败: ${error.message || '未知错误'}`);
+    } catch (error: unknown) {
+      setError(`中心性分析失败: ${(error as Error).message || '未知错误'}`);
       console.error('Error running centrality analysis:', error);
     } finally {
       setLoading(false);
@@ -113,8 +113,8 @@ const AnalysisDashboard: React.FC = () => {
         type: 'trend',
         data: response.data
       }]);
-    } catch (error: any) {
-      setError(`趋势分析失败: ${error.message || '未知错误'}`);
+    } catch (error: unknown) {
+      setError(`趋势分析失败: ${(error as Error).message || '未知错误'}`);
       console.error('Error running trend analysis:', error);
     } finally {
       setLoading(false);
@@ -135,8 +135,8 @@ const AnalysisDashboard: React.FC = () => {
         type: 'report',
         data: response.data
       }]);
-    } catch (error: any) {
-      setError(`报告生成失败: ${error.message || '未知错误'}`);
+    } catch (error: unknown) {
+      setError(`报告生成失败: ${(error as Error).message || '未知错误'}`);
       console.error('Error generating report:', error);
     } finally {
       setLoading(false);
@@ -144,16 +144,16 @@ const AnalysisDashboard: React.FC = () => {
   };
 
   // 下载报告
-  const downloadReport = (data: any) => {
+  const downloadReport = (data: Record<string, unknown>) => {
     if (!data || !data.report) return;
-    
-    const format = data.format || 'html';
+
+    const format = (data.format as string) || 'html';
     const mimeTypes = {
       html: 'text/html',
       markdown: 'text/markdown'
     };
     
-    const blob = new Blob([data.report], { type: mimeTypes[format as keyof typeof mimeTypes] || 'text/plain' });
+    const blob = new Blob([data.report as string], { type: mimeTypes[format as keyof typeof mimeTypes] || 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -165,22 +165,22 @@ const AnalysisDashboard: React.FC = () => {
   };
 
   // 渲染路径分析结果
-  const renderPathAnalysis = (data: any) => {
-    if (!data || !data.paths || data.paths.length === 0) {
+  const renderPathAnalysis = (data: Record<string, unknown>) => {
+    if (!data || !data.paths || (data.paths as unknown[]).length === 0) {
       return <div className="analysis-result">未找到路径</div>;
     }
 
     return (
       <div className="analysis-result">
         <h4>路径分析结果</h4>
-        <p>源实体: {data.source}</p>
-        <p>目标实体: {data.target}</p>
-        <p>找到路径数: {data.total_paths}</p>
+        <p>源实体: {String(data.source)}</p>
+        <p>目标实体: {String(data.target)}</p>
+        <p>找到路径数: {String(data.total_paths)}</p>
         <div className="paths">
-          {data.paths.map((path: string[], index: number) => (
+          {(data.paths as unknown[]).map((path: unknown, index: number) => (
             <div key={index} className="path">
-              <p>路径 {index + 1}: {path.join(' → ')}</p>
-              <p>长度: {data.path_lengths[index]}</p>
+              <p>路径 {index + 1}: {(path as string[]).join(' → ')}</p>
+              <p>长度: {String((data.path_lengths as number[])[index])}</p>
             </div>
           ))}
         </div>
@@ -189,64 +189,75 @@ const AnalysisDashboard: React.FC = () => {
   };
 
   // 渲染社区分析结果
-  const renderCommunityAnalysis = (data: any) => {
-    if (!data || !data.communities || data.communities.length === 0) {
+  const renderCommunityAnalysis = (data: Record<string, unknown>) => {
+    if (!data || !data.communities || (data.communities as unknown[]).length === 0) {
       return <div className="analysis-result">未检测到社区</div>;
     }
 
     return (
       <div className="analysis-result">
         <h4>社区分析结果</h4>
-        <p>总社区数: {data.total_communities}</p>
-        {data.largest_community && (
-          <div className="largest-community">
-            <h5>最大社区</h5>
-            <p>社区ID: {data.largest_community.community_id}</p>
-            <p>节点数量: {data.largest_community.size}</p>
-            <p>密度: {data.largest_community.density.toFixed(4)}</p>
-            <p>边数: {data.largest_community.edge_count}</p>
-            {data.largest_community.key_entities && data.largest_community.key_entities.length > 0 && (
-              <p>关键实体: {data.largest_community.key_entities.map((entity: any) => entity.node).join(', ')}</p>
-            )}
-          </div>
-        )}
-        <div className="communities">
-          {data.communities.slice(0, 5).map((community: any, index: number) => (
-            <div key={index} className="community">
-              <h5>社区 {community.community_id} (大小: {community.size})</h5>
-              <p>密度: {community.density.toFixed(4)}</p>
-              {community.key_entities && community.key_entities.length > 0 && (
-                <p>关键实体: {community.key_entities.map((entity: any) => entity.node).join(', ')}</p>
+        <p>总社区数: {String(data.total_communities)}</p>
+        {data.largest_community != null && (() => {
+          const largest = data.largest_community as Record<string, unknown>;
+          return (
+            <div className="largest-community">
+              <h5>最大社区</h5>
+              <p>社区ID: {String(largest.community_id)}</p>
+              <p>节点数量: {String(largest.size)}</p>
+              <p>密度: {(largest.density as number).toFixed(4)}</p>
+              <p>边数: {String(largest.edge_count)}</p>
+              {largest.key_entities != null && (largest.key_entities as unknown[]).length > 0 && (
+                <p>关键实体: {(largest.key_entities as unknown[]).map((entity: unknown) => (entity as Record<string, unknown>).node as string).join(', ')}</p>
               )}
             </div>
-          ))}
-        </div>
-        {data.communities.length > 5 && (
-          <p className="more-communities">... 还有 {data.communities.length - 5} 个社区</p>
+          );
+        })()}
+        {data.communities && (
+          <div className="communities">
+            {(data.communities as unknown[]).slice(0, 5).map((community: unknown, index: number) => {
+              const c = community as Record<string, unknown>;
+              return (
+                <div key={index} className="community">
+                  <h5>社区 {String(c.community_id)} (大小: {String(c.size)})</h5>
+                  <p>密度: {(c.density as number).toFixed(4)}</p>
+                  {c.key_entities != null && (c.key_entities as unknown[]).length > 0 && (
+                    <p>关键实体: {(c.key_entities as unknown[]).map((entity: unknown) => (entity as Record<string, unknown>).node as string).join(', ')}</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {(data.communities as unknown[]).length > 5 && (
+          <p className="more-communities">... 还有 {(data.communities as unknown[]).length - 5} 个社区</p>
         )}
       </div>
     );
   };
 
   // 渲染中心性分析结果
-  const renderCentralityAnalysis = (data: any) => {
-    if (!data || !data.top_nodes || data.top_nodes.length === 0) {
+  const renderCentralityAnalysis = (data: Record<string, unknown>) => {
+    if (!data || !data.top_nodes || (data.top_nodes as unknown[]).length === 0) {
       return <div className="analysis-result">未找到中心节点</div>;
     }
 
     return (
       <div className="analysis-result">
         <h4>中心性分析结果</h4>
-        {data.top_nodes_by_type && Object.entries(data.top_nodes_by_type).map(([type, nodes]) => (
+        {data.top_nodes_by_type != null && Object.entries(data.top_nodes_by_type as Record<string, unknown>).map(([type, nodes]) => (
           <div key={type} className="centrality-type">
             <h5>{getCentralityTypeName(type)}</h5>
             <div className="centrality-nodes">
-              {(nodes as any[]).slice(0, 5).map((node: any, index: number) => (
-                <div key={index} className="centrality-node">
-                  <p>节点: {node.node}</p>
-                  <p>值: {(node[`${type}_centrality`] || 0).toFixed(4)}</p>
-                </div>
-              ))}
+              {(nodes as unknown[]).slice(0, 5).map((node: unknown, index: number) => {
+                const n = node as Record<string, unknown>;
+                return (
+                  <div key={index} className="centrality-node">
+                    <p>节点: {String(n.node)}</p>
+                    <p>值: {((n[`${type}_centrality`] as number) || 0).toFixed(4)}</p>
+                  </div>
+                );
+              })}
             </div>
           </div>
         ))}
@@ -255,24 +266,24 @@ const AnalysisDashboard: React.FC = () => {
   };
 
   // 渲染趋势分析结果
-  const renderTrendAnalysis = (data: any) => {
-    if (!data || !data.trends || data.trends.length === 0) {
+  const renderTrendAnalysis = (data: Record<string, unknown>) => {
+    if (!data || !data.trends || (data.trends as unknown[]).length === 0) {
       return <div className="analysis-result">未找到趋势数据</div>;
     }
 
     return (
       <div className="analysis-result">
         <h4>趋势分析结果</h4>
-        <p>时间范围: {data.time_range}</p>
+        <p>时间范围: {String(data.time_range)}</p>
         <div className="trends">
-          {data.trends.map((trend: any, index: number) => (
+          {(data.trends as Record<string, unknown>[]).map((trend: Record<string, unknown>, index: number) => (
             <div key={index} className="trend">
-              <h5>{trend.label || trend.metric}</h5>
+              <h5>{String(trend.label || trend.metric)}</h5>
               <div className="trend-data">
-                {trend.labels && trend.values && trend.labels.map((label: string, i: number) => (
+                {trend.labels != null && trend.values != null && (trend.labels as string[]).map((label: string, i: number) => (
                   <div key={i} className="trend-point">
                     <span>{label}: </span>
-                    <span>{trend.values[i]}</span>
+                    <span>{String((trend.values as unknown[])[i])}</span>
                   </div>
                 ))}
               </div>
@@ -284,7 +295,7 @@ const AnalysisDashboard: React.FC = () => {
   };
 
   // 渲染报告结果
-  const renderReport = (data: any) => {
+  const renderReport = (data: Record<string, unknown>) => {
     if (!data || !data.report) {
       return <div className="analysis-result">报告生成失败</div>;
     }
@@ -301,11 +312,11 @@ const AnalysisDashboard: React.FC = () => {
           </button>
         </div>
         {data.format === 'html' ? (
-          <div className="html-report" dangerouslySetInnerHTML={{ __html: data.report }} />
+          <div className="html-report" dangerouslySetInnerHTML={{ __html: data.report as string }} />
         ) : (
-          <pre className="markdown-report">{data.report}</pre>
+          <pre className="markdown-report">{String(data.report)}</pre>
         )}
-        {data.data && (
+        {data.data != null && (
           <div className="report-data">
             <h5>报告数据</h5>
             <pre>{JSON.stringify(data.data, null, 2)}</pre>

@@ -11,7 +11,7 @@ interface LogEntry {
   level: LogLevel;
   module: string;
   message: string;
-  details?: any;
+  details?: unknown;
 }
 
 class Logger {
@@ -63,7 +63,7 @@ class Logger {
     }
   }
   
-  private addLogEntry(level: LogLevel, module: string, message: string, details?: any): void {
+  private addLogEntry(level: LogLevel, module: string, message: string, details?: unknown): void {
     // 检查日志级别
     const levelOrder = [LogLevel.DEBUG, LogLevel.INFO, LogLevel.WARNING, LogLevel.ERROR, LogLevel.CRITICAL];
     if (levelOrder.indexOf(level) < levelOrder.indexOf(this.logLevel)) {
@@ -113,23 +113,23 @@ class Logger {
     return this.logLevel;
   }
   
-  public debug(module: string, message: string, details?: any): void {
+  public debug(module: string, message: string, details?: unknown): void {
     this.addLogEntry(LogLevel.DEBUG, module, message, details);
   }
   
-  public info(module: string, message: string, details?: any): void {
+  public info(module: string, message: string, details?: unknown): void {
     this.addLogEntry(LogLevel.INFO, module, message, details);
   }
   
-  public warning(module: string, message: string, details?: any): void {
+  public warning(module: string, message: string, details?: unknown): void {
     this.addLogEntry(LogLevel.WARNING, module, message, details);
   }
   
-  public error(module: string, message: string, details?: any): void {
+  public error(module: string, message: string, details?: unknown): void {
     this.addLogEntry(LogLevel.ERROR, module, message, details);
   }
   
-  public critical(module: string, message: string, details?: any): void {
+  public critical(module: string, message: string, details?: unknown): void {
     this.addLogEntry(LogLevel.CRITICAL, module, message, details);
   }
   

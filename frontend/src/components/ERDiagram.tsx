@@ -357,7 +357,7 @@ function ERDiagram({ tables, foreignKeys, getTableColumns }: ERDiagramProps) {
     });
 
     return rawConnections;
-  }, [foreignKeys, positions, tableMeta, portSpreadStep, measuredRowCenters]);
+  }, [foreignKeys, positions, tableMeta, portSpreadStep, measuredRowCenters]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedConnection = useMemo(
     () => connections.find(conn => conn.id === selectedConnectionId) || null,

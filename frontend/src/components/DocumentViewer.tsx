@@ -55,6 +55,8 @@ interface SummaryData {
   structure?: SummaryNode[];
 }
 
+type AxiosErrorLike = { response?: { data?: { detail?: string } }; message?: string };
+
 const DocumentViewer: React.FC = () => {
   // Source state
   const [sources, setSources] = useState<Source[]>([]);
@@ -129,8 +131,9 @@ const DocumentViewer: React.FC = () => {
       setNewSourceName('');
       setNewSourcePath('');
       await fetchSources();
-    } catch (err: any) {
-      message.error(`添加失败: ${err.response?.data?.detail || err.message}`);
+    } catch (err: unknown) {
+      const e = err as AxiosErrorLike;
+      message.error(`添加失败: ${e.response?.data?.detail || e.message}`);
     } finally {
       setAddingSource(false);
     }
@@ -148,8 +151,9 @@ const DocumentViewer: React.FC = () => {
         setEntities([]);
       }
       await fetchSources();
-    } catch (err: any) {
-      message.error(`删除失败: ${err.response?.data?.detail || err.message}`);
+    } catch (err: unknown) {
+      const e = err as AxiosErrorLike;
+      message.error(`删除失败: ${e.response?.data?.detail || e.message}`);
     }
   };
 
@@ -159,8 +163,9 @@ const DocumentViewer: React.FC = () => {
       await axios.post(API_CONFIG.endpoints.source.restore(sourceId));
       message.success('文档源已恢复');
       await fetchSources();
-    } catch (err: any) {
-      message.error(`恢复失败: ${err.response?.data?.detail || err.message}`);
+    } catch (err: unknown) {
+      const e = err as AxiosErrorLike;
+      message.error(`恢复失败: ${e.response?.data?.detail || e.message}`);
     } finally {
       setRestoringSourceId(null);
     }
@@ -191,8 +196,9 @@ const DocumentViewer: React.FC = () => {
       });
       setFiles(res.data.entries || []);
       setCurrentPath(res.data.current_path || '');
-    } catch (err: any) {
-      message.error(`浏览失败: ${err.response?.data?.detail || err.message}`);
+    } catch (err: unknown) {
+      const e = err as AxiosErrorLike;
+      message.error(`浏览失败: ${e.response?.data?.detail || e.message}`);
       setFiles([]);
     } finally {
       setFilesLoading(false);
@@ -266,8 +272,9 @@ const DocumentViewer: React.FC = () => {
         { file: selectedFile }
       );
       setTaskId(res.data.task_id);
-    } catch (err: any) {
-      message.error(`提交概要生成任务失败: ${err.response?.data?.detail || err.message}`);
+    } catch (err: unknown) {
+      const e = err as AxiosErrorLike;
+      message.error(`提交概要生成任务失败: ${e.response?.data?.detail || e.message}`);
       setSummarizing(false);
     }
   };
@@ -316,8 +323,9 @@ const DocumentViewer: React.FC = () => {
       );
       setEntities(res.data.entities || []);
       message.success(`实体提取完成: ${res.data.entity_count} 个实体, ${res.data.relationship_count} 个关系`);
-    } catch (err: any) {
-      message.error(`提取失败: ${err.response?.data?.detail || err.message}`);
+    } catch (err: unknown) {
+      const e = err as AxiosErrorLike;
+      message.error(`提取失败: ${e.response?.data?.detail || e.message}`);
     } finally {
       setExtracting(false);
     }
@@ -325,7 +333,7 @@ const DocumentViewer: React.FC = () => {
 
   // ── Tree rendering helpers ────────────────────────────────────
 
-  const renderFileTree = (entries: FileEntry[]): any[] => {
+  const renderFileTree = (entries: FileEntry[]): Record<string, unknown>[] => {
     return entries.map((entry) => ({
       key: entry.path,
       title: entry.name,
@@ -336,7 +344,7 @@ const DocumentViewer: React.FC = () => {
     }));
   };
 
-  const convertSummaryToTree = (nodes: SummaryNode[] | undefined): any[] => {
+  const convertSummaryToTree = (nodes: SummaryNode[] | undefined): Record<string, unknown>[] => {
     if (!nodes || !Array.isArray(nodes)) return [];
     return nodes.map((node, idx) => ({
       key: node.node_id || `node-${idx}`,
@@ -468,10 +476,10 @@ const DocumentViewer: React.FC = () => {
                 showIcon
                 defaultExpandAll
                 onSelect={(_keys, info) => {
-                  const node = info.node as any;
-                  if (node.isDir) {
+                  const node = info.node as { isDir?: boolean; entry?: FileEntry };
+                  if (node.isDir && node.entry) {
                     handleDirClick(node.entry);
-                  } else {
+                  } else if (node.entry) {
                     handleFileClick(node.entry);
                   }
                 }}
@@ -529,7 +537,7 @@ const DocumentViewer: React.FC = () => {
                           treeData={convertSummaryToTree(summary.structure)}
                           showIcon
                           defaultExpandAll
-                          titleRender={(node: any) => (
+                          titleRender={(node: { title?: string; summary?: string }) => (
                             <span>
                               {node.title}
                               {node.summary && (
