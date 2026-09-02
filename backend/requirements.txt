@@ -44,3 +44,9 @@ pytesseract>=0.3.13
 SQLAlchemy>=2.0.0
 pymysql>=1.1.0
 psycopg2-binary>=2.9.9
+
+# 测试
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=5.0.0
+pytest-mock>=3.12.0

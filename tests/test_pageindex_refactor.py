@@ -3,10 +3,12 @@ PageIndex 重构后的单元测试
 在 WSL Ubuntu 中运行: python3 test_pageindex_refactor.py
 """
 import sys
-sys.path.insert(0, '/mnt/f/Code/OpenPalantir/backend')
-
 import os
-os.chdir('/mnt/f/Code/OpenPalantir/backend')
+from pathlib import Path
+
+_BACKEND_DIR = Path(__file__).resolve().parent.parent / "backend"
+sys.path.insert(0, str(_BACKEND_DIR))
+os.chdir(str(_BACKEND_DIR))
 
 
 # ============================================================
