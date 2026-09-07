@@ -202,127 +202,139 @@ CDCConsumer 启动时从 SQLite 加载 Schema 元数据（由阶段1 Schema 分�
 
 ## 3. 决策引擎流程
 
-决策引擎是系统最高层的能力，整合图谱+数据库+文档三类信息源，提供自然语言问答。
-支持两种决策模式：**RAG 管道**（固定流程）和 **Tool 推理**（LLM 多轮工具调用）。
+决策引擎整合图谱+数据库+文档三类信息源，通过统一的 AgenticEngine ReAct 循环提供自然语言问答。
 
-### 3.1 记忆注入（两种模式共用）
+### 3.1 决策主流程
 
-每次用户提问，决策引擎自动注入三层记忆：
-
-```
-[用户提问]
-       ↓
-┌─ 记忆注入 ───────────────────────────────────────────────┐
-│ 1. 当前会话记忆：最近 3 轮对话（ConversationManager）       │
-│ 2. 短期记忆检索：SQLite 关键词匹配 + 时间衰减，上限 5 条    │
-│ 3. 长期记忆读取：MEMORY.md（用户偏好 + 重要决策，≤10条）    │
-│    └─ hash 去重：相同内容不重复注入                         │
-└──────────────────────────────────────────────────────────┘
-       ↓
-[进入决策管道]
-```
-
-### 3.2 RAG 管道模式（默认）
+`DecisionKernel.run()` 是全局入口，编排会话→记忆→意图判断→Agentic 循环→证据构建的完整流程：
 
 ```
 [POST /api/decision/ask]
        ↓
-┌─ Step 1: QueryAnalyzer 查询分析 ─────────────────────────┐
-│  ├─ LLM 解析用户意图 (intent)                              │
-│  ├─ 识别问题域 (domain)                                   │
-│  ├─ 提取关键实体 (entities)                                │
-│  ├─ 拆分子问题 (sub_questions)                             │
-│  └─ 确定检索策略 (required_sources)                        │
+┌─ 1. 会话管理 ─────────────────────────────────────────────┐
+│  ConversationManager.get_or_create(session_id, domain)    │
+│  ├─ 已有会话 → 返回                                        │
+│  └─ 新会话 → 生成 sess_{uuid4.hex[:12]} 并持久化到 JSON     │
 └──────────────────────────────────────────────────────────┘
        ↓
-┌─ Step 2: PluginRegistry 路由到领域插件 ───────────────────┐
-│  └─ 根据 domain 查找注册的插件 (如 workforce_plugin)        │
+┌─ 2. 记忆注入 ─────────────────────────────────────────────┐
+│  短期记忆：SQLite 关键词匹配 + 时间衰减，上限 5 条           │
+│  长期记忆：MEMORY.md（偏好 + 重要决策，≤10 条）              │
+│  └─ hash 去重：相同内容不重复注入                             │
 └──────────────────────────────────────────────────────────┘
        ↓
-┌─ Step 3: RetrievalOrchestrator 多源检索 ─────────────────┐
-│  ├─ GraphRetriever       → Cypher 查询图谱实体+关系         │
-│  ├─ DatabaseRetriever    → SQL 查询源数据库                 │
-│  └─ DocumentRetriever    → 搜索文档摘要树                    │
+┌─ 3. 快速意图判断 (quick_check_intent) ────────────────────┐
+│  规则匹配 5 种社交意图：                                     │
+│  ├─ greeting (你好/您好/hello)                              │
+│  ├─ identity (你是谁/你叫什么)                               │
+│  ├─ capability (你能做什么/你会什么)                          │
+│  ├─ farewell (再见/拜拜)                                    │
+│  └─ thanks (谢谢/感谢)                                      │
+│  命中 → 直接返回简单响应，跳过 Agentic 循环                   │
+│  未命中 → 进入 AgenticEngine.run()                          │
 └──────────────────────────────────────────────────────────┘
        ↓
-┌─ Step 4: EvidenceFusion 证据融合排序 ─────────────────────┐
-│  ├─ 基于 relevance_score 排序                               │
-│  ├─ 去重 (同源相似内容合并)                                  │
-│  └─ 生成 citation 引用标记                                  │
+┌─ 4. AgenticEngine.run() (详见 §3.2) ─────────────────────┐
+│  种子检索 → 构建 Prompt → ReAct 循环 → 返回 AgenticResult   │
 └──────────────────────────────────────────────────────────┘
        ↓
-┌─ Step 5: ContextBuilder 构建 LLM 上下文 ─────────────────┐
-│  ├─ 组装 System Prompt (角色 + 指令 + 记忆)                 │
-│  ├─ 填入检索证据 (EvidenceItem 序列化)                       │
-│  ├─ 填入对话历史 (ConversationTurn[])                      │
-│  └─ token 数量估算 (避免超出 LLM 上下文窗口)                   │
+┌─ 5. 会话保存 + 记忆提取 ──────────────────────────────────┐
+│  ConversationManager.add_turn() 记录本轮                    │
+│  MemoryExtractor.extract_async() 异步提取记忆候选            │
+│  ├─ 单 worker 线程串行处理                                   │
+│  └─ 超限时 LLM 提炼合并                                     │
 └──────────────────────────────────────────────────────────┘
        ↓
-┌─ Step 6: LLMReasoner 推理 ───────────────────────────────┐
-│  ├─ 调用 LLM API 生成结构化回答                              │
-│  └─ 解析为 DecisionAnswer {summary, options, recommendation,│
-│                           work_orders[]}                 │
+┌─ 6. 证据构建 ────────────────────────────────────────────┐
+│  AgenticEngine.build_evidence(observations)               │
+│  └─ 将工具观察记录转换为 EvidenceItem 列表                   │
 └──────────────────────────────────────────────────────────┘
        ↓
-┌─ Step 7: 记录 + 记忆提取 ────────────────────────────────┐
-│  ├─ ConversationManager 记录本轮对话                        │
-│  └─ MemoryExtractor 异步提取 → 短期记忆 → 长期记忆候选       │
-└──────────────────────────────────────────────────────────┘
-       ↓
-[返回 DecisionResponse 给前端]
+[返回 DecisionResponse]
 ```
 
-### 3.3 Tool 推理模式（Skill + MCP）
+### 3.2 AgenticEngine ReAct 循环
 
-Tool 推理模式通过 `ToolReasoner` 实现多轮 LLM + 工具调用循环，工具来源包括本地 Skill 和外部 MCP Server。
+`AgenticEngine`（`decision_engine/agentic/engine.py`）是系统的核心推理引擎，一个 ReAct 循环处理所有场景。
+
+#### Phase A: 种子检索
 
 ```
-[POST /api/decision/ask] (decision_mode=skill_reasoning)
-       ↓
-┌─ Step 1: QueryAnalyzer 轻量分析 ─────────────────────────┐
-│  └─ 提取意图 + 实体（不做子问题拆分）                        │
-└──────────────────────────────────────────────────────────┘
-       ↓
-┌─ Step 2: ToolReasoner 多轮推理循环 (max 10 turns) ───────┐
-│  ┌──────────────────────────────────────────────────┐    │
-│  │ 工具列表 = 本地 Skill (8个) + 外部 MCP Tool       │    │
-│  │   ├─ 本地 Skill: skill_registry.get_tool_definitions() │
-│  │   └─ MCP Tool:   mcp_manager.get_tool_definitions()    │
-│  │        └─ 名称以 {server}__ 为前缀，避免冲突         │    │
-│  └──────────────────────────────────────────────────┘    │
-│                         ↓                                 │
-│  ┌──────────────────────────────────────────────────┐    │
-│  │ LOOP:                                            │    │
-│  │  1. LLM call_with_tools(messages, tools)         │    │
-│  │  2. 无 tool_calls → 解析 JSON → DecisionAnswer   │    │
-│  │  3. 有 tool_calls → 按来源路由执行:               │    │
-│  │     ├─ 本地 Skill → skill_registry.execute()     │    │
-│  │     └─ MCP Tool  → mcp_manager.execute()         │    │
-│  │  4. 结果追加到 messages → 回到步骤 1              │    │
-│  └──────────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────┘
-       ↓
-[返回 DecisionResponse（含 skill_trace 工具调用记录）]
+SeedRetriever.retrieve(question)
+  ├─ jieba 中文分词 + 停用词过滤
+  ├─ 文档摘要检索 (data/summaries/DOC/) — 关键词匹配 JSON 文件
+  ├─ 数据库摘要检索 (data/summaries/DBS/) — 关键词匹配 JSON 文件
+  ├─ 提取 datasource_uri → 过滤 Neo4j 图检索（仅检索相关数据源）
+  └─ 组装 SeedResult 作为初始上下文
 ```
 
-### 3.4 本地 Skill 体系（8 个内置）
+#### Phase B: 构建 System Prompt
 
-每个 Skill 是一个目录，包含 `SKILL.md`（YAML 元数据）和 `executor.py`（`execute(params) -> dict`）。
+```
+_build_system_prompt(ctx, tool_defs)
+  ├─ 角色定义 + 四步工作流指令（思考→行动→反思→综合）
+  ├─ 可用工具描述（Skill + MCP，OpenAI function-calling 格式）
+  ├─ 种子上下文（Phase A 的 SeedResult）
+  ├─ 对话历史（最近 3 轮 ConversationTurn）
+  └─ 记忆注入（短期 + 长期）
+```
 
-| Skill | 类别 | 功能 |
-|------|------|------|
-| `search_entities` | graph | 知识图谱全文搜索实体 |
-| `get_entity_detail` | graph | 获取实体详情 + 最近关系 |
-| `get_entity_relationships` | graph | 获取实体所有关系（入+出） |
-| `analyze_path` | analysis | 实体间最短路径分析 |
-| `analyze_centrality` | analysis | 节点中心性分析（度/介数/紧密度/PageRank） |
-| `analyze_community` | analysis | 社区检测 |
-| `search_documents` | document | 搜索文档摘要 |
-| `query_database` | database | 查询数据库表元数据 |
+#### Phase C: ReAct 循环（MAX_TURNS=10）
+
+```
+LOOP (最多 10 轮):
+  1. LLM call_with_tools(messages, tools)
+     ├─ 本地模型 → Ollama /api/chat
+     └─ 云端模型 → OpenAI-compatible /chat/completions
+
+  2. 无 tool_calls → LLM 认为信息充足
+     └─ 解析 JSON → DecisionAnswer → 返回 AgenticResult
+
+  3. 有 tool_calls → 逐个执行
+     └─ ToolRegistry.execute(name, params)
+        ├─ Skill → skill_registry.execute()
+        └─ MCP   → mcp_manager.execute()
+     └─ 结果追加为 Observation + tool message
+
+  4. 上下文压缩（每 3 条观察触发）
+     └─ AgenticContext.compress(messages)
+
+  5. 反思提示（每 2 轮插入）
+     └─ "当前信息是否充足？不足则继续调用工具。"
+
+达到最大轮数 → 强制综合（置信度上限 0.5）
+```
+
+#### 置信度评估
+
+- 0.0–1.0 量化置信度
+- 低于 0.7（CONFIDENCE_THRESHOLD）自动标记 `needs_human_review=true`
+- 强制综合时置信度上限 0.5
+- 元评论检测安全网：检测 LLM 输出描述性文字而非实际数据
+
+### 3.3 上下文管理策略
+
+`AgenticContext`（`decision_engine/agentic/context.py`）管理 LLM 上下文窗口，防止超出 token 限制：
+
+| 策略 | 触发条件 | 行为 |
+|------|---------|------|
+| 观察截断 | 单条 Observation 生成时 | summary 限 500 字符 |
+| 滚动压缩 | observations ≥ 3 条 | 最早 3 条压缩为 running_summary |
+| 消息重建 | 压缩后 | 保留最近 2 组完整 assistant+tool 消息，其余折叠 |
+
+### 3.4 内置 Skill 体系（3 个）
+
+每个 Skill 是一个目录，包含 `SKILL.md`（YAML frontmatter）和 `executor.py`（`execute(params) -> dict`），由 `SkillLoader` 自动加载并转换为 OpenAI function-calling 格式。
+
+| Skill | 功能 |
+|-------|------|
+| `analyze_path` | 实体间最短路径分析 |
+| `analyze_centrality` | 中心性分析（度/介数/紧密度/PageRank/特征向量） |
+| `analyze_community` | 社区检测（Louvain 算法） |
 
 ### 3.5 外部 MCP 工具
 
-通过配置 `config/mcp_servers.json` 连接外部 MCP Server，其工具自动纳入 ToolReasoner 的工具列表。
+通过配置 `config/mcp_servers.json` 连接外部 MCP Server，其工具自动纳入 AgenticEngine 的工具列表。
 
 ```json
 {
@@ -335,22 +347,31 @@ Tool 推理模式通过 `ToolReasoner` 实现多轮 LLM + 工具调用循环，�
 }
 ```
 
-### 3.6 插件化架构
+工具命名约定：`{server}__{tool}`（如 `filesystem__read_file`），避免跨 Server 冲突。
+
+### 3.6 双层记忆系统
 
 ```
-plugin_registry.py
-  ├─ register(name, plugin_class)
-  └─ resolve(domain) → plugin_instance
+┌─ 短期记忆 (SQLite) ──────────────────────────────────────┐
+│  表: short_term_memories                                  │
+│  TTL: 7 天自动过期                                        │
+│  检索: 关键词匹配 + 域过滤 + 时间衰减 + 重要性排序           │
+│  上限: 每次查询 5 条                                       │
+└──────────────────────────────────────────────────────────┘
 
-plugins/
-  ├─ base_decision_plugin.py   ← 抽象基类 (定义 run(request) 接口)
-  └─ workforce_plugin.py       ← 人力资源领域插件 (示例)
+┌─ 长期记忆 (MEMORY.md) ───────────────────────────────────┐
+│  两类: preferences (用户偏好) + decisions (重要决策)        │
+│  上限: 10 条 / 300 字                                     │
+│  注入: hash 去重，相同内容不重复注入                         │
+└──────────────────────────────────────────────────────────┘
+
+┌─ 记忆提取 (MemoryExtractor) ─────────────────────────────┐
+│  触发: 每轮对话结束后异步执行                               │
+│  方式: LLM 从对话中提取记忆候选                             │
+│  超限: 调用 LLM 提炼合并                                   │
+│  执行: 单 worker 线程串行处理                               │
+└──────────────────────────────────────────────────────────┘
 ```
-
-扩展新领域只需：
-1. 继承 `BaseDecisionPlugin`
-2. 实现 `run(request)` 方法
-3. 调用 `plugin_registry.register("domain_name", MyPlugin)`
 
 ## 4. 异步任务管理流程
 

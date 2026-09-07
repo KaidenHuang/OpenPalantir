@@ -67,15 +67,26 @@ OpenPalantir/
 │   ├── knowledge_graph/         ← 图谱 CRUD + 缓存 + 分区
 │   ├── analysis_engine/         ← NetworkX 分析
 │   ├── decision_engine/         ← 决策引擎
-│   ├── tool_manager/        ← 工具管理层
-│   │   ├── tool_reasoner.py ← 多轮工具推理引擎
-│   │   ├── skill/           ← 本地 Skill 源（加载+注册）
-│   │   ├── mcp/             ← 外部 MCP 工具源（连接+管理）
-│   │   └── prompts/         ← 推理 Prompt 模板
-│   ├── skills/              ← 8 个本地 Skill 实现
-│   ├── memory/              ← 记忆系统（短期+长期）
-│   ├── plugins/             ← 领域插件
-│   └─ ...                   ← 检索器、上下文构建等
+│   │   ├── decision_kernel.py   ← 决策内核（路由到 AgenticEngine）
+│   │   ├── contracts.py         ← 数据模型（Pydantic）
+│   │   ├── conversation_manager.py ← 多轮对话管理
+│   │   ├── agentic/             ← Agentic RAG 核心
+│   │   │   ├── engine.py        ← AgenticEngine（ReAct 循环）
+│   │   │   ├── context.py       ← 上下文窗口管理
+│   │   │   ├── seed_retriever.py← 种子检索（jieba + 级联检索）
+│   │   │   ├── tools.py         ← ToolRegistry（Skill+MCP 统一注册）
+│   │   │   └── types.py         ← Observation, SeedResult, AgenticResult
+│   │   ├── retrievers/          ← 检索器（文档/数据库/图谱摘要）
+│   │   ├── memory/              ← 记忆系统（短期 SQLite + 长期 MEMORY.md）
+│   │   ├── tool_manager/        ← 工具管理层
+│   │   │   ├── tool_reasoner.py ← 遗留（已被 AgenticEngine 替代）
+│   │   │   ├── skill/           ← 本地 Skill 源（加载+注册）
+│   │   │   ├── mcp/             ← 外部 MCP 工具源（连接+管理）
+│   │   │   └── prompts/         ← 推理 Prompt 模板
+│   │   └── skills/              ← 3 个本地 Skill 实现
+│   │       ├── analyze_path/    ← 路径分析
+│   │       ├── analyze_centrality/ ← 中心性分析
+│   │       └── analyze_community/  ← 社区检测
 │   ├── document_processing/     ← 文档解析
 │   ├── entity_extraction/       ← LLM 实体提取
 │   ├── pageindex/               ← 文档摘要树
@@ -125,27 +136,7 @@ from api.routes import new_feature
 app.include_router(new_feature.router, prefix="/api/new-feature", tags=["new-feature"])
 ```
 
-### 3.2 添加新的决策领域插件
-
-```python
-# backend/decision_engine/plugins/my_domain_plugin.py
-from decision_engine.plugins.base_decision_plugin import BaseDecisionPlugin
-from decision_engine.contracts import DecisionRequest
-
-class MyDomainPlugin(BaseDecisionPlugin):
-    def run(self, request: DecisionRequest) -> dict:
-        # 1. 查询图谱
-        # 2. 查询数据库
-        # 3. LLM 推理
-        # 4. 返回结构化结果
-        return { ... }
-
-# 注册插件 (在 plugin_registry.py 或插件文件末尾)
-from decision_engine.plugin_registry import plugin_registry
-plugin_registry.register("my_domain", MyDomainPlugin)
-```
-
-### 3.3 添加本地 Skill
+### 3.2 添加本地 Skill
 
 每个 Skill 是一个目录，包含 `SKILL.md`（元数据）和 `executor.py`（执行函数）。
 
@@ -191,9 +182,22 @@ def execute(params: dict) -> dict:
 
 Skill 在启动时自动扫描加载，无需手动注册。可通过 `SkillLoader.load_from_directory()` 或 `SkillRegistry.load_all()` 验证。
 
+### 3.3 扩展 AgenticEngine
+
+AgenticEngine 是统一的 ReAct 循环引擎，可通过以下方式扩展：
+
+1. **添加 Skill**（见 §3.2）：新 Skill 自动纳入 ToolRegistry，无需额外配置。
+2. **配置 MCP Server**（见 §3.4）：外部工具自动合并到工具列表。
+3. **调整 Prompt**：编辑 `backend/decision_engine/agentic/prompts/prompt_agentic.md`，修改角色定义、工作流指令或输出格式。
+4. **调整引擎参数**：在 `backend/decision_engine/agentic/engine.py` 中修改常量：
+   - `MAX_TURNS`（默认 10）— ReAct 循环最大轮数
+   - `CONFIDENCE_THRESHOLD`（默认 0.7）— 低于此值标记需人工复核
+   - `OBSERVATION_MAX_CHARS`（默认 500）— 单条观察截断长度
+5. **添加检索器**：在 `backend/decision_engine/retrievers/` 新增检索器类，继承 `BaseRetriever`，然后在 `SeedRetriever` 中注册调用。
+
 ### 3.4 配置外部 MCP Server
 
-在 `backend/config/mcp_servers.json` 中配置外部 MCP Server，其工具自动纳入 ToolReasoner 的工具列表。
+在 `backend/config/mcp_servers.json` 中配置外部 MCP Server，其工具自动纳入 AgenticEngine 的工具列表。
 
 ```json
 {
@@ -229,19 +233,18 @@ Skill 在启动时自动扫描加载，无需手动注册。可通过 `SkillLoad
 
 ```python
 from decision_engine.tool_manager.mcp import MCPManager, load_mcp_server_configs
+from decision_engine.tool_manager.skill.skill_registry import skill_registry
+from decision_engine.agentic.tools import ToolRegistry
 
 configs = load_mcp_server_configs()
 mcp_manager = MCPManager(configs)
 mcp_manager.connect_all()
 
-# 传入 ToolReasoner
-from decision_engine.tool_manager.skill.skill_registry import skill_registry
-from decision_engine.tool_manager.tool_reasoner import ToolReasoner
-
-reasoner = ToolReasoner(skill_registry, mcp_manager=mcp_manager)
+# 构建统一工具注册表（AgenticEngine 使用）
+tool_registry = ToolRegistry(skill_registry, mcp_manager)
 ```
 
-### 3.3 添加新的前端组件
+### 3.5 添加新的前端组件
 
 1. 在 `frontend/src/components/` 创建 `NewFeature.tsx`：
 

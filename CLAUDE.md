@@ -24,7 +24,10 @@ OpenPalantir 是基于 AI 的数据分析与知识图谱构建系统:支持文�
          ↕ HTTP
 ┌─ 后端 (FastAPI + Python) ─────────────────┐
 │  api/routes/ · task_manager(异步)· cdc/(增量)│
-│  tool_manager/ (Skill+MCP) · memory/ (记忆)  │
+│  decision_engine/                           │
+│    agentic/(ReAct循环) · memory/(记忆)       │
+│    tool_manager/(Skill+MCP) · retrievers/   │
+│    skills/(3个内置)                          │
 │  各 manager/service 层处理全部业务逻辑        │
 └──────────────────────────────────────────┘
          ↕
@@ -88,8 +91,8 @@ cd tests && pytest
 - **单一存储**:实体/关系写入 Neo4j,通过全文索引实现搜索。
 - **LLM 集成**:经 `ModelClient` 统一调用 Ollama API,支持本地/云端模型。
 - **配置来源**:`backend/.env`(后端)、`frontend/src/config/apiConfig.ts`(前端 API 端点)。
-- **MCP 工具**:通过  配置外部 MCP Server，工具自动纳入 ToolReasoner 推理循环。
-- **MCP 工具**:通过 `config/mcp_servers.json` 配置外部 MCP Server，工具自动纳入 ToolReasoner 推理循环。
+- **MCP 工具**:通过 `config/mcp_servers.json` 配置外部 MCP Server，工具自动纳入 AgenticEngine ReAct 循环。
+- **Agentic 引擎**:`decision_engine/agentic/` — 统一 ReAct 循环(MAX_TURNS=10),种子检索提供初始上下文,上下文窗口自动压缩。
 - **CDC 增量同步**:基于 Debezium Server + Redis Streams。`snapshot.mode=never`;实体 ID 与全量导入一致(确保更新命中同一节点);启动前断流检测(`check_stream_continuity()`);`auto_start_cdc` 全量导入后自动启动;`offset_store.py` 复刻 Java 序列化格式生成 `offsets.dat`,确保从全量位点而非 binlog 头开始。**配置与启动顺序见 `docs/cdc-setup.md`,数据流转见 `docs/data-flow.md`。**
 
 ## 详细文档

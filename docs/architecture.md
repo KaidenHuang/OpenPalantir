@@ -31,7 +31,7 @@ OpenPalantir 采用经典的三层架构：前端展示层 → 后端业务层 �
 
 - **前后端分离**：后端独立处理全部业务逻辑，前端仅负责数据展示和用户交互。脱离 UI，后端仍可独立运行。
 - **异步优先**：耗时操作（文档解析、实体提取、图谱导入）全部通过 Celery 异步任务执行，避免阻塞 API 响应。
-- **插件化架构**：决策引擎采用插件化设计，支持动态注册领域插件，便于扩展新的决策场景。
+- **Agentic RAG**：决策引擎采用统一的 ReAct 循环，LLM 自主决定何时检索、调用工具、分析并给出答案。
 - **统一资源标识**：所有资源（文档、数据库表）通过 `ResourceIdentifier`（`{TYPE}://{UUID}/{PATH}`）统一标识和定位。
 
 ---
@@ -71,39 +71,39 @@ main.py (FastAPI 应用入口)
   │   ├─ analyzer.py                  ← NetworkX 分析（路径/社区/中心性/趋势）
   │   └─ report_generator.py          ← HTML/PDF 报告生成
   ├─ decision_engine/                 ← 决策引擎
-  │   ├─ decision_kernel.py           ← 决策内核（请求路由）
+  │   ├─ decision_kernel.py           ← 决策内核（路由到 AgenticEngine）
   │   ├─ contracts.py                 ← 数据模型（Pydantic）
-  │   ├─ plugin_registry.py           ← 插件注册中心
-  │   ├─ query_analyzer.py            ← 自然语言查询分析
-  │   ├─ retrieval_orchestrator.py    ← 多源检索引擎
-  │   ├─ retriever/                   ← 检索器（文档/数据库/图谱）
-  │   ├─ evidence_fusion.py           ← 证据融合排序
-  │   ├─ context_builder.py           ← LLM 上下文构建
-  │   ├─ llm_reasoner.py             ← LLM 推理（RAG 模式）
-  │   ├─ conversation_manager.py      ← 多轮对话管理
+  │   ├─ conversation_manager.py      ← 多轮对话管理（JSON 文件持久化）
+  │   ├─ query_analyzer.py            ← 查询分析（遗留，未被直接调用）
+  │   ├─ agentic/                     ← Agentic RAG 核心
+  │   │   ├─ engine.py                ← AgenticEngine（ReAct 循环, MAX_TURNS=10）
+  │   │   ├─ context.py               ← AgenticContext（上下文窗口管理）
+  │   │   ├─ seed_retriever.py        ← SeedRetriever（jieba 分词, 级联检索）
+  │   │   ├─ tools.py                 ← ToolRegistry（Skill+MCP 统一注册表）
+  │   │   ├─ types.py                 ← Observation, SeedResult, AgenticResult
+  │   │   └─ prompts/prompt_agentic.md← system prompt 模板
+  │   ├─ retrievers/                  ← 检索器
+  │   │   ├─ base_retriever.py        ← 检索器抽象基类
+  │   │   ├─ document_summary_retriever.py ← 文档摘要检索
+  │   │   ├─ database_summary_retriever.py ← 数据库摘要检索
+  │   │   └─ graph_retriever.py       ← Neo4j 图谱检索
   │   ├─ memory/                      ← 记忆系统
-  │   │   ├─ memory_manager.py        ← 短期记忆（SQLite）+ 长期记忆（MEMORY.md）
-  │   │   ├─ memory_extractor.py      ← LLM 记忆提取
+  │   │   ├─ memory_manager.py        ← 短期记忆（SQLite,7天TTL）+ 长期记忆（MEMORY.md）
+  │   │   └─ memory_extractor.py      ← LLM 记忆提取（单 worker 线程）
   │   ├─ tool_manager/                ← 统一的工具管理层
-  │   │   ├─ tool_reasoner.py         ← 多轮工具推理引擎（调度 Skill + MCP）
+  │   │   ├─ tool_reasoner.py         ← 遗留（已被 AgenticEngine 替代）
   │   │   ├─ skill/                   ← 本地 Skill 源（加载 + 注册 + 执行）
   │   │   │   ├─ skill_loader.py      ← Skill 定义 + 加载
-  │   │   │   ├─ skill_registry.py    ← Skill 注册中心
+  │   │   │   └─ skill_registry.py    ← Skill 注册中心
   │   │   ├─ mcp/                     ← 外部 MCP 工具源（连接 + 管理 + 路由）
   │   │   │   ├─ mcp_client.py        ← MCP Client（stdio + HTTP）
   │   │   │   ├─ mcp_manager.py       ← 多 Server 管理 + 工具合并
-  │   │   │   ├─ config.py            ← MCP 配置加载
-  │   │   ├─ prompts/                 ← 推理 Prompt 模板
-  │   ├─ skills/                      ← 8 个本地 Skill 实现
-  │   │   ├─ search_entities/         ← 图谱实体搜索
-  │   │   ├─ get_entity_detail/       ← 实体详情
-  │   │   ├─ get_entity_relationships/← 实体关系
-  │   │   ├─ analyze_path/            ← 路径分析
-  │   │   ├─ analyze_centrality/      ← 中心性分析
-  │   │   ├─ analyze_community/       ← 社区检测
-  │   │   ├─ search_documents/        ← 文档搜索
-  │   │   ├─ query_database/          ← 数据库查询
-  │   └─ plugins/                     ← 领域插件（workforce等）
+  │   │   │   └─ config.py            ← MCP 配置加载
+  │   │   └─ prompts/                 ← 推理 Prompt 模板
+  │   └─ skills/                      ← 3 个本地 Skill 实现
+  │       ├─ analyze_path/            ← 路径分析
+  │       ├─ analyze_centrality/      ← 中心性分析
+  │       └─ analyze_community/       ← 社区检测
   ├─ document_processing/             ← 文档解析
   │   └─ document_processor.py        ← PDF/Word/Markdown/图片解析
   ├─ entity_extraction/               ← 实体提取
@@ -145,7 +145,7 @@ main.py (FastAPI 应用入口)
 | `api/routes/` | REST API 端点 | FastAPI Router、Pydantic Schema |
 | `knowledge_graph/` | 图谱 CRUD、搜索、分区、缓存 | Cypher、LRU Cache |
 | `analysis_engine/` | 图算法分析 | NetworkX、Louvain、scikit-learn |
-| `decision_engine/` | 智能决策 | 双模式（RAG + Tool 推理）、插件化架构、多源检索、记忆系统、工具管理 |
+| `decision_engine/` | 智能决策 | 统一 Agentic RAG（ReAct 循环）、种子检索、双层记忆、Skill+MCP 工具管理 |
 | `document_processing/` | 多格式文档解析 | PyPDF2、python-docx、Pillow、pytesseract |
 | `entity_extraction/` | 实体识别+关系抽取 | LLM prompt 工程、JSON 修复 |
 | `pageindex/` | 文档分层摘要 | LLM、层级聚类 |
@@ -154,6 +154,47 @@ main.py (FastAPI 应用入口)
 | `task_management/` | 异步任务队列 | Celery、线程池、状态追踪 |
 | `cdc/` | Debezium 增量同步 | Redis Streams、XREADGROUP、事件处理 |
 | `file_sources/` | 文件源抽象 | 本地文件系统、预留S3接口 |
+
+---
+
+### 2.3 Agentic 决策引擎架构
+
+决策引擎的核心是 `AgenticEngine`，采用统一的 ReAct（Reason + Act）循环处理所有查询场景。
+
+#### 核心组件
+
+| 组件 | 文件 | 职责 |
+|------|------|------|
+| DecisionKernel | `decision_kernel.py` | 全局入口：会话→记忆→意图判断→Agentic 循环→证据构建 |
+| AgenticEngine | `agentic/engine.py` | ReAct 循环：种子检索→构建 Prompt→多轮 LLM+工具→反思→综合 |
+| AgenticContext | `agentic/context.py` | 上下文窗口管理：观察截断、滚动压缩、消息重建 |
+| SeedRetriever | `agentic/seed_retriever.py` | 级联种子检索：jieba 分词→摘要检索→URI 过滤图检索 |
+| ToolRegistry | `agentic/tools.py` | 统一工具注册表：Skill+MCP 合并为 OpenAI function-calling 格式 |
+| ConversationManager | `conversation_manager.py` | 多轮对话管理（JSON 文件持久化） |
+| MemoryManager | `memory/memory_manager.py` | 双层记忆：短期（SQLite, 7 天 TTL）+ 长期（MEMORY.md） |
+| MemoryExtractor | `memory/memory_extractor.py` | LLM 记忆提取（单 worker 线程串行） |
+
+#### 关键参数
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| MAX_TURNS | 10 | ReAct 循环最大轮数 |
+| CONFIDENCE_THRESHOLD | 0.7 | 低于此值标记 needs_human_review |
+| MAX_OBSERVATIONS_IN_CONTEXT | 6 | 上下文中保留的最大观察数 |
+| OBSERVATION_MAX_CHARS | 500 | 单条观察 summary 截断长度 |
+| MAX_RESULT_CHARS | 3000 | 工具结果最大字符数 |
+
+#### 快速意图判断
+
+`quick_check_intent()` 通过规则匹配 5 种社交意图，命中时跳过 Agentic 循环直接响应：
+
+| 意图 | 触发词示例 | 响应 |
+|------|-----------|------|
+| greeting | 你好、您好、hello | 问候 + 能力介绍 |
+| identity | 你是谁、你叫什么 | 身份说明 |
+| capability | 你能做什么、你会什么 | 功能列表 |
+| farewell | 再见、拜拜 | 告别 |
+| thanks | 谢谢、感谢 | 礼貌回应 |
 
 ---
 

@@ -231,9 +231,7 @@ Prometheus 格式的监控指标。
 ```json
 {
   "question": "公司当前的人力资源分布情况如何？",
-  "domain": "workforce",
-  "connection_id": "optional-uuid",
-  "context": {},
+  "domain": "general",
   "session_id": "sess_abc123"
 }
 ```
@@ -282,6 +280,19 @@ Prometheus 格式的监控指标。
   }
 }
 ```
+
+**Response 附加字段**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `decision_mode` | string | 固定值 `"agentic_rag"` |
+| `response_type` | string | `"normal"`（Agentic 循环）或 `"simple"`（快速意图） |
+| `confidence` | float | 0.0–1.0 置信度评分 |
+| `needs_human_review` | bool | 置信度 < 0.7 时为 true |
+| `metadata.total_turns` | int | ReAct 循环实际轮数 |
+| `metadata.total_tool_calls` | int | 工具调用总次数 |
+| `metadata.total_time_ms` | float | 总耗时（毫秒） |
+| `metadata.observations_count` | int | 观察记录条数 |
 
 ### `GET /session/{session_id}`
 获取会话历史，用于页面重载时恢复对话。
