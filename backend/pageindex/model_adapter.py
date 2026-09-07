@@ -44,6 +44,17 @@ def get_model_config() -> Optional[Dict[str, Any]]:
         db.close()
 
 
+def _run_sync(async_func):
+    """通用同步包装器：在无事件循环时 asyncio.run，有时循环则用线程池。"""
+    try:
+        asyncio.get_running_loop()
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, async_func()).result()
+    except RuntimeError:
+        return asyncio.run(async_func())
+
+
 # ── PDF ──────────────────────────────────────────────────────────────────────
 
 def generate_pageindex_pdf(pdf_path: str) -> dict:
@@ -53,18 +64,7 @@ def generate_pageindex_pdf(pdf_path: str) -> dict:
     Raises:
         RuntimeError: 没有可用模型时抛出
     """
-    async def _run():
-        return await generate_pageindex_pdf_async(pdf_path)
-
-    try:
-        loop = asyncio.get_running_loop()
-        # 已有事件循环（如在 FastAPI 中），创建新事件循环在线程中运行
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, _run()).result()
-    except RuntimeError:
-        # 没有运行中的事件循环
-        return asyncio.run(_run())
+    return _run_sync(lambda: generate_pageindex_pdf_async(pdf_path))
 
 
 async def generate_pageindex_pdf_async(pdf_path: str) -> dict:
@@ -103,16 +103,7 @@ def generate_pageindex_md(md_path: str) -> dict:
     Raises:
         RuntimeError: 没有可用模型时抛出
     """
-    async def _run():
-        return await generate_pageindex_md_async(md_path)
-
-    try:
-        loop = asyncio.get_running_loop()
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, _run()).result()
-    except RuntimeError:
-        return asyncio.run(_run())
+    return _run_sync(lambda: generate_pageindex_md_async(md_path))
 
 
 async def generate_pageindex_md_async(md_path: str) -> dict:
@@ -151,16 +142,7 @@ def generate_pageindex_txt(txt_path: str) -> dict:
     """
     同步方式：为 TXT 文档生成 PageIndex 树结构。
     """
-    async def _run():
-        return await generate_pageindex_txt_async(txt_path)
-
-    try:
-        loop = asyncio.get_running_loop()
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, _run()).result()
-    except RuntimeError:
-        return asyncio.run(_run())
+    return _run_sync(lambda: generate_pageindex_txt_async(txt_path))
 
 
 async def generate_pageindex_txt_async(txt_path: str) -> dict:
@@ -209,16 +191,7 @@ def generate_pageindex_docx(docx_path: str) -> dict:
     Raises:
         RuntimeError: 没有可用模型时抛出
     """
-    async def _run():
-        return await generate_pageindex_docx_async(docx_path)
-
-    try:
-        loop = asyncio.get_running_loop()
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, _run()).result()
-    except RuntimeError:
-        return asyncio.run(_run())
+    return _run_sync(lambda: generate_pageindex_docx_async(docx_path))
 
 
 async def generate_pageindex_docx_async(docx_path: str) -> dict:

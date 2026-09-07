@@ -14,22 +14,38 @@ from model_management import ModelClient, ModelConfig
 class LLMEntityEnhancer:
     """
     LLM实体增强器
-    
+
     使用LLM对文本进行实体识别和关系提取，支持本地模型和云端模型。
-    
+
     Features:
         - 实体识别和增强
         - 关系提取
         - 同时提取实体和关系
         - 支持长文本分块处理
         - JSON格式自动修复
-    
+
     使用示例:
         enhancer = LLMEntityEnhancer(model_config)
         entities = enhancer.enhance_entities(text)
         result = enhancer.extract_entities_and_relationships(text)
     """
-    
+
+    # 类级别缓存 prompt 模板（避免每次调用都读取磁盘）
+    _prompt_template_cache: Dict[str, str] = {}
+
+    @classmethod
+    def _load_template(cls, filename: str, fallback: str) -> str:
+        """从磁盘加载 prompt 模板并缓存"""
+        if filename not in cls._prompt_template_cache:
+            path = os.path.join(os.path.dirname(__file__), filename)
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    cls._prompt_template_cache[filename] = f.read()
+            except FileNotFoundError:
+                logger.error(f"提示词模板文件未找到: {path}")
+                cls._prompt_template_cache[filename] = fallback
+        return cls._prompt_template_cache[filename]
+
     def __init__(self, model_config: Optional[Any] = None, max_retries: int = 3, retry_delay: float = 1.0):
         """
         初始化LLM实体增强器
@@ -171,52 +187,20 @@ class LLMEntityEnhancer:
             return {"entities": [], "relationships": []}
     
     def _build_prompt(self, text: str) -> str:
-        """
-        构建实体识别提示词 - 从模板文件动态读取
-        
-        Args:
-            text: 要分析的文本
-            
-        Returns:
-            str: 构建好的提示词
-        """
-        prompt_template_path = os.path.join(
-            os.path.dirname(__file__),
-            'prompt_template.md'
+        """构建实体识别提示词（使用缓存的模板）"""
+        template = self._load_template(
+            'prompt_template.md',
+            "请分析以下文本，并识别其中的实体：{text}"
         )
-        
-        try:
-            with open(prompt_template_path, 'r', encoding='utf-8') as f:
-                template = f.read()
-            prompt = template.replace('{text}', text)
-            return prompt
-        except FileNotFoundError:
-            logger.error(f"提示词模板文件未找到: {prompt_template_path}")
-            return f"请分析以下文本，并识别其中的实体：{text}"
-    
+        return template.replace('{text}', text)
+
     def _build_combined_prompt(self, text: str) -> str:
-        """
-        构建同时提取实体和关系的提示词 - 从模板文件动态读取
-        
-        Args:
-            text: 要分析的文本
-            
-        Returns:
-            str: 构建好的提示词
-        """
-        prompt_template_path = os.path.join(
-            os.path.dirname(__file__),
-            'prompt_combined_template.md'
+        """构建同时提取实体和关系的提示词（使用缓存的模板）"""
+        template = self._load_template(
+            'prompt_combined_template.md',
+            "请分析以下文本，提取实体和关系：{text}"
         )
-        
-        try:
-            with open(prompt_template_path, 'r', encoding='utf-8') as f:
-                template = f.read()
-            prompt = template.replace('{text}', text)
-            return prompt
-        except FileNotFoundError:
-            logger.error(f"提示词模板文件未找到: {prompt_template_path}")
-            return f"请分析以下文本，提取实体和关系：{text}"
+        return template.replace('{text}', text)
     
     def _extract_combined_with_chunking(self, text: str, max_chunk_length: int = 50000) -> Dict[str, List[Dict[str, Any]]]:
         """

@@ -96,71 +96,38 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False,
                    api_key=None, api_base=None):
     """
     调用 LLM 并返回响应文本。
-
+    使用 ModelClient.call_raw()，依赖其内置重试机制。
     参数 api_key / api_base 用于临时覆盖全局配置（用于兼容性）。
     """
-    max_retries = 10
+    from model_management import ModelClient
+
+    if _pageindex_model_config:
+        client = ModelClient(_pageindex_model_config)
+    else:
+        client = ModelClient()
+
+    # 如果调用方传入了临时 api_key/api_base，覆盖配置
+    if api_key:
+        client.config.api_key = api_key
+    if api_base:
+        client.config.api_url = api_base
+
+    # 构造完整 prompt（含对话历史）
     messages = list(chat_history) + [{"role": "user", "content": prompt}] if chat_history else [{"role": "user", "content": prompt}]
+    full_prompt = ""
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        full_prompt += f"{role}: {content}\n"
 
-    for i in range(max_retries):
-        try:
-            from model_management import ModelClient
+    response_text = client.call_raw(full_prompt)
 
-            if _pageindex_model_config:
-                client = ModelClient(_pageindex_model_config)
-            else:
-                client = ModelClient()
+    if response_text:
+        if return_finish_reason:
+            return response_text, "finished"
+        return response_text
 
-            # 如果调用方传入了临时 api_key/api_base，覆盖配置
-            if api_key:
-                client.config.api_key = api_key
-            if api_base and client.config.type == "local":
-                client.config.api_url = api_base
-            elif api_base:
-                client.config.api_url = api_base
-
-            # 构造完整 prompt（含对话历史）
-            full_prompt = ""
-            for msg in messages:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                full_prompt += f"{role}: {content}\n"
-
-            if client.config.type == "local":
-                response_text = client._call_local_model(
-                    prompt=full_prompt,
-                    expected_format="json",
-                    temperature=0,
-                    max_tokens=8192
-                )
-            else:
-                response_text = client._call_cloud_model(
-                    prompt=full_prompt,
-                    system_prompt="你是一个AI助手。",
-                    expected_format="json_object",
-                    temperature=0,
-                    max_tokens=8192
-                )
-
-            if response_text:
-                if return_finish_reason:
-                    return response_text, "finished"
-                return response_text
-            else:
-                logging.warning(f"第 {i + 1} 次尝试：响应为空")
-
-        except Exception as e:
-            print('************* Retrying *************')
-            logging.error(f"Error: {e}")
-            if i < max_retries - 1:
-                time.sleep(1)
-            else:
-                logging.error('Max retries reached for prompt: ' + prompt)
-                if return_finish_reason:
-                    return "", "error"
-                return ""
-
-    logging.error(f"LLM 调用在 {max_retries} 次重试后仍无有效响应")
+    logging.error(f"LLM 调用无有效响应，prompt 长度: {len(full_prompt)}")
     if return_finish_reason:
         return "", "error"
     return ""
@@ -178,45 +145,19 @@ async def llm_acompletion(model, prompt, api_key=None, api_base=None):
 
 
 def get_json_content(response):
-    start_idx = response.find("```json")
-    if start_idx != -1:
-        start_idx += 7
-        response = response[start_idx:]
-
-    end_idx = response.rfind("```")
-    if end_idx != -1:
-        response = response[:end_idx]
-
-    json_content = response.strip()
-    return json_content
+    """从 LLM 响应中提取 JSON 文本内容（剥离 markdown 围栏）。"""
+    from utils.json_utils import _extract_json_body
+    return _extract_json_body(response) or response.strip()
 
 
 def extract_json(content):
-    try:
-        start_idx = content.find("```json")
-        if start_idx != -1:
-            start_idx += 7
-            end_idx = content.rfind("```")
-            json_content = content[start_idx:end_idx].strip()
-        else:
-            json_content = content.strip()
-
-        json_content = json_content.replace('None', 'null')
-        json_content = json_content.replace('\n', ' ').replace('\r', ' ')
-        json_content = ' '.join(json_content.split())
-
-        return json.loads(json_content)
-    except json.JSONDecodeError as e:
-        logging.error(f"Failed to extract JSON: {e}")
-        try:
-            json_content = json_content.replace(',]', ']').replace(',}', '}')
-            return json.loads(json_content)
-        except:
-            logging.error("Failed to parse JSON even after cleanup")
-            return {}
-    except Exception as e:
-        logging.error(f"Unexpected error while extracting JSON: {e}")
-        return {}
+    """从 LLM 响应中提取并解析 JSON（委托给统一工具）。"""
+    from utils.json_utils import extract_json as _unified_extract
+    result = _unified_extract(content)
+    if result is not None:
+        return result
+    # pageindex 传统兜底：返回空 dict（保持向后兼容）
+    return {}
 
 
 def write_node_id(data, node_id=0):
@@ -603,15 +544,24 @@ def add_node_text_with_labels(node, pdf_pages):
 
 
 async def generate_node_summary(node, model=None, api_key=None, api_base=None):
-    prompt_template_path = os.path.join(os.path.dirname(__file__), 'prompt_summary_node.md')
-    try:
-        with open(prompt_template_path, 'r', encoding='utf-8') as f:
-            template = f.read()
-    except FileNotFoundError:
-        template = "请根据以下文本生成摘要描述：\n\n{text}"
-    prompt = template.replace('{text}', node['text'])
+    prompt = _get_node_summary_template().replace('{text}', node['text'])
     response = await llm_acompletion(model, prompt, api_key=api_key, api_base=api_base)
     return response
+
+
+_node_summary_template = None
+
+def _get_node_summary_template() -> str:
+    """缓存节点摘要 prompt 模板，避免每次调用都读取磁盘"""
+    global _node_summary_template
+    if _node_summary_template is None:
+        path = os.path.join(os.path.dirname(__file__), 'prompt_summary_node.md')
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                _node_summary_template = f.read()
+        except FileNotFoundError:
+            _node_summary_template = "请根据以下文本生成摘要描述：\n\n{text}"
+    return _node_summary_template
 
 
 async def generate_summaries_for_structure(structure, model=None, api_key=None, api_base=None):

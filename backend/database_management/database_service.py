@@ -286,3 +286,55 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"获取Schema信息失败: {e}")
             return {"tables": [], "columns": [], "foreign_keys": [], "inferred_relationships": []}
+
+    def delete_connection_with_data_check(self, db: Session, connection_id: str) -> Dict:
+        """删除连接，自动判断软/硬删除。
+
+        无关联数据时硬删除，有数据时软删除（标记 is_deleted）。
+        """
+        import os
+
+        connection = db.query(DatabaseConnection).filter(
+            DatabaseConnection.id == connection_id,
+            DatabaseConnection.is_deleted == False
+        ).first()
+        if not connection:
+            raise ValueError("连接不存在")
+
+        # 检查是否有已提取的 Schema 或概要数据
+        has_data = db.query(DatabaseTable).filter(
+            DatabaseTable.connection_id == connection_id
+        ).first() is not None
+        if not has_data:
+            summary_dir = os.path.join("data", "summaries", "DBS", connection_id)
+            has_data = os.path.isdir(summary_dir) and bool(os.listdir(summary_dir))
+
+        if not has_data:
+            db.delete(connection)
+            db.commit()
+            logger.info(f"直接删除数据库连接成功（无数据）: id={connection_id}")
+            return {"message": "连接删除成功", "deleted": True}
+        else:
+            connection.is_deleted = True
+            connection.deleted_at = datetime.now()
+            connection.updated_at = datetime.now()
+            db.commit()
+            logger.info(f"软删除数据库连接成功: id={connection_id}")
+            return {"message": "连接删除成功", "deleted": False}
+
+    def get_database_summary(self, db: Session, connection_id: str) -> Optional[Dict]:
+        """获取数据库概要 JSON 内容。封装文件读取逻辑。"""
+        import os
+        import json
+
+        conn = self.get_connection(db, connection_id)
+        db_name = conn.database if conn else None
+        if not db_name:
+            return None
+
+        summary_path = os.path.join("data", "summaries", "DBS", connection_id, f"{db_name}.json")
+        if not os.path.isfile(summary_path):
+            return None
+
+        with open(summary_path, "r", encoding="utf-8") as f:
+            return json.load(f)

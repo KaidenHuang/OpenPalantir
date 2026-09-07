@@ -141,37 +141,11 @@ def update_connection(connection_id: str, config: ConnectionUpdate, db: Session 
 def delete_connection(connection_id: str, db: Session = Depends(get_db)):
     """删除数据库连接。无提取数据时直接删除，有数据时标记删除"""
     try:
-        from datetime import datetime
-        import os
-        from models.database import DatabaseConnection, DatabaseTable
-
-        connection = db.query(DatabaseConnection).filter(
-            DatabaseConnection.id == connection_id,
-            DatabaseConnection.is_deleted == False
-        ).first()
-        if not connection:
-            raise HTTPException(status_code=404, detail="连接不存在")
-
-        # 检查是否有已提取的 Schema 或概要数据
-        has_data = db.query(DatabaseTable).filter(DatabaseTable.connection_id == connection_id).first() is not None
-        if not has_data:
-            summary_dir = os.path.join("data", "summaries", "DBS", connection_id)
-            has_data = os.path.isdir(summary_dir) and bool(os.listdir(summary_dir))
-
-        if not has_data:
-            # 无数据，直接硬删除
-            db.delete(connection)
-            db.commit()
-            logger.info(f"直接删除数据库连接成功（无数据）: id={connection_id}")
-            return {"message": "连接删除成功", "deleted": True}
-        else:
-            # 有数据，标记删除
-            connection.is_deleted = True
-            connection.deleted_at = datetime.now()
-            connection.updated_at = datetime.now()
-            db.commit()
-            logger.info(f"软删除数据库连接成功: id={connection_id}")
-            return {"message": "连接删除成功", "deleted": False}
+        from database_management.database_service import DatabaseService
+        svc = DatabaseService()
+        return svc.delete_connection_with_data_check(db, connection_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
@@ -256,30 +230,14 @@ def get_analysis_result(connection_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{connection_id}/summary")
-def get_database_summary(connection_id: str):
+def get_database_summary(connection_id: str, db: Session = Depends(get_db)):
     """获取数据库概要信息（从本地概要文件读取）"""
     try:
         from database_management.database_service import DatabaseService
-        from config.database import SessionLocal
-
-        db = SessionLocal()
-        try:
-            db_service = DatabaseService()
-            conn = db_service.get_connection(db, connection_id)
-            db_name = conn.database if conn else None
-        finally:
-            db.close()
-
-        if not db_name:
-            raise HTTPException(status_code=404, detail="未找到数据库连接")
-
-        summary_path = os.path.join("data", "summaries", "DBS", connection_id, f"{db_name}.json")
-        if not os.path.isfile(summary_path):
+        svc = DatabaseService()
+        data = svc.get_database_summary(db, connection_id)
+        if data is None:
             raise HTTPException(status_code=404, detail="数据库概要不存在，请先执行分析任务")
-
-        with open(summary_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
         return {"status": "success", "summary": data}
     except HTTPException:
         raise

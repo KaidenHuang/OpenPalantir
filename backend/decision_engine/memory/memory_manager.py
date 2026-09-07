@@ -63,18 +63,39 @@ class MemoryManager:
             db.close()
 
     def add_short_term_batch(self, entries: list) -> int:
-        """批量添加短期记忆，返回成功条数"""
-        count = 0
-        for entry in entries:
-            if self.add_short_term(
-                content=entry.get("content", ""),
-                category=entry.get("category", "fact"),
-                importance=entry.get("importance", 0.5),
-                session_id=entry.get("session_id", ""),
-                domain=entry.get("domain", "general"),
-            ):
-                count += 1
-        return count
+        """批量添加短期记忆，单次 Session 完成（避免 N+1 Session 问题）"""
+        if not entries:
+            return 0
+        try:
+            db = SessionLocal()
+            now = datetime.now()
+            try:
+                objects = [
+                    ShortTermMemory(
+                        id=uuid.uuid4().hex[:12],
+                        content=entry.get("content", ""),
+                        category=entry.get("category", "fact"),
+                        importance=entry.get("importance", 0.5),
+                        session_id=entry.get("session_id", ""),
+                        domain=entry.get("domain", "general"),
+                        created_at=now,
+                        expires_at=now + timedelta(days=SHORT_TERM_TTL_DAYS),
+                    )
+                    for entry in entries
+                ]
+                db.add_all(objects)
+                db.commit()
+                logger.info(f"[memory] 批量存储 {len(objects)} 条短期记忆")
+                return len(objects)
+            except Exception as e:
+                db.rollback()
+                logger.error(f"[memory] 批量存储失败: {e}")
+                return 0
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"[memory] 批量存储异常: {e}")
+            return 0
 
     def retrieve_short_term(self, query: str, domain: str = "general",
                             limit: int = 5) -> List[dict]:

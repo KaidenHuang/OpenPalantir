@@ -263,24 +263,6 @@ class CDCManager:
         finally:
             db.close()
 
-    def _write_debezium_offset(self, binlog_info: Dict, topic_prefix: str):
-        """将 binlog 位点写入 Debezium offsets.dat（MySQL 专用）。
-
-        独立 try/except：写入失败不影响已保存的 CdcSyncState 检查点与全量导入结果，
-        仅记录 warning——增量同步启动前需确保 offsets.dat 正确。
-        """
-        binlog_file = binlog_info.get("file")
-        binlog_pos = binlog_info.get("position")
-        if not binlog_file or not binlog_pos:
-            return  # 非 MySQL 或无位点，跳过
-        try:
-            from cdc.offset_store import write_debezium_offset
-            write_debezium_offset(binlog_file, int(binlog_pos), topic_prefix=topic_prefix)
-        except Exception as e:
-            logger.warning(
-                f"[CDC] 写入 Debezium offsets.dat 失败（不影响全量导入）: {e}"
-            )
-
     def configure_connection(self, connection_id: str) -> Dict:
         """为已添加的 MySQL 数据源一键配置 CDC。
 
@@ -449,57 +431,46 @@ class CDCManager:
     # 内部方法
     # ─────────────────────────────────────────────────────────
 
-    def _resolve_topic_prefix(self, connection_id: str) -> str:
-        """解析连接级 topic_prefix：优先用该连接任一 CdcSyncState 已存的；
-        否则确定性生成 ``openpalantir.{connection_id前8位}``（同连接多库共享）。"""
+    def _resolve_state_attr(self, connection_id: str, attr_name: str, default):
+        """通用方法：从 CdcSyncState 解析连接级属性值。
+
+        查询该连接任一 CdcSyncState 中已存的属性值；不存在则返回默认值。
+        """
+        column = getattr(CdcSyncState, attr_name)
         db = SessionLocal()
         try:
             state = (
                 db.query(CdcSyncState)
                 .filter_by(connection_id=connection_id)
-                .filter(CdcSyncState.topic_prefix.isnot(None))
+                .filter(column.isnot(None))
                 .first()
             )
-            if state and state.topic_prefix:
-                return state.topic_prefix
+            if state:
+                value = getattr(state, attr_name)
+                if value:
+                    return value
         finally:
             db.close()
-        return f"openpalantir.{connection_id[:8]}"
+        return default() if callable(default) else default
+
+    def _resolve_topic_prefix(self, connection_id: str) -> str:
+        """解析连接级 topic_prefix：优先用该连接任一 CdcSyncState 已存的；
+        否则确定性生成 ``openpalantir.{connection_id前8位}``（同连接多库共享）。"""
+        return self._resolve_state_attr(
+            connection_id, "topic_prefix", f"openpalantir.{connection_id[:8]}"
+        )
 
     def _resolve_server_id(self, connection_id: str) -> int:
         """解析连接级 server_id：优先复用该连接已存的（保证重启后 slave 身份稳定）；
         否则随机生成 10000-99999（首次配置，由调用方持久化）。"""
         import random
-
-        db = SessionLocal()
-        try:
-            state = (
-                db.query(CdcSyncState)
-                .filter_by(connection_id=connection_id)
-                .filter(CdcSyncState.server_id.isnot(None))
-                .first()
-            )
-            if state and state.server_id:
-                return state.server_id
-        finally:
-            db.close()
-        return random.randint(10000, 99999)
+        return self._resolve_state_attr(
+            connection_id, "server_id", lambda: random.randint(10000, 99999)
+        )
 
     def _resolve_connector_type(self, connection_id: str) -> str:
         """解析连接的 connector_type（mysql/postgresql），默认 mysql。"""
-        db = SessionLocal()
-        try:
-            state = (
-                db.query(CdcSyncState)
-                .filter_by(connection_id=connection_id)
-                .filter(CdcSyncState.connector_type.isnot(None))
-                .first()
-            )
-            if state and state.connector_type:
-                return state.connector_type
-        finally:
-            db.close()
-        return "mysql"
+        return self._resolve_state_attr(connection_id, "connector_type", "mysql")
 
     def _save_instance_config(
         self,

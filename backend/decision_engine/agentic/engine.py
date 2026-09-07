@@ -291,20 +291,9 @@ class AgenticEngine:
         return answer, answer.confidence, conf_reason
 
     def _extract_json(self, content: str) -> Optional[dict]:
-        """从 LLM 输出中提取 JSON（支持 markdown 代码块包裹）"""
-        text = content.strip()
-
-        # 去掉 markdown 代码块，定位到 JSON 边界
-        if "```" in text:
-            start = text.find("{")
-            end = text.rfind("}")
-            if start != -1 and end > start:
-                text = text[start:end + 1]
-
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            return None
+        """从 LLM 输出中提取 JSON（委托给统一工具）"""
+        from utils.json_utils import extract_json
+        return extract_json(content)
 
     # ── 证据构建 ────────────────────────────────────────
 

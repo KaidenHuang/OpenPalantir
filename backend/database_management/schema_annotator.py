@@ -10,21 +10,6 @@ from system.logger import logger
 from model_management import ModelClient, ModelConfig, ModelService
 
 
-def check_and_get_available_model(db) -> Optional[Dict[str, Any]]:
-    """
-    检查并获取可用的模型配置（供外部调用）
-    
-    在数据库分析模块进行业务标注前调用此函数，确保有可用的模型。
-    
-    Args:
-        db: 数据库会话
-        
-    Returns:
-        Dict: 可用模型的配置字典，如果没有可用模型返回None
-    """
-    return ModelService.get_available_model(db)
-
-
 class SchemaAnnotator:
     """
     数据库Schema业务标注器

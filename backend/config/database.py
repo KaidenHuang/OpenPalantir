@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from contextlib import contextmanager
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -37,5 +38,24 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
+    finally:
+        db.close()
+
+
+@contextmanager
+def get_session():
+    """提供自动管理的数据库会话（自动 commit/rollback/close）。
+
+    用法：
+        with get_session() as db:
+            service.get_model(db, model_id)
+    """
+    db = SessionLocal()
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()

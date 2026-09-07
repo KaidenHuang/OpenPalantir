@@ -142,7 +142,7 @@ def batch_add_nodes(entities: list = Body(...)):
     try:
         logger.debug(f"接收批量添加节点请求: count={len(entities)}")
 
-        result = graph_manager.batch_add_entities(entities)
+        result = graph_manager.add_entities(entities)
         logger.info(f"批量添加节点成功: count={len(entities)}")
         return result
     except Exception as e:
@@ -290,7 +290,7 @@ def batch_add_relationships(relationships: list = Body(...), use_create: bool = 
     try:
         logger.debug(f"接收批量添加关系请求: count={len(relationships)}, use_create={use_create}")
 
-        result = graph_manager.batch_add_relationships(relationships, use_create=use_create)
+        result = graph_manager.add_relationships(relationships, use_create=use_create)
         logger.info(f"批量添加关系成功: count={len(relationships)}")
         return result
     except Exception as e:

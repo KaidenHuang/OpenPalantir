@@ -34,6 +34,17 @@ class DatabaseDialect:
         """
         pass
 
+    def _execute_query(self, connection, query) -> List[Dict]:
+        """执行SQL查询并返回结果列表（子类共享实现）"""
+        try:
+            result = connection.execute(text(query))
+            rows = result.fetchall()
+            columns = result.keys()
+            return [dict(zip(columns, row)) for row in rows]
+        except Exception as e:
+            logger.error(f"{type(self).__name__} 查询执行失败: {e}")
+            return []
+
     def get_primary_key_columns(self, connection, table_name: str) -> List[str]:
         """使用SQLAlchemy inspect检测主键列，跨方言兼容"""
         try:
@@ -184,17 +195,7 @@ class MySQLDialect(DatabaseDialect):
         result["foreign_keys"] = self._execute_query(connection, fk_query)
         
         return result
-    
-    def _execute_query(self, connection, query) -> List[Dict]:
-        """执行SQL查询并返回结果列表"""
-        try:
-            result = connection.execute(text(query))
-            rows = result.fetchall()
-            columns = result.keys()
-            return [dict(zip(columns, row)) for row in rows]
-        except Exception as e:
-            logger.error(f"MySQL查询执行失败: {e}")
-            return []
+
 
 class PostgreSQLDialect(DatabaseDialect):
     """PostgreSQL方言"""
@@ -247,16 +248,6 @@ class PostgreSQLDialect(DatabaseDialect):
         result["foreign_keys"] = self._execute_query(connection, fk_query)
         
         return result
-    
-    def _execute_query(self, connection, query) -> List[Dict]:
-        try:
-            result = connection.execute(text(query))
-            rows = result.fetchall()
-            columns = result.keys()
-            return [dict(zip(columns, row)) for row in rows]
-        except Exception as e:
-            logger.error(f"PostgreSQL查询执行失败: {e}")
-            return []
 
 class SQLiteDialect(DatabaseDialect):
     """SQLite方言"""
@@ -297,16 +288,6 @@ class SQLiteDialect(DatabaseDialect):
         result["foreign_keys"] = self._execute_query(connection, fk_query)
         
         return result
-    
-    def _execute_query(self, connection, query) -> List[Dict]:
-        try:
-            result = connection.execute(text(query))
-            rows = result.fetchall()
-            columns = result.keys()
-            return [dict(zip(columns, row)) for row in rows]
-        except Exception as e:
-            logger.error(f"SQLite查询执行失败: {e}")
-            return []
 
 class OracleDialect(DatabaseDialect):
     """Oracle方言"""
@@ -345,16 +326,6 @@ class OracleDialect(DatabaseDialect):
         result["foreign_keys"] = self._execute_query(connection, fk_query)
         
         return result
-    
-    def _execute_query(self, connection, query) -> List[Dict]:
-        try:
-            result = connection.execute(text(query))
-            rows = result.fetchall()
-            columns = result.keys()
-            return [dict(zip(columns, row)) for row in rows]
-        except Exception as e:
-            logger.error(f"Oracle查询执行失败: {e}")
-            return []
 
 class SQLServerDialect(DatabaseDialect):
     """SQL Server方言"""
@@ -395,16 +366,6 @@ class SQLServerDialect(DatabaseDialect):
         result["foreign_keys"] = self._execute_query(connection, fk_query)
         
         return result
-    
-    def _execute_query(self, connection, query) -> List[Dict]:
-        try:
-            result = connection.execute(text(query))
-            rows = result.fetchall()
-            columns = result.keys()
-            return [dict(zip(columns, row)) for row in rows]
-        except Exception as e:
-            logger.error(f"SQL Server查询执行失败: {e}")
-            return []
 
 DIALECT_MAP = {
     "mysql": MySQLDialect,

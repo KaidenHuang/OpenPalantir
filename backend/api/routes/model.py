@@ -251,58 +251,25 @@ def delete_model(model_id: int):
 
 @router.post("/models/{model_id}/test-connection")
 def test_model_connection(
-    model_id: int, 
-    api_url: str = Body(...), 
-    api_key: str = Body(""), 
+    model_id: int,
+    api_url: str = Body(...),
+    api_key: str = Body(""),
     model: str = Body(None)
 ):
-    """
-    测试模型连接
-    
-    Args:
-        model_id: 模型ID
-        api_url: API地址
-        api_key: API密钥
-        model: 模型名称
-    
-    Returns:
-        dict: 测试结果响应
-    """
+    """测试模型连接"""
     try:
-        logger.info(f"接收测试模型连接请求: model_id={model_id}, api_url={api_url}")
-        
-        db = SessionLocal()
-        try:
-            model_info = ModelService.get_model(db, model_id)
-            if not model_info:
-                logger.error(f"测试模型连接失败: 模型不存在 model_id={model_id}")
-                raise HTTPException(status_code=404, detail="模型不存在")
-            
-            # 创建临时配置进行测试
-            test_config = {
-                "type": model_info.type,
-                "models": model_info.models,
-                "api_url": api_url,
-                "api_key": api_key,
-                "model_name": model or (model_info.models[0] if model_info.models else None)
-            }
-            
-            client = ModelClient(test_config)
-            connection_status = "available" if client.test_connection() else "unavailable"
-            message = "连接测试成功" if connection_status == "available" else "连接测试失败"
-            
-            # 更新模型状态
-            ModelService.update_model(db, model_id, {"status": connection_status})
-            
-            logger.info(f"测试模型连接完成: model_id={model_id}, connection_status={connection_status}")
-            return {
-                "status": "success" if connection_status == "available" else "error",
-                "message": message,
-                "connection_status": connection_status
-            }
-        finally:
-            db.close()
+        from config.database import get_session
+
+        with get_session() as db:
+            result = ModelService.test_and_update_connection(
+                db, model_id, api_url, api_key, model
+            )
+            status = "success" if result["connection_status"] == "available" else "error"
+            return {"status": status, **result}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except HTTPException:
+        raise
         raise
     except Exception as e:
         logger.error(f"测试模型连接失败: model_id={model_id}, 错误: {str(e)}")

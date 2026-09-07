@@ -350,3 +350,38 @@ class ModelService:
         except Exception as e:
             logger.error(f"检查可用模型失败: {e}")
             return False
+
+    @staticmethod
+    def test_and_update_connection(
+        db: Session, model_id: int, api_url: str, api_key: str,
+        model_name: str = None
+    ) -> Dict[str, str]:
+        """测试模型连接并更新状态。
+
+        封装：获取模型 → 构建 test_config → 实例化 ModelClient → 测试 → 更新状态
+        """
+        from model_management.model_client import ModelClient
+
+        model_info = ModelService.get_model(db, model_id)
+        if not model_info:
+            raise ValueError("模型不存在")
+
+        test_config = {
+            "type": model_info.type,
+            "models": model_info.models,
+            "api_url": api_url,
+            "api_key": api_key,
+            "model_name": model_name or (model_info.models[0] if model_info.models else None)
+        }
+
+        client = ModelClient(test_config)
+        connection_status = "available" if client.test_connection() else "unavailable"
+        message = "连接测试成功" if connection_status == "available" else "连接测试失败"
+
+        ModelService.update_model(db, model_id, {"status": connection_status})
+        logger.info(f"测试模型连接完成: model_id={model_id}, status={connection_status}")
+
+        return {
+            "connection_status": connection_status,
+            "message": message,
+        }

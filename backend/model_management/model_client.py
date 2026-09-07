@@ -20,13 +20,13 @@
 """
 
 import json
-import re
 import time
 import traceback
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, List
 import requests
 from system.logger import logger
+from utils.json_utils import extract_json as _extract_json_unified, fix_json
 
 
 @dataclass
@@ -105,189 +105,6 @@ class ModelConfig:
         }
 
 
-def _iter_json_aware(text: str):
-    """遍历JSON字符串，产出 (index, char, in_str)，正确处理转义和字符串边界。
-
-    in_str 为处理完当前字符后的字符串状态（True=在字符串内部）。
-    """
-    in_str = False
-    escape = False
-    for i, ch in enumerate(text):
-        if escape:
-            escape = False
-            yield i, ch, in_str
-            continue
-        if ch == '\\' and in_str:
-            escape = True
-            yield i, ch, in_str
-            continue
-        if ch == '"':
-            in_str = not in_str
-        yield i, ch, in_str
-
-
-def _extract_json_body(text: str) -> Optional[str]:
-    """从文本中提取JSON体：移除markdown代码围栏等前缀，定位到第一个 { 或 [。"""
-    cleaned = text.strip()
-
-    if cleaned.startswith('```'):
-        first_nl = cleaned.find('\n')
-        if first_nl != -1:
-            cleaned = cleaned[first_nl + 1:]
-        else:
-            cleaned = cleaned[3:]
-        cleaned = cleaned.strip()
-
-    if cleaned.endswith('```'):
-        cleaned = cleaned[:-3].strip()
-
-    first_brace = cleaned.find('{')
-    first_bracket = cleaned.find('[')
-    positions = [p for p in (first_brace, first_bracket) if p != -1]
-    if not positions:
-        return None
-    return cleaned[min(positions):]
-
-
-def _close_brackets(text: str) -> str:
-    """在text末尾补全缺失的闭合括号（JSON-aware，跳过字符串内部）。"""
-    stack: List[str] = []
-    for _, ch, in_str in _iter_json_aware(text):
-        if in_str:
-            continue
-        if ch in '{[':
-            stack.append(ch)
-        elif ch == '}':
-            if stack and stack[-1] == '{':
-                stack.pop()
-        elif ch == ']':
-            if stack and stack[-1] == '[':
-                stack.pop()
-
-    result = text.rstrip(', \t\n\r')
-    for ch in reversed(stack):
-        result += '}' if ch == '{' else ']'
-    return result
-
-
-def _extract_array_objects(text: str, array_start: int) -> List[str]:
-    """从JSON数组起始位置提取所有完整的扁平对象。"""
-    objects: List[str] = []
-    if array_start >= len(text) or text[array_start] != '[':
-        return objects
-
-    i = array_start + 1
-    while i < len(text):
-        while i < len(text) and (text[i].isspace() or text[i] == ','):
-            i += 1
-        if i >= len(text) or text[i] == ']':
-            break
-        if text[i] != '{':
-            i += 1
-            continue
-
-        depth = 0
-        for pos, ch, in_str in _iter_json_aware(text[i:]):
-            actual_pos = i + pos
-            if in_str:
-                continue
-            if ch == '{':
-                depth += 1
-            elif ch == '}':
-                depth -= 1
-                if depth == 0:
-                    objects.append(text[i:actual_pos + 1])
-                    i = actual_pos + 1
-                    break
-        else:
-            break
-
-    return objects
-
-
-def _repair_entity_relationship(text: str) -> Optional[str]:
-    """针对实体/关系JSON格式的修复：提取完整对象后重建JSON。"""
-    entities_match = re.search(r'"entities"\s*:\s*(\[)', text)
-    rel_match = re.search(r'"relationships"\s*:\s*(\[)', text)
-
-    entities_objects: List[str] = []
-    rel_objects: List[str] = []
-
-    if entities_match:
-        entities_objects = _extract_array_objects(text, entities_match.start(1))
-    if rel_match:
-        rel_objects = _extract_array_objects(text, rel_match.start(1))
-
-    result = '{"entities": [' + ','.join(entities_objects) + '], "relationships": [' + ','.join(rel_objects) + ']}'
-
-    try:
-        json.loads(result)
-        return result
-    except json.JSONDecodeError:
-        return None
-
-
-def _repair_by_closing(text: str) -> Optional[str]:
-    """通用修复：补全缺失括号，必要时从后向前截断不完整内容。"""
-    result = _close_brackets(text.rstrip(', \t\n\r'))
-    try:
-        json.loads(result)
-        return result
-    except json.JSONDecodeError:
-        pass
-
-    n = len(text)
-    in_str_at = [False] * (n + 1)
-    for pos, _, in_str in _iter_json_aware(text):
-        in_str_at[pos + 1] = in_str
-
-    for end in range(n, 0, -1):
-        if in_str_at[end]:
-            continue
-        candidate = text[:end].rstrip(', \t\n\r')
-        if not candidate:
-            continue
-        result = _close_brackets(candidate)
-        try:
-            json.loads(result)
-            return result
-        except json.JSONDecodeError:
-            continue
-
-    return None
-
-
-def fix_json(json_str: str) -> Optional[str]:
-    """修复JSON尾部被截断导致的不完整问题。
-
-    优先尝试针对实体/关系JSON格式的精准修复，失败后回退到通用括号闭合修复。
-    """
-    if not json_str or not json_str.strip():
-        return None
-
-    cleaned = json_str.strip()
-
-    try:
-        json.loads(cleaned)
-        return cleaned
-    except json.JSONDecodeError:
-        pass
-
-    body = _extract_json_body(cleaned)
-    if not body:
-        return None
-
-    result = _repair_entity_relationship(body)
-    if result:
-        return result
-
-    result = _repair_by_closing(body)
-    if result:
-        return result
-
-    return None
-
-
 class ModelClient:
     """
     模型调用客户端
@@ -331,6 +148,40 @@ class ModelClient:
                 priority=getattr(config, 'priority', 'local')
             )
     
+    def _with_retry(self, fn, label: str):
+        """通用重试循环。fn() 应返回结果或在失败时抛出异常。"""
+        last_error = None
+        last_exception = None
+        for attempt in range(self.config.max_retries):
+            try:
+                logger.info(f"[{label}] 尝试 {attempt + 1}/{self.config.max_retries}")
+                return fn()
+            except requests.exceptions.Timeout as e:
+                last_error = f"请求超时: {e}"
+                last_exception = e
+            except requests.exceptions.RequestException as e:
+                last_error = f"请求异常: {e}"
+                last_exception = e
+            except Exception as e:
+                last_error = f"未知异常: {e}"
+                last_exception = e
+                logger.warning(f"[{label}] 异常堆栈: {traceback.format_exc()}")
+            logger.warning(f"[{label}] 尝试 {attempt + 1} 失败: {last_error}")
+            if attempt < self.config.max_retries - 1:
+                time.sleep(self.config.retry_delay)
+        logger.error(f"[{label}] {self.config.max_retries} 次尝试后失败: {last_error}")
+        if last_exception:
+            logger.error(f"[{label}] 异常详情: {repr(last_exception)}")
+        return None
+
+    def call_raw(self, prompt: str, system_prompt: str = "你是一个AI助手。",
+                 temperature: float = 0, max_tokens: int = 8192) -> str:
+        """调用模型并返回原始文本（不做 JSON 解析），供 pageindex 等模块使用。"""
+        if self.config.type == "local":
+            return self._call_local_model(prompt, "json", temperature, max_tokens)
+        else:
+            return self._call_cloud_model(prompt, system_prompt, "json_object", temperature, max_tokens)
+
     def call_json(
         self, 
         prompt: str, 
@@ -367,150 +218,61 @@ class ModelClient:
         if not response_text:
             return None
         
-        # 清洗常见非JSON包裹：BOM、markdown 代码围栏
-        cleaned = response_text.strip().lstrip('﻿')
-        if cleaned.startswith('```'):
-            first_nl = cleaned.find('\n')
-            if first_nl != -1:
-                cleaned = cleaned[first_nl + 1:]
-            if cleaned.endswith('```'):
-                cleaned = cleaned[:-3].rstrip()
+        # 使用统一 JSON 提取入口
+        result = _extract_json_unified(response_text)
+        if result is not None:
+            if isinstance(result, dict):
+                entities = result.get('entities') or result.get('entity') or []
+                relationships = result.get('relationships') or result.get('relations') or result.get('relation') or []
+                if entities or relationships:
+                    logger.info(f"JSON解析成功，实体: {len(entities)} 个，关系: {len(relationships)} 条")
+            elif isinstance(result, list):
+                logger.info(f"JSON解析成功，列表长度: {len(result)}")
+        else:
+            logger.warning(f"JSON提取失败，原始响应长度: {len(response_text)}")
+            logger.info(f"原始响应前500字符: {response_text[:500]}")
+        return result
 
-        try:
-            return json.loads(cleaned)
-        except json.JSONDecodeError as e:
-            logger.warning(f"JSON解析失败: {e}")
-            logger.info(f"原始响应: {response_text}")
-            fixed_json = fix_json(cleaned)
-            if fixed_json:
-                try:
-                    result = json.loads(fixed_json)
-                    if isinstance(result, dict):
-                        entities = result.get('entities') or result.get('entity') or []
-                        relationships = result.get('relationships') or result.get('relations') or result.get('relation') or []
-                        logger.info(f"JSON修复成功，原始长度: {len(response_text)}，修复后长度: {len(fixed_json)}，"
-                                    f"实体: {len(entities)} 个，关系: {len(relationships)} 条")
-                    elif isinstance(result, list):
-                        logger.info(f"JSON修复成功，原始长度: {len(response_text)}，修复后长度: {len(fixed_json)}，"
-                                    f"实体: {len(result)} 个")
-                    else:
-                        logger.info(f"JSON修复成功，原始长度: {len(response_text)}，修复后长度: {len(fixed_json)}")
-                    return result
-                except json.JSONDecodeError as e2:
-                    logger.error(f"修复后仍解析失败: {e2}")
-                    logger.info(f"修复后全文: {fixed_json}")
-                    return None
-            logger.warning(f"修复失败，原始响应长度: {len(response_text)}")
-            return None
-    
     def _call_local_model(
-        self, 
-        prompt: str, 
+        self,
+        prompt: str,
         expected_format: str = "json",
         temperature: float = 0,
         max_tokens: int = 8192
     ) -> str:
-        """
-        调用本地模型API（Ollama）
-        
-        Args:
-            prompt: 用户提示词
-            expected_format: 期望的响应格式
-            temperature: 温度参数
-            max_tokens: 最大生成token数
-            
-        Returns:
-            str: 模型响应文本
-        """
-        last_error = None
-        last_exception = None
-        
-        for attempt in range(self.config.max_retries):
-            try:
-                logger.info(f"调用本地模型API，模型: {self.config.model_name}, API: {self.config.api_url} (尝试 {attempt + 1}/{self.config.max_retries})")
-                
-                response = requests.post(
-                    f"{self.config.api_url}/api/generate",
-                    json={
-                        "model": self.config.model_name,
-                        "prompt": prompt,
-                        "format": expected_format,
-                        "stream": False,
-                        "max_tokens": max_tokens,
-                        "temperature": temperature
-                    },
-                    timeout=self.config.timeout
-                )
-                
-                logger.info(f"本地模型API响应状态码: {response.status_code}")
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    response_text = result.get('response', '')
-                    if response_text:
-                        logger.info(f"本地模型响应成功，响应长度: {len(response_text)}")
-                        return response_text
-                    else:
-                        logger.warning(f"本地模型响应内容为空，输入prompt长度: {len(prompt)}，尝试 {attempt + 1}/{self.config.max_retries}")
-                        last_error = "响应内容为空"
-                        continue
-                else:
-                    error_msg = f"API调用失败，状态码: {response.status_code}, 响应: {response.text}"
-                    logger.warning(f"第 {attempt + 1} 次尝试：{error_msg}")
-                    last_error = error_msg
-                    
-            except requests.exceptions.Timeout as e:
-                error_msg = f"请求超时: {str(e)}"
-                logger.warning(f"第 {attempt + 1} 次尝试：{error_msg}")
-                last_error = error_msg
-                last_exception = e
-            except requests.exceptions.RequestException as e:
-                error_msg = f"请求异常: {str(e)}"
-                logger.warning(f"第 {attempt + 1} 次尝试：{error_msg}")
-                last_error = error_msg
-                last_exception = e
-            except Exception as e:
-                error_msg = f"未知异常: {str(e)}"
-                logger.warning(f"第 {attempt + 1} 次尝试：{error_msg}")
-                logger.warning(f"异常堆栈: {traceback.format_exc()}")
-                last_error = error_msg
-                last_exception = e
-            
-            if attempt < self.config.max_retries - 1:
-                logger.info(f"等待 {self.config.retry_delay} 秒后重试...")
-                time.sleep(self.config.retry_delay)
-        
-        logger.error(f"本地模型API调用在 {self.config.max_retries} 次尝试后仍然失败")
-        logger.error(f"最后错误: {last_error}")
-        if last_exception:
-            logger.error(f"异常详情: {repr(last_exception)}")
-        return ""
+        """调用本地模型API（Ollama）"""
+        def _do_call():
+            response = requests.post(
+                f"{self.config.api_url}/api/generate",
+                json={
+                    "model": self.config.model_name,
+                    "prompt": prompt,
+                    "format": expected_format,
+                    "stream": False,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature
+                },
+                timeout=self.config.timeout
+            )
+            if response.status_code == 200:
+                text = response.json().get('response', '')
+                if text:
+                    logger.info(f"本地模型响应成功，响应长度: {len(text)}")
+                    return text
+                raise ValueError("响应内容为空")
+            raise RuntimeError(f"HTTP {response.status_code}: {response.text[:200]}")
+
+        return self._with_retry(_do_call, "local/generate") or ""
     
     def _call_cloud_model(
-        self, 
-        prompt: str, 
+        self,
+        prompt: str,
         system_prompt: str,
         expected_format: str = "json_object",
         temperature: float = 0,
         max_tokens: int = 8192
     ) -> str:
-        """
-        调用云端模型API（OpenAI兼容）
-        
-        Args:
-            prompt: 用户提示词
-            system_prompt: 系统提示词
-            expected_format: 期望的响应格式
-            temperature: 温度参数
-            max_tokens: 最大生成token数
-            
-        Returns:
-            str: 模型响应文本
-        """
-        last_error = None
-        last_exception = None
-        
-        # 构建请求参数
+        """调用云端模型API（OpenAI兼容）"""
         request_params = {
             "model": self.config.model_name,
             "messages": [
@@ -521,72 +283,26 @@ class ModelClient:
             "max_tokens": max_tokens,
             "temperature": temperature
         }
-        # DeepSeek 等 API 的 json_object 模式在复杂提取任务中
-        # 可能导致空响应。prompt 已明确要求输出纯 JSON，无需 API 层约束。
-        # 注释掉 response_format 约束，让模型按 prompt 指令自然输出 JSON。
-        # if expected_format == "json_object":
-        #     combined = (prompt or "") + " " + (system_prompt or "")
-        #     if "json" in combined.lower():
-        #         request_params["response_format"] = {"type": "json_object"}
 
-        for attempt in range(self.config.max_retries):
-            try:
-                api_url = f"{self.config.api_url}/chat/completions"
-                logger.info(f"调用云端模型API，模型: {self.config.model_name}, API: {api_url} (尝试 {attempt + 1}/{self.config.max_retries})")
+        def _do_call():
+            response = requests.post(
+                f"{self.config.api_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.config.api_key}",
+                    "Content-Type": "application/json"
+                },
+                json=request_params,
+                timeout=self.config.timeout
+            )
+            if response.status_code == 200:
+                text = response.json()['choices'][0]['message']['content']
+                if text:
+                    logger.info(f"云端模型响应成功，响应长度: {len(text)}")
+                    return text
+                raise ValueError("响应内容为空")
+            raise RuntimeError(f"HTTP {response.status_code}: {response.text[:200]}")
 
-                response = requests.post(
-                    api_url,
-                    headers={
-                        "Authorization": f"Bearer {self.config.api_key}",
-                        "Content-Type": "application/json"
-                    },
-                    json=request_params,
-                    timeout=self.config.timeout
-                )
-                
-                logger.info(f"云端模型API响应状态码: {response.status_code}")
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    response_content = result['choices'][0]['message']['content']
-                    if response_content:
-                        logger.info(f"云端模型响应成功，响应长度: {len(response_content)}")
-                        return response_content
-                    else:
-                        logger.warning(f"云端模型响应内容为空，输入prompt长度: {len(prompt)}，尝试 {attempt + 1}/{self.config.max_retries}")
-                        last_error = "响应内容为空"
-                        continue
-                else:
-                    error_msg = f"API调用失败，状态码: {response.status_code}, 响应: {response.text}"
-                    logger.warning(f"第 {attempt + 1} 次尝试：{error_msg}")
-                    last_error = error_msg
-                    
-            except requests.exceptions.Timeout as e:
-                error_msg = f"请求超时: {str(e)}"
-                logger.warning(f"第 {attempt + 1} 次尝试：{error_msg}")
-                last_error = error_msg
-                last_exception = e
-            except requests.exceptions.RequestException as e:
-                error_msg = f"请求异常: {str(e)}"
-                logger.warning(f"第 {attempt + 1} 次尝试：{error_msg}")
-                last_error = error_msg
-                last_exception = e
-            except Exception as e:
-                error_msg = f"未知异常: {str(e)}"
-                logger.warning(f"第 {attempt + 1} 次尝试：{error_msg}")
-                logger.warning(f"异常堆栈: {traceback.format_exc()}")
-                last_error = error_msg
-                last_exception = e
-            
-            if attempt < self.config.max_retries - 1:
-                logger.info(f"等待 {self.config.retry_delay} 秒后重试...")
-                time.sleep(self.config.retry_delay)
-        
-        logger.error(f"云端模型API调用在 {self.config.max_retries} 次尝试后仍然失败")
-        logger.error(f"最后错误: {last_error}")
-        if last_exception:
-            logger.error(f"异常详情: {repr(last_exception)}")
-        return ""
+        return self._with_retry(_do_call, "cloud/chat") or ""
     
     def test_connection(self) -> bool:
         """
@@ -655,50 +371,35 @@ class ModelClient:
         tool_choice: str = "auto",
     ) -> Optional[Dict[str, Any]]:
         """调用本地 Ollama /api/chat 端点（支持 tools）"""
-        # 如果传入了 system_prompt 且 messages 首条不是 system 角色，则插入
         req_messages = list(messages)
         if system_prompt and (not req_messages or req_messages[0].get("role") != "system"):
             req_messages.insert(0, {"role": "system", "content": system_prompt})
 
-        last_error = None
-        for attempt in range(self.config.max_retries):
-            try:
-                logger.info(
-                    f"[model_client] 调用本地 chat API，模型: {self.config.model_name} "
-                    f"(尝试 {attempt + 1}/{self.config.max_retries})"
-                )
-                request_body = {
-                        "model": self.config.model_name,
-                        "messages": req_messages,
-                        "stream": False,
-                        "options": {
-                            "temperature": temperature,
-                            "num_predict": max_tokens,
-                        },
-                    }
-                if tools:
-                    request_body["tools"] = tools
-                    request_body["tool_choice"] = tool_choice
-                response = requests.post(
-                    f"{self.config.api_url}/api/chat",
-                    json=request_body,
-                    timeout=self.config.timeout,
-                )
-                if response.status_code == 200:
-                    result = response.json()
-                    msg = result.get("message", {})
-                    return {
-                        "content": msg.get("content", ""),
-                        "tool_calls": msg.get("tool_calls", []),
-                    }
-                else:
-                    last_error = f"HTTP {response.status_code}: {response.text[:200]}"
-            except Exception as e:
-                last_error = str(e)
-            if attempt < self.config.max_retries - 1:
-                time.sleep(self.config.retry_delay)
-        logger.error(f"[model_client] local chat 失败: {last_error}")
-        return None
+        request_body = {
+            "model": self.config.model_name,
+            "messages": req_messages,
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+            },
+        }
+        if tools:
+            request_body["tools"] = tools
+            request_body["tool_choice"] = tool_choice
+
+        def _do_call():
+            response = requests.post(
+                f"{self.config.api_url}/api/chat",
+                json=request_body,
+                timeout=self.config.timeout,
+            )
+            if response.status_code == 200:
+                msg = response.json().get("message", {})
+                return {"content": msg.get("content", ""), "tool_calls": msg.get("tool_calls", [])}
+            raise RuntimeError(f"HTTP {response.status_code}: {response.text[:200]}")
+
+        return self._with_retry(_do_call, "local/chat")
 
     def _call_cloud_chat(
         self,
@@ -726,39 +427,22 @@ class ModelClient:
             request_params["tools"] = tools
             request_params["tool_choice"] = tool_choice
 
-        last_error = None
-        for attempt in range(self.config.max_retries):
-            try:
-                api_url = f"{self.config.api_url}/chat/completions"
-                logger.info(
-                    f"[model_client] 调用云端 chat API，模型: {self.config.model_name} "
-                    f"(尝试 {attempt + 1}/{self.config.max_retries})"
-                )
-                response = requests.post(
-                    api_url,
-                    headers={
-                        "Authorization": f"Bearer {self.config.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json=request_params,
-                    timeout=self.config.timeout,
-                )
-                if response.status_code == 200:
-                    result = response.json()
-                    choice = result["choices"][0]
-                    msg = choice.get("message", {})
-                    return {
-                        "content": msg.get("content", ""),
-                        "tool_calls": msg.get("tool_calls", []),
-                    }
-                else:
-                    last_error = f"HTTP {response.status_code}: {response.text[:200]}"
-            except Exception as e:
-                last_error = str(e)
-            if attempt < self.config.max_retries - 1:
-                time.sleep(self.config.retry_delay)
-        logger.error(f"[model_client] cloud chat 失败: {last_error}")
-        return None
+        def _do_call():
+            response = requests.post(
+                f"{self.config.api_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.config.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=request_params,
+                timeout=self.config.timeout,
+            )
+            if response.status_code == 200:
+                msg = response.json()["choices"][0].get("message", {})
+                return {"content": msg.get("content", ""), "tool_calls": msg.get("tool_calls", [])}
+            raise RuntimeError(f"HTTP {response.status_code}: {response.text[:200]}")
+
+        return self._with_retry(_do_call, "cloud/chat")
 
 
 # 创建默认客户端实例

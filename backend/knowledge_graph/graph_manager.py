@@ -1,4 +1,5 @@
 import json
+import hashlib
 from typing import List, Dict, Any, Optional, Tuple
 from config.neo4j_config import neo4j_conn
 from knowledge_graph.graph_partition import graph_partition
@@ -28,6 +29,11 @@ class GraphManager:
         self.partition = graph_partition
         self.performance = graph_performance
         self._defer_cache = False
+
+    @staticmethod
+    def _compute_entity_id(name: str) -> str:
+        """确定性实体 ID 生成：MD5(entity_name)"""
+        return hashlib.md5(name.encode()).hexdigest()
 
     def set_defer_cache(self, defer: bool):
         """设置是否延迟缓存清除（分批导入时启用）"""
@@ -181,9 +187,8 @@ class GraphManager:
             
             logger.info(f"[add_entity] 开始添加实体: {entity_name}, type={entity_type}")
 
-            # 生成确定性实体ID：MD5(entity_name)
-            import hashlib
-            entity_id = hashlib.md5(entity_name.encode()).hexdigest()
+            # 生成确定性实体ID
+            entity_id = self._compute_entity_id(entity_name)
 
             # 构建参数
             params = {
@@ -229,14 +234,12 @@ class GraphManager:
                 logger.info("[add_entities] 没有需要添加的实体")
                 return {"status": "success", "count": 0, "ids": []}
 
-            import hashlib
             entity_ids = []
             entity_list = []
 
             for entity in filtered_entities:
-                # 确定性 ID：MD5(entity_name)，保证同一实体在多次导入/增量同步中映射到同一节点
                 entity_name = entity.get("name", "")
-                entity_id = hashlib.md5(entity_name.encode()).hexdigest()
+                entity_id = self._compute_entity_id(entity_name)
                 entity_ids.append(entity_id)
                 entity['id'] = entity_id
                 entity_list.append({
@@ -526,21 +529,6 @@ class GraphManager:
         except Exception as e:
             logger.error(f"[get_partition] 获取失败: {str(e)}")
             raise
-
-    def batch_add_entities(self, entities: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """批量添加实体（直接调用 add_entities UNWIND 批量写入）"""
-        logger.info(f"[batch_add_entities] 开始批量添加实体: {len(entities)} 个")
-        return self.add_entities(entities)
-
-    def batch_add_relationships(self, relationships: List[Dict[str, Any]], use_create: bool = False) -> Dict[str, Any]:
-        """批量添加关系（直接调用 add_relationships UNWIND 批量写入）
-
-        Args:
-            relationships: 关系列表
-            use_create: True=使用 CREATE（首次导入更快）；False=使用 MERGE（默认，幂等安全）
-        """
-        logger.info(f"[batch_add_relationships] 开始批量添加关系: {len(relationships)} 条, use_create={use_create}")
-        return self.add_relationships(relationships, use_create=use_create)
 
     def optimize_schema(self) -> Dict[str, Any]:
         """优化图谱schema"""
