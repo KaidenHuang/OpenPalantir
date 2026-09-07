@@ -1,13 +1,28 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { TableInfo, ColumnInfo, ForeignKeyInfo } from './DatabaseManagement';
+import { useDatabaseStore } from '../stores/databaseStore';
+import type { SchemaResult } from '../stores/types';
 
-interface ERDiagramProps {
-  tables: TableInfo[];
-  foreignKeys: ForeignKeyInfo[];
-  getTableColumns: (tableName: string) => ColumnInfo[];
+// 本地类型（从 SchemaResult 中提取）
+interface TableInfo {
+  id: string; table_name: string;
+}
+interface ColumnInfo {
+  id: string; table_name: string; column_name: string;
+  data_type: string; column_key: string;
+}
+interface ForeignKeyInfo {
+  id?: string; table_name: string; column_name: string;
+  referenced_table_name: string; referenced_column_name: string;
 }
 
-function ERDiagram({ tables, foreignKeys, getTableColumns }: ERDiagramProps) {
+function ERDiagram() {
+  const schemaResult = useDatabaseStore((s) => s.schemaResult) as SchemaResult | null;
+  const tables: TableInfo[] = (schemaResult?.tables ?? []) as TableInfo[];
+  const foreignKeys: ForeignKeyInfo[] = (schemaResult?.foreign_keys ?? []) as ForeignKeyInfo[];
+  const getTableColumns = (tableName: string): ColumnInfo[] =>
+    ((schemaResult?.columns ?? []) as ColumnInfo[]).filter(
+      (col) => col.table_name === tableName
+    );
   const cardWidth = 260;
   const cardHeaderHeight = 33;
   const cardPaddingBottom = 8;

@@ -11,6 +11,10 @@ parameters:
     type: integer
     description: 返回前N个节点（默认10）
     required: false
+  - name: max_nodes
+    type: integer
+    description: 分析节点数上限（默认5000，最大50000）
+    required: false
 ---
 
 # 中心性分析

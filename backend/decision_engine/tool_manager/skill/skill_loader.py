@@ -67,6 +67,72 @@ class SkillResult:
     error: str = ""
     execution_time_ms: float = 0.0
 
+    def summarize(self) -> str:
+        """将执行结果压缩为简短摘要（≤500 字符）
+
+        通用启发式逻辑：按常见 key 模式提取关键信息。
+        各 Skill 的 executor 返回约定结构即可自动获得有意义的摘要。
+        """
+        import json as _json
+
+        if not self.success:
+            return f"执行失败: {self.error}" if self.error else "执行失败"
+
+        data = self.data
+        if not data:
+            return "（无结果）"
+
+        if isinstance(data, dict):
+            # 按常见 key 模式提取摘要
+            if "entities" in data and isinstance(data["entities"], list):
+                entities = data["entities"]
+                names = [e.get("name", str(e))[:30] for e in entities[:5]]
+                extra = f"等{len(entities)}个" if len(entities) > 5 else ""
+                return f"找到实体: {', '.join(names)}{extra}"
+
+            if "documents" in data and isinstance(data["documents"], list):
+                docs = data["documents"]
+                return f"找到 {len(docs)} 个相关文档"
+
+            if "relations" in data and isinstance(data["relations"], list):
+                rels = data["relations"]
+                total = data.get("total_relations", len(rels))
+                return f"找到 {total} 条关系（展示 {len(rels)} 条）"
+
+            if "communities" in data and isinstance(data["communities"], list):
+                total = data.get("total_communities", len(data["communities"]))
+                return f"检测到 {total} 个社区"
+
+            if "top_nodes" in data and isinstance(data["top_nodes"], list):
+                total = data.get("total_nodes", len(data["top_nodes"]))
+                names = [n.get("name", str(n))[:20] for n in data["top_nodes"][:3]]
+                return f"中心性分析: {total} 个节点，Top: {', '.join(names)}"
+
+            if "tables" in data and isinstance(data["tables"], list):
+                tables = data["tables"]
+                names = [t.get("table", "?") for t in tables[:3]]
+                return f"匹配 {len(tables)} 个表: {', '.join(names)}"
+
+            if "paths" in data and isinstance(data["paths"], list):
+                return f"找到 {len(data['paths'])} 条路径"
+
+            if "found" in data:
+                if data["found"]:
+                    entity = data.get("entity", {})
+                    name = entity.get("name", "未知") if isinstance(entity, dict) else str(entity)
+                    return f"找到实体: {name}"
+                return f"未找到: {data.get('message', '')}"
+
+            # 通用 dict：序列化前几个 key 的预览
+            text = _json.dumps(data, ensure_ascii=False, default=str)
+            return text[:497] + "..." if len(text) > 500 else text
+
+        if isinstance(data, list):
+            return f"返回 {len(data)} 条记录"
+
+        text = str(data)
+        return text[:497] + "..." if len(text) > 500 else text
+
 
 class Skill:
     """Skill 实例：定义 + 执行函数"""
@@ -96,6 +162,10 @@ class Skill:
                 error=str(e),
                 execution_time_ms=elapsed,
             )
+
+    def summarize(self, result: SkillResult) -> str:
+        """生成执行结果的摘要，委托给 SkillResult.summarize()"""
+        return result.summarize()
 
 
 class SkillLoader:

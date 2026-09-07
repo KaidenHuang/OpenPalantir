@@ -38,23 +38,30 @@ class GraphManager:
         if not self._defer_cache:
             self.performance.clear_cache(pattern)
 
-    def get_nodes(self) -> List[Dict[str, Any]]:
-        """获取图谱节点"""
+    def get_nodes(self, limit: int = 5000) -> List[Dict[str, Any]]:
+        """获取图谱节点
+
+        Args:
+            limit: 返回节点数上限，默认 5000，最大 50000
+        """
+        safe_limit = min(max(1, limit), 50000)
         try:
-            logger.info("[get_nodes] 开始获取图谱节点")
-            
-            # 尝试从缓存获取
-            cached_nodes = self.performance.get_cached_graph_data("nodes:all")
-            if cached_nodes:
-                logger.info(f"[get_nodes] 从缓存获取节点: {len(cached_nodes)} 个")
-                return cached_nodes
+            logger.info(f"[get_nodes] 开始获取图谱节点, limit={safe_limit}")
+
+            # 尝试从缓存获取（仅当请求默认值 5000 时使用缓存）
+            if safe_limit == 5000:
+                cached_nodes = self.performance.get_cached_graph_data("nodes:all")
+                if cached_nodes:
+                    logger.info(f"[get_nodes] 从缓存获取节点: {len(cached_nodes)} 个")
+                    return cached_nodes
 
             # 从数据库获取
             query = """
             MATCH (n)
             RETURN n.id as id, n.name as name, coalesce(n.type, labels(n)[0]) as type, n.count as count, n.confidence as confidence, n.byname as byname
+            LIMIT $limit
             """
-            result = neo4j_conn.execute_query(query)
+            result = neo4j_conn.execute_query(query, {"limit": safe_limit})
 
             nodes = []
             for record in result:
@@ -68,8 +75,9 @@ class GraphManager:
                 }
                 nodes.append(node)
 
-            # 缓存结果
-            self.performance.cache_graph_data("nodes:all", nodes)
+            # 缓存结果（仅默认 limit 时缓存）
+            if safe_limit == 5000:
+                self.performance.cache_graph_data("nodes:all", nodes)
 
             logger.info(f"[get_nodes] 获取节点成功: {len(nodes)} 个")
             return nodes

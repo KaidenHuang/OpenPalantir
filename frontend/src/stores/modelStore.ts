@@ -5,7 +5,7 @@
  * 迁移自 ModelManagement。
  */
 import { create } from 'zustand';
-import axios from 'axios';
+import { httpGet, httpPost, httpPut, httpDelete } from '../services/httpClient';
 import { API_CONFIG } from '../config/apiConfig';
 import type { ModelInfo, ModelPlatform, PlatformConfig } from './types';
 
@@ -22,14 +22,14 @@ interface ModelState {
   _staleTime: number;
 
   // Actions
-  fetchPlatforms: () => Promise<void>;
+  fetchPlatforms: (signal?: AbortSignal) => Promise<void>;
   setSelectedPlatform: (platform: string) => void;
   setConfig: (config: Partial<PlatformConfig>) => void;
-  fetchOllamaModels: (apiUrl: string) => Promise<void>;
-  createModel: (name: string, modelType: 'local' | 'cloud') => Promise<void>;
-  updateModel: (modelId: number, updates: Record<string, unknown>) => Promise<void>;
-  deleteModel: (modelId: number) => Promise<void>;
-  testConnection: (modelId: number) => Promise<void>;
+  fetchOllamaModels: (apiUrl: string, signal?: AbortSignal) => Promise<void>;
+  createModel: (name: string, modelType: 'local' | 'cloud', signal?: AbortSignal) => Promise<void>;
+  updateModel: (modelId: number, updates: Record<string, unknown>, signal?: AbortSignal) => Promise<void>;
+  deleteModel: (modelId: number, signal?: AbortSignal) => Promise<void>;
+  testConnection: (modelId: number, signal?: AbortSignal) => Promise<void>;
 }
 
 export const useModelStore = create<ModelState>()((set, get) => ({
@@ -41,11 +41,11 @@ export const useModelStore = create<ModelState>()((set, get) => ({
   _lastFetched: 0,
   _staleTime: 30_000,
 
-  fetchPlatforms: async () => {
+  fetchPlatforms: async (signal?: AbortSignal) => {
     const now = Date.now();
     if (now - get()._lastFetched < get()._staleTime) return;
 
-    const response = await axios.get(API_CONFIG.endpoints.model.list);
+    const response = await httpGet(API_CONFIG.endpoints.model.list, { signal });
     const rawModels: ModelInfo[] = response.data.models || [];
 
     // 按平台分组
@@ -78,38 +78,38 @@ export const useModelStore = create<ModelState>()((set, get) => ({
 
   setConfig: (partial) => set((s) => ({ config: { ...s.config, ...partial } })),
 
-  fetchOllamaModels: async (apiUrl) => {
+  fetchOllamaModels: async (apiUrl, signal?: AbortSignal) => {
     try {
-      const response = await axios.get(`${apiUrl}/api/tags`);
+      const response = await httpGet(`${apiUrl}/api/tags`, { signal });
       set({ ollamaModels: (response.data.models || []).map((m: { name: string }) => m.name) });
     } catch {
       set({ ollamaModels: [] });
     }
   },
 
-  createModel: async (name, modelType) => {
-    await axios.post(API_CONFIG.endpoints.model.create, {
+  createModel: async (name, modelType, signal?: AbortSignal) => {
+    await httpPost(API_CONFIG.endpoints.model.create, {
       name,
       model_type: modelType,
       platform: get().selectedPlatform,
-    });
+    }, { signal });
     set({ _lastFetched: 0 });
-    await get().fetchPlatforms();
+    await get().fetchPlatforms(signal);
   },
 
-  updateModel: async (modelId, updates) => {
-    await axios.put(API_CONFIG.endpoints.model.update(modelId), updates);
+  updateModel: async (modelId, updates, signal?: AbortSignal) => {
+    await httpPut(API_CONFIG.endpoints.model.update(modelId), updates, { signal });
     set({ _lastFetched: 0 });
-    await get().fetchPlatforms();
+    await get().fetchPlatforms(signal);
   },
 
-  deleteModel: async (modelId) => {
-    await axios.delete(API_CONFIG.endpoints.model.delete(modelId));
+  deleteModel: async (modelId, signal?: AbortSignal) => {
+    await httpDelete(API_CONFIG.endpoints.model.delete(modelId), { signal });
     set({ _lastFetched: 0 });
-    await get().fetchPlatforms();
+    await get().fetchPlatforms(signal);
   },
 
-  testConnection: async (modelId) => {
-    await axios.post(API_CONFIG.endpoints.model.testConnection(modelId));
+  testConnection: async (modelId, signal?: AbortSignal) => {
+    await httpPost(API_CONFIG.endpoints.model.testConnection(modelId), undefined, { signal });
   },
 }));

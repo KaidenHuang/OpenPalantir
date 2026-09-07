@@ -1,30 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Input, Button, Select, message, Modal, Form, Spin } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
-import axios from 'axios';
 import { API_CONFIG } from '../config/apiConfig';
+import { httpGet, httpPost } from '../services/httpClient';
 import { useModelStore } from '../stores/modelStore';
+import { useAbortController } from '../hooks/useAbortController';
 
 const { Option } = Select;
-
-// 类型定义
-interface Model {
-  id: number;
-  name: string;
-  type: 'local' | 'cloud';
-  status: 'available' | 'unavailable' | 'unknown';
-  models: string[];
-  enabled: boolean;
-  api_url: string;
-  api_key: string;
-  create_time: string;
-  update_time: string;
-}
 
 interface ModelPlatform {
   id: string;
   name: string;
-  selected: boolean;
   status: 'available' | 'unavailable' | 'unknown';
   type: 'local' | 'cloud';
   enabled: boolean;
@@ -39,8 +25,12 @@ interface PlatformConfig {
 const ModelManagement: React.FC = () => {
   const { fetchPlatforms, fetchOllamaModels: storeFetchOllama, createModel: storeCreateModel, updateModel: storeUpdateModel } = useModelStore();
 
-  const [platforms, setPlatforms] = useState<ModelPlatform[]>([]);
-  const [models, setModels] = useState<Model[]>([]);
+  // 直接从 store 订阅，消除双重状态
+  const storeModels = useModelStore((s) => s.models);
+  const ollamaModels = useModelStore((s) => s.ollamaModels);
+
+  const { getComponentSignal, getLatestSignal } = useAbortController();
+
   const [searchText, setSearchText] = useState('');
   const [config, setConfig] = useState<PlatformConfig>({
     apiUrl: 'https://api.openai.com/v1',
@@ -54,11 +44,24 @@ const ModelManagement: React.FC = () => {
   const [isAddModalVisible, setIsAddModalVisible] = useState(false);
   const [newModelName, setNewModelName] = useState('');
   const [newModelType, setNewModelType] = useState<'local' | 'cloud'>('cloud');
-  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+
+  // 从 store 的 models 派生出 UI 用的 platforms 列表
+  const platforms = useMemo(() => {
+    return storeModels
+      .map((model) => ({
+        id: model.name.toLowerCase(),
+        name: model.name,
+        status: (model as unknown as Record<string, unknown>).status as ModelPlatform['status'] || 'unknown',
+        type: model.model_type as ModelPlatform['type'],
+        enabled: model.enabled,
+      }))
+      .sort((a, b) => (b.enabled ? 1 : 0) - (a.enabled ? 1 : 0));
+  }, [storeModels]);
 
   // 页面加载时从后端API加载模型列表
   useEffect(() => {
-    loadModelsFromBackend();
+    const signal = getComponentSignal();
+    loadModelsFromBackend(signal);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -73,59 +76,38 @@ const ModelManagement: React.FC = () => {
   // 当选择Ollama平台时，获取模型列表
   useEffect(() => {
     if (selectedPlatform === 'ollama') {
-      fetchOllamaModels();
+      const signal = getLatestSignal('ollama');
+      fetchOllamaModels(signal);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPlatform, config.apiUrl]);
 
   // 获取Ollama模型列表
-  const fetchOllamaModels = async () => {
+  const fetchOllamaModels = async (signal?: AbortSignal) => {
     try {
-      const ollamaConfig = models.find(m => m.name.toLowerCase() === 'ollama');
+      const ollamaConfig = storeModels.find(m => m.name.toLowerCase() === 'ollama');
       const apiUrl = ollamaConfig?.api_url ? ollamaConfig.api_url : 'http://localhost:11434';
       let validApiUrl = apiUrl;
       if (!validApiUrl.startsWith('http://') && !validApiUrl.startsWith('https://')) {
         validApiUrl = `http://${validApiUrl}`;
       }
-      await storeFetchOllama(validApiUrl);
-      setOllamaModels(useModelStore.getState().ollamaModels);
+      await storeFetchOllama(validApiUrl, signal);
     } catch {
-      setOllamaModels([]);
+      // store 会保留旧数据
     }
   };
 
   // 从后端API加载模型列表
-  const loadModelsFromBackend = async () => {
+  const loadModelsFromBackend = async (signal?: AbortSignal) => {
     try {
       setInitialLoading(true);
-      await fetchPlatforms();
-      const state = useModelStore.getState();
-      const modelList = state.models;
-      setModels(modelList as unknown as Model[]);
-
-      const updatedPlatforms = modelList
-        .map((model) => ({
-          id: model.name.toLowerCase(),
-          name: model.name,
-          selected: model.name.toLowerCase() === selectedPlatform,
-          status: (model as unknown as Record<string, unknown>).status as ModelPlatform['status'] || 'unknown',
-          type: model.model_type as ModelPlatform['type'],
-          enabled: model.enabled,
-        }))
-        .sort((a, b) => (b.enabled ? 1 : 0) - (a.enabled ? 1 : 0));
-
-      setPlatforms(updatedPlatforms);
-
-      if (updatedPlatforms.length > 0 && !selectedPlatform) {
-        setSelectedPlatform(updatedPlatforms[0].id);
+      await fetchPlatforms(signal);
+      // platforms 由 useMemo 自动从 storeModels 派生
+      if (platforms.length > 0 && !selectedPlatform) {
+        setSelectedPlatform(platforms[0].id);
       }
     } catch {
       message.error('加载模型列表失败');
-      setPlatforms([
-        { id: 'openai', name: 'OpenAI', selected: true, status: 'unknown', type: 'cloud', enabled: false },
-        { id: 'ollama', name: 'Ollama', selected: false, status: 'unknown', type: 'local', enabled: false },
-        { id: 'deepseek', name: 'Deepseek', selected: false, status: 'unknown', type: 'cloud', enabled: false }
-      ]);
       setSelectedPlatform('openai');
     } finally {
       setInitialLoading(false);
@@ -134,11 +116,11 @@ const ModelManagement: React.FC = () => {
 
   // 根据选择的平台更新配置
   const updateConfigForPlatform = (platformId: string) => {
-    const platform = models.find(m => m.name.toLowerCase() === platformId);
+    const platform = storeModels.find(m => m.name.toLowerCase() === platformId);
     if (platform) {
       setConfig({
-        apiUrl: platform.api_url,
-        apiKey: platform.api_key,
+        apiUrl: platform.api_url || '',
+        apiKey: platform.api_key || '',
         model: platform.models?.[0] || ''
       });
     }
@@ -146,10 +128,6 @@ const ModelManagement: React.FC = () => {
 
   // 处理平台选择
   const handlePlatformSelect = (platformId: string) => {
-    setPlatforms(platforms.map(platform => ({
-      ...platform,
-      selected: platform.id === platformId
-    })));
     setSelectedPlatform(platformId);
   };
 
@@ -171,7 +149,7 @@ const ModelManagement: React.FC = () => {
     setSaving(true);
     try {
       // 找到对应的模型
-      const platform = models.find(m => m.name.toLowerCase() === selectedPlatform);
+      const platform = storeModels.find(m => m.name.toLowerCase() === selectedPlatform);
       if (!platform) {
         message.error('平台不存在');
         return;
@@ -182,7 +160,8 @@ const ModelManagement: React.FC = () => {
       
       if (selectedPlatform === 'ollama') {
         try {
-          const response = await axios.get(`${config.apiUrl}/api/tags`);
+          const signal = getComponentSignal();
+          const response = await httpGet(`${config.apiUrl}/api/tags`, { signal });
           status = response.status === 200 ? 'available' : 'unavailable';
         } catch {
           status = 'unavailable';
@@ -206,7 +185,7 @@ const ModelManagement: React.FC = () => {
       });
 
       message.success('配置保存成功');
-      loadModelsFromBackend();
+      loadModelsFromBackend(getComponentSignal());
     } catch (error: unknown) {
       const err = error as { response?: { data?: { detail?: string } }; message?: string };
       message.error(`配置保存失败: ${err.response?.data?.detail || err.message || '未知错误'}`);
@@ -218,7 +197,8 @@ const ModelManagement: React.FC = () => {
 
   // 刷新模型状态
   const handleRefresh = () => {
-    loadModelsFromBackend();
+    useModelStore.setState({ _lastFetched: 0 });
+    loadModelsFromBackend(getComponentSignal());
   };
 
   // 打开添加模型模态框
@@ -241,13 +221,13 @@ const ModelManagement: React.FC = () => {
     }
     
     try {
-      await storeCreateModel(newModelName, newModelType);
+      await storeCreateModel(newModelName, newModelType, getComponentSignal());
 
       message.success('模型添加成功');
       setIsAddModalVisible(false);
       setNewModelName('');
       setNewModelType('cloud');
-      loadModelsFromBackend();
+      loadModelsFromBackend(getComponentSignal());
     } catch (error: unknown) {
       const err = error as { response?: { data?: { detail?: string } }; message?: string };
       message.error(`模型添加失败: ${err.response?.data?.detail || err.message || '未知错误'}`);
@@ -265,18 +245,19 @@ const ModelManagement: React.FC = () => {
     setLoading(true);
     try {
       // 找到对应的模型
-      const platform = models.find(m => m.name.toLowerCase() === selectedPlatform);
+      const platform = storeModels.find(m => m.name.toLowerCase() === selectedPlatform);
       if (!platform) {
         message.error('平台不存在');
         return;
       }
 
       // 调用后端测试连接接口
-      const response = await axios.post(API_CONFIG.endpoints.model.testConnection(platform.id), {
+      const signal = getComponentSignal();
+      const response = await httpPost(API_CONFIG.endpoints.model.testConnection(platform.id), {
         api_url: config.apiUrl,
         api_key: config.apiKey,
         model: config.model
-      });
+      }, { signal });
 
       if (response.data.status === 'success') {
         message.success(response.data.message);
@@ -284,7 +265,7 @@ const ModelManagement: React.FC = () => {
         message.error(response.data.message || '测试连接失败');
       }
       // 无论测试结果如何，都刷新模型列表以更新状态
-      loadModelsFromBackend();
+      loadModelsFromBackend(getComponentSignal());
     } catch (error: unknown) {
       const err = error as { response?: { data?: { detail?: string } }; message?: string };
       message.error(`连接测试失败: ${err.response?.data?.detail || err.message || '未知错误'}`);
@@ -297,10 +278,12 @@ const ModelManagement: React.FC = () => {
   // 启用模型
   const handleEnableModel = async (modelId: number) => {
     try {
-      const response = await axios.post(API_CONFIG.endpoints.model.enable(modelId));
+      const signal = getComponentSignal();
+      const response = await httpPost(API_CONFIG.endpoints.model.enable(modelId), undefined, { signal });
       if (response.data.status === 'success') {
         message.success(response.data.message);
-        loadModelsFromBackend();
+        useModelStore.setState({ _lastFetched: 0 });
+        loadModelsFromBackend(getComponentSignal());
       } else {
         message.error('启用失败');
       }
@@ -369,7 +352,7 @@ const ModelManagement: React.FC = () => {
               backgroundColor: '#ffffff'
             }}>
               {filteredPlatforms.map(platform => {
-                const model = models.find(m => m.name.toLowerCase() === platform.id);
+                const model = storeModels.find(m => m.name.toLowerCase() === platform.id);
                 return (
                   <div
                     key={platform.id}
@@ -379,10 +362,10 @@ const ModelManagement: React.FC = () => {
                       padding: '10px',
                       marginBottom: '8px',
                       borderRadius: 6,
-                      backgroundColor: platform.selected ? '#e6f7ff' : '#ffffff',
+                      backgroundColor: platform.id === selectedPlatform ? '#e6f7ff' : '#ffffff',
                       border: platform.enabled
                         ? '2px solid #52c41a'
-                        : platform.selected
+                        : platform.id === selectedPlatform
                           ? '1px solid #1890ff'
                           : '1px solid #e8e8e8',
                       cursor: 'pointer',
@@ -397,8 +380,8 @@ const ModelManagement: React.FC = () => {
                       width: '100%'
                     }}>
                       <span style={{
-                        fontWeight: platform.selected ? '600' : '400',
-                        color: platform.selected ? '#1890ff' : '#333333',
+                        fontWeight: platform.id === selectedPlatform ? '600' : '400',
+                        color: platform.id === selectedPlatform ? '#1890ff' : '#333333',
                         flex: 1,
                         fontSize: '14px'
                       }}>{platform.name}</span>

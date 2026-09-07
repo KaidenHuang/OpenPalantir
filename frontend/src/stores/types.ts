@@ -116,6 +116,10 @@ export interface ModelInfo {
   model_type: 'local' | 'cloud';
   platform: string;
   enabled: boolean;
+  api_url?: string;
+  api_key?: string;
+  models?: string[];
+  status?: 'available' | 'unavailable' | 'unknown';
 }
 
 export interface PlatformConfig {

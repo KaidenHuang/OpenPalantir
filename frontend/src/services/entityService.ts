@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { httpGet, httpPost, httpPut, httpDelete } from './httpClient';
 import { API_CONFIG } from '../config/apiConfig';
 
 interface Entity {
@@ -68,12 +68,12 @@ interface EntityUpdateRequest {
 
 export const entityService = {
   // 获取实体列表
-  async listEntities(page: number = 1, limit: number = 10, entityType?: string, query?: string): Promise<EntityListResponse> {
+  async listEntities(page: number = 1, limit: number = 10, entityType?: string, query?: string, signal?: AbortSignal): Promise<EntityListResponse> {
     try {
       const params: Record<string, unknown> = { page, limit };
       if (entityType) params.entity_type = entityType;
       if (query) params.query = query;
-      const response = await axios.get(API_CONFIG.endpoints.graph.nodes, { params });
+      const response = await httpGet(API_CONFIG.endpoints.graph.nodes, { params, signal });
       return response.data;
     } catch (error) {
       console.error('Error listing entities:', error);
@@ -82,9 +82,9 @@ export const entityService = {
   },
 
   // 获取实体详情
-  async getEntity(entityId: string): Promise<EntityResponse> {
+  async getEntity(entityId: string, signal?: AbortSignal): Promise<EntityResponse> {
     try {
-      const response = await axios.get(API_CONFIG.endpoints.graph.node(entityId));
+      const response = await httpGet(API_CONFIG.endpoints.graph.node(entityId), { signal });
       return response.data;
     } catch (error) {
       console.error(`Error getting entity ${entityId}:`, error);
@@ -93,9 +93,9 @@ export const entityService = {
   },
 
   // 搜索实体
-  async searchEntities(request: EntitySearchRequest): Promise<EntityListResponse> {
+  async searchEntities(request: EntitySearchRequest, signal?: AbortSignal): Promise<EntityListResponse> {
     try {
-      const response = await axios.post(API_CONFIG.endpoints.graph.searchNodes, request);
+      const response = await httpPost(API_CONFIG.endpoints.graph.searchNodes, request, { signal });
       return response.data;
     } catch (error) {
       console.error('Error searching entities:', error);
@@ -104,9 +104,9 @@ export const entityService = {
   },
 
   // 更新实体
-  async updateEntity(entityId: string, request: EntityUpdateRequest): Promise<{ status: string; message: string }> {
+  async updateEntity(entityId: string, request: EntityUpdateRequest, signal?: AbortSignal): Promise<{ status: string; message: string }> {
     try {
-      const response = await axios.put(API_CONFIG.endpoints.graph.updateNode(entityId), request);
+      const response = await httpPut(API_CONFIG.endpoints.graph.updateNode(entityId), request, { signal });
       return response.data;
     } catch (error) {
       console.error(`Error updating entity ${entityId}:`, error);
@@ -115,9 +115,9 @@ export const entityService = {
   },
 
   // 删除实体
-  async deleteEntity(entityId: string): Promise<{ status: string; message: string }> {
+  async deleteEntity(entityId: string, signal?: AbortSignal): Promise<{ status: string; message: string }> {
     try {
-      const response = await axios.delete(API_CONFIG.endpoints.graph.deleteNode(entityId));
+      const response = await httpDelete(API_CONFIG.endpoints.graph.deleteNode(entityId), { signal });
       return response.data;
     } catch (error) {
       console.error(`Error deleting entity ${entityId}:`, error);
@@ -126,9 +126,9 @@ export const entityService = {
   },
 
   // 获取实体关系
-  async getEntityRelationships(entityId: string): Promise<RelationshipsResponse> {
+  async getEntityRelationships(entityId: string, signal?: AbortSignal): Promise<RelationshipsResponse> {
     try {
-      const response = await axios.get(API_CONFIG.endpoints.graph.nodeRelationships(entityId));
+      const response = await httpGet(API_CONFIG.endpoints.graph.nodeRelationships(entityId), { signal });
       return response.data;
     } catch (error) {
       console.error(`Error getting relationships for entity ${entityId}:`, error);

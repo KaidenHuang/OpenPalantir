@@ -18,7 +18,10 @@ Base.metadata.create_all(bind=engine)
 
 # 初始化 Neo4j Schema（约束 + 索引）
 from config.neo4j_config import neo4j_conn
-neo4j_conn.initialize_schema()
+try:
+    neo4j_conn.initialize_schema()
+except Exception as e:
+    logger.warning(f"Neo4j schema 初始化失败（降级运行）: {e}")
 
 # 初始化默认模型记录
 from models.model import init_models

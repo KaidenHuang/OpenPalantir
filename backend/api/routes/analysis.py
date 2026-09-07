@@ -12,7 +12,7 @@ class PathAnalysisRequest(BaseModel):
     weighted: bool = False
 
 @router.post("/path")
-async def analyze_path(request: PathAnalysisRequest = Body(...)):
+def analyze_path(request: PathAnalysisRequest = Body(...)):
     """分析路径"""
     try:
         # 记录入参
@@ -26,7 +26,7 @@ async def analyze_path(request: PathAnalysisRequest = Body(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/community")
-async def analyze_community():
+def analyze_community():
     """分析社区"""
     try:
         # 记录入参
@@ -51,7 +51,7 @@ class ReportRequest(BaseModel):
     format: str = 'html'
 
 @router.post("/centrality")
-async def analyze_centrality(request: CentralityAnalysisRequest = Body(...)):
+def analyze_centrality(request: CentralityAnalysisRequest = Body(...)):
     """分析中心性"""
     try:
         # 记录入参
@@ -65,7 +65,7 @@ async def analyze_centrality(request: CentralityAnalysisRequest = Body(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/trend")
-async def analyze_trend(request: TrendAnalysisRequest = Body(...)):
+def analyze_trend(request: TrendAnalysisRequest = Body(...)):
     """分析趋势"""
     try:
         # 记录入参
@@ -79,7 +79,7 @@ async def analyze_trend(request: TrendAnalysisRequest = Body(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/report")
-async def generate_report(request: ReportRequest = Body(...)):
+def generate_report(request: ReportRequest = Body(...)):
     """生成分析报告"""
     try:
         # 记录入参

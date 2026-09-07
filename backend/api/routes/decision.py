@@ -9,7 +9,7 @@ router = APIRouter()
 
 
 @router.post("/ask", response_model=DecisionResponse)
-async def ask_decision(request: DecisionRequest):
+def ask_decision(request: DecisionRequest):
     """智能决策问答入口。支持会话管理和多轮对话。"""
     try:
         logger.info(
@@ -20,8 +20,12 @@ async def ask_decision(request: DecisionRequest):
         response = decision_kernel.run(request)
         logger.info(
             f"[decision][api] response domain={response.domain}, intent={response.intent}, "
-            f"session_id={response.session_id}, evidence={len(response.evidence)}, "
-            f"work_orders={len(response.answer.work_orders)}"
+            f"session_id={response.session_id}, "
+            f"mode={response.decision_mode}, "
+            f"confidence={response.confidence:.2f}, "
+            f"turns={response.metadata.get('total_turns', '?')}, "
+            f"tools={response.metadata.get('total_tool_calls', '?')}, "
+            f"time={response.metadata.get('total_time_ms', 0):.0f}ms"
         )
         return response
     except Exception as exc:
@@ -30,7 +34,7 @@ async def ask_decision(request: DecisionRequest):
 
 
 @router.get("/session/{session_id}")
-async def get_session(session_id: str):
+def get_session(session_id: str):
     """获取会话历史，用于页面重载时恢复对话。"""
     session = _conv_manager.get_session(session_id)
     if not session:

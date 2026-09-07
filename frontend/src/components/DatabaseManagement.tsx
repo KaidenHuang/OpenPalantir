@@ -1,10 +1,12 @@
-import { useState, useEffect } from 'react';
-import axios from 'axios';
+import { useState, useEffect, useMemo } from 'react';
 import { Button, Input, Switch, message } from 'antd';
 import { ReloadOutlined, UndoOutlined } from '@ant-design/icons';
 import { API_CONFIG } from '../config/apiConfig';
+import { httpGet, httpPost, httpPut } from '../services/httpClient';
 import { logger } from '../services/logger';
 import { useDatabaseStore } from '../stores/databaseStore';
+import { useAbortController } from '../hooks/useAbortController';
+import { useSafePolling } from '../hooks/useSafePolling';
 import ERDiagram from './ERDiagram';
 
 const DB_STATUS = { EXTRACTED: 'extracted', DELETED: 'deleted' } as const;
@@ -104,15 +106,22 @@ const DB_DEFAULT_PORTS: Record<DbType, number> = {
 
 function DatabaseManagement() {
   const { fetchConnections: storeFetchConnections, fetchSchema: storeFetchSchema, fetchSummary: storeFetchSummary,
+    fetchDatabases: storeFetchDatabases,
     createConnection: storeCreateConnection, updateConnection: storeUpdateConnection,
     deleteConnection: storeDeleteConnection, restoreConnection: storeRestoreConnection,
     analyzeSchema: storeAnalyzeSchema, importToGraph: storeImportToGraph,
     configureCdc: storeConfigureCdc, startCdc: storeStartCdc,
   } = useDatabaseStore();
 
-  const [connections, setConnections] = useState<DatabaseConnection[]>([]);
+  // 直接从 store 订阅，消除双重状态
+  const connections = useDatabaseStore((s) => s.connections) as unknown as DatabaseConnection[];
+  const rawSchemaResult = useDatabaseStore((s) => s.schemaResult);
+  const databases = useDatabaseStore((s) => s.databases) as unknown as DatabaseItem[];
+  const dbSummary = useDatabaseStore((s) => s.dbSummary) as unknown as DbSummary | null;
+
+  const { getComponentSignal, getLatestSignal } = useAbortController();
+
   const [selectedConnection, setSelectedConnection] = useState<DatabaseConnection | null>(null);
-  const [schemaResult, setSchemaResult] = useState<SchemaResult | null>(null);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -124,14 +133,12 @@ function DatabaseManagement() {
   const [sourceSearchText, setSourceSearchText] = useState('');
   const [showDeletedConnections, setShowDeletedConnections] = useState(false);
   const [restoringConnectionId, setRestoringConnectionId] = useState<string | null>(null);
-  const [dbSummary, setDbSummary] = useState<DbSummary | null>(null);
 
   // Import state: prevent duplicate task creation
   const [importTaskId, setImportTaskId] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
 
-  // Middle panel: database list
-  const [databases, setDatabases] = useState<DatabaseItem[]>([]);
+  // Middle panel: selected database
   const [selectedDatabase, setSelectedDatabase] = useState<string | null>(null);
 
   // Test state
@@ -152,26 +159,37 @@ function DatabaseManagement() {
     description: '',
   });
 
+  // 从 store 的 rawSchemaResult 派生出组件需要的 schemaResult（含 analyzed_databases 过滤）
+  const schemaResult = useMemo(() => {
+    if (!rawSchemaResult) return null;
+    const data = rawSchemaResult as unknown as Record<string, unknown>;
+    const targetDb = selectedDatabase;
+    if (data.analyzed_databases && !((data.analyzed_databases as string[]) || []).includes(targetDb || '')) {
+      return null;
+    }
+    return rawSchemaResult as unknown as SchemaResult;
+  }, [rawSchemaResult, selectedDatabase]);
+
   useEffect(() => {
-    loadConnections();
+    const signal = getComponentSignal();
+    loadConnections(signal);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showDeletedConnections]);
 
   // When connection changes, fetch all databases from server and load schema
   useEffect(() => {
     if (!selectedConnection) {
-      setDatabases([]);
       setSelectedDatabase(null);
-      setSchemaResult(null);
       return;
     }
 
+    const signal = getLatestSignal('connection');
     if (selectedConnection.database) {
       setSelectedDatabase(selectedConnection.database);
     }
     Promise.all([
-      fetchDatabases(selectedConnection.id),
-      loadSchema(selectedConnection.id, selectedConnection.database),
+      storeFetchDatabases(selectedConnection.id, signal),
+      loadSchema(selectedConnection.id, selectedConnection.database, signal),
     ]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedConnection]);
@@ -185,50 +203,32 @@ function DatabaseManagement() {
     }
   }, [selectedConnection]);
 
-  useEffect(() => {
-    if (taskId) {
-      const interval = setInterval(async () => {
-        try {
-          const response = await axios.get(API_CONFIG.endpoints.task.get(taskId));
-          const status = response.data.status;
-          setTaskStatus(status);
-          if (status === 'completed' || status === 'failed') {
-            clearInterval(interval);
-            if (status === 'completed') {
-              loadSchema(selectedConnection!.id, selectedConnection!.database);
-            }
-            if (selectedConnection) {
-              localStorage.removeItem(`analyze_task_${selectedConnection.id}`);
-            }
-            setTaskId(null);
-          }
-        } catch (error) {
-          logger.error('DatabaseManagement', '获取任务状态失败', error);
-        }
-      }, 2000);
-      return () => clearInterval(interval);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId, selectedConnection]);
-
-  const loadConnections = async () => {
+  // Poll task status for schema analysis — 使用 useSafePolling 替代 setInterval
+  useSafePolling(async () => {
     try {
-      await storeFetchConnections(showDeletedConnections);
-      setConnections(useDatabaseStore.getState().connections as unknown as DatabaseConnection[]);
+      const signal = getComponentSignal();
+      const response = await httpGet(API_CONFIG.endpoints.task.get(taskId!), { signal });
+      const status = response.data.status;
+      setTaskStatus(status);
+      if (status === 'completed' || status === 'failed') {
+        if (status === 'completed') {
+          loadSchema(selectedConnection!.id, selectedConnection!.database);
+        }
+        if (selectedConnection) {
+          localStorage.removeItem(`analyze_task_${selectedConnection.id}`);
+        }
+        setTaskId(null);
+      }
+    } catch (error) {
+      logger.error('DatabaseManagement', '获取任务状态失败', error);
+    }
+  }, 2000, !!taskId);
+
+  const loadConnections = async (signal?: AbortSignal) => {
+    try {
+      await storeFetchConnections(showDeletedConnections, signal);
     } catch (error) {
       logger.error('DatabaseManagement', '加载连接列表失败', error);
-    }
-  };
-
-  const fetchDatabases = async (connectionId: string) => {
-    try {
-      const response = await axios.get(
-        `${API_CONFIG.endpoints.database.connections}/${connectionId}/databases`
-      );
-      setDatabases(response.data.databases || []);
-    } catch (error) {
-      logger.error('DatabaseManagement', '获取数据库列表失败', error);
-      setDatabases([]);
     }
   };
 
@@ -236,9 +236,11 @@ function DatabaseManagement() {
     if (!selectedConnection) return;
     setSelectedDatabase(dbName);
     try {
-      await axios.put(
+      const signal = getComponentSignal();
+      await httpPut(
         API_CONFIG.endpoints.database.connection(selectedConnection.id),
-        { database: dbName }
+        { database: dbName },
+        { signal }
       );
       const updated = { ...selectedConnection, database: dbName };
       setSelectedConnection(updated);
@@ -247,32 +249,16 @@ function DatabaseManagement() {
     }
   };
 
-  const loadSchema = async (connectionId: string, dbName?: string) => {
+  const loadSchema = async (connectionId: string, _dbName?: string, signal?: AbortSignal) => {
     try {
       setIsLoading(true);
-      await storeFetchSchema(connectionId);
-      const data = useDatabaseStore.getState().schemaResult;
-      const targetDb = dbName || selectedDatabase;
-      if (data && (data as unknown as Record<string, unknown>).analyzed_databases && !((data as unknown as Record<string, unknown>).analyzed_databases as string[]).includes(targetDb || '')) {
-        setSchemaResult(null);
-      } else {
-        setSchemaResult(data as unknown as SchemaResult);
-      }
+      await storeFetchSchema(connectionId, signal);
       setSelectedTable(null);
-      loadDbSummary(connectionId);
+      storeFetchSummary(connectionId, signal);
     } catch {
-      setSchemaResult(null);
+      // store 会保留旧数据，useMemo 会在 rawSchemaResult 变化时自动过滤
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const loadDbSummary = async (connectionId: string) => {
-    try {
-      await storeFetchSummary(connectionId);
-      setDbSummary(useDatabaseStore.getState().dbSummary as unknown as DbSummary);
-    } catch {
-      setDbSummary(null);
     }
   };
 
@@ -288,43 +274,68 @@ function DatabaseManagement() {
   };
 
   const handleCreateConnection = async () => {
+    if (!newConnection.name.trim()) {
+      message.warning('请填写连接名称');
+      return;
+    }
+    if (newConnection.type !== 'sqlite' && !newConnection.host.trim()) {
+      message.warning('请填写主机地址');
+      return;
+    }
+    if (newConnection.type === 'sqlite' && !newConnection.database.trim()) {
+      message.warning('请填写数据库文件路径');
+      return;
+    }
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { database: _db, ...payload } = newConnection;
-      await storeCreateConnection(payload as Record<string, unknown>);
-      await loadConnections();
+      const signal = getComponentSignal();
+      const payload = newConnection.type === 'sqlite'
+        ? { ...newConnection }
+        : (() => { const { database: _db, ...rest } = newConnection; return rest; })();
+      await storeCreateConnection(payload as Record<string, unknown>, signal);
+      await loadConnections(signal);
       setShowCreateModal(false);
+      message.success('数据源创建成功');
       setNewConnection({
         name: '', type: 'mysql', host: '', port: 3306, database: '',
         username: '', password: '', service_name: '', description: '',
       });
     } catch (error) {
       logger.error('DatabaseManagement', '创建连接失败', error);
+      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        || (error instanceof Error ? error.message : '未知错误');
+      message.error(`创建失败: ${detail}`);
     }
   };
 
   const handleUpdateConnection = async () => {
     if (!selectedConnection) return;
+    if (!newConnection.name.trim()) {
+      message.warning('请填写连接名称');
+      return;
+    }
     try {
-      await storeUpdateConnection(selectedConnection.id, newConnection as unknown as Record<string, unknown>);
-      await loadConnections();
+      const signal = getComponentSignal();
+      await storeUpdateConnection(selectedConnection.id, newConnection as unknown as Record<string, unknown>, signal);
+      await loadConnections(signal);
       setShowEditModal(false);
       const updated = { ...selectedConnection, ...newConnection };
       setSelectedConnection(updated);
+      message.success('数据源更新成功');
     } catch (error) {
       logger.error('DatabaseManagement', '更新连接失败', error);
+      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        || (error instanceof Error ? error.message : '未知错误');
+      message.error(`更新失败: ${detail}`);
     }
   };
 
   const handleDeleteConnection = async (connectionId: string) => {
     if (!confirm('确定要删除这个连接吗？删除后可恢复。')) return;
     try {
-      await storeDeleteConnection(connectionId);
-      await loadConnections();
+      const signal = getComponentSignal();
+      await storeDeleteConnection(connectionId, signal);
       if (selectedConnection?.id === connectionId) {
         setSelectedConnection(null);
-        setSchemaResult(null);
-        setDatabases([]);
       }
     } catch (error) {
       logger.error('DatabaseManagement', '删除连接失败', error);
@@ -334,8 +345,9 @@ function DatabaseManagement() {
   const handleRestoreConnection = async (connectionId: string) => {
     setRestoringConnectionId(connectionId);
     try {
-      await storeRestoreConnection(connectionId);
-      await loadConnections();
+      const signal = getComponentSignal();
+      await storeRestoreConnection(connectionId, signal);
+      await loadConnections(signal);
     } catch (error) {
       logger.error('DatabaseManagement', '恢复连接失败', error);
     } finally {
@@ -346,9 +358,11 @@ function DatabaseManagement() {
   const handleTestCreateConfig = async () => {
     setTestingCreate(true);
     try {
-      const response = await axios.post(
+      const signal = getComponentSignal();
+      const response = await httpPost(
         API_CONFIG.endpoints.database.testConnectionConfig,
-        newConnection
+        newConnection,
+        { signal }
       );
       alert(response.data.success ? '连接测试成功！' : '连接测试失败！');
     } catch (error) {
@@ -362,9 +376,11 @@ function DatabaseManagement() {
   const handleTestEditConfig = async () => {
     setTestingEdit(true);
     try {
-      const response = await axios.post(
+      const signal = getComponentSignal();
+      const response = await httpPost(
         API_CONFIG.endpoints.database.testConnectionConfig,
-        newConnection
+        newConnection,
+        { signal }
       );
       alert(response.data.success ? '连接测试成功！' : '连接测试失败！');
     } catch (error) {
@@ -378,7 +394,8 @@ function DatabaseManagement() {
   const handleAnalyze = async () => {
     if (!selectedConnection) return;
     try {
-      const newTaskId = await storeAnalyzeSchema(selectedConnection.id);
+      const signal = getComponentSignal();
+      const newTaskId = await storeAnalyzeSchema(selectedConnection.id, signal);
       localStorage.setItem(`analyze_task_${selectedConnection.id}`, newTaskId);
       setTaskId(newTaskId);
       setTaskStatus('running');
@@ -391,7 +408,8 @@ function DatabaseManagement() {
     if (!selectedConnection || isImporting) return;
     setIsImporting(true);
     try {
-      const newTaskId = await storeImportToGraph(selectedConnection.id);
+      const signal = getComponentSignal();
+      const newTaskId = await storeImportToGraph(selectedConnection.id, signal);
       setImportTaskId(newTaskId);
       message.success(`导入任务已创建，任务ID: ${newTaskId}`);
     } catch (error) {
@@ -404,7 +422,8 @@ function DatabaseManagement() {
   const handleStartCdc = async () => {
     if (!selectedConnection || !selectedDatabase) return;
     try {
-      await storeStartCdc(selectedConnection.id);
+      const signal = getComponentSignal();
+      await storeStartCdc(selectedConnection.id, signal);
       alert(`增量同步任务已创建，请到「任务管理」查看或停止`);
     } catch (error) {
       logger.error('DatabaseManagement', '启动增量同步失败', error);
@@ -419,7 +438,8 @@ function DatabaseManagement() {
     );
     if (!confirmed) return;
     try {
-      await storeConfigureCdc(selectedConnection.id);
+      const signal = getComponentSignal();
+      await storeConfigureCdc(selectedConnection.id, signal);
       alert(`CDC 配置完成，请随后执行「导入图谱」（全量）再「增量同步」。`);
     } catch (error: unknown) {
       const err = error as { response?: { data?: { detail?: string } }; message?: string };
@@ -745,11 +765,7 @@ function DatabaseManagement() {
                   )}
 
                   {viewMode === 'er' && (
-                    <ERDiagram
-                      tables={schemaResult.tables}
-                      foreignKeys={schemaResult.foreign_keys}
-                      getTableColumns={getTableColumns}
-                    />
+                    <ERDiagram />
                   )}
                 </div>
               ) : (

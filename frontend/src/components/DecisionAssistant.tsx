@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import API_CONFIG from '../config/apiConfig';
+import { useAbortController } from '../hooks/useAbortController';
 
 interface WorkOrder {
   title: string;
@@ -123,8 +124,8 @@ function DecisionAssistant() {
     return localStorage.getItem(STORAGE_KEY) || '';
   });
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
-  const mountedRef = useRef(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const { getLatestSignal } = useAbortController();
 
   const toggleSection = (key: string) => {
     setExpandedSections(prev => ({ ...prev, [key]: !prev[key] }));
@@ -139,7 +140,6 @@ function DecisionAssistant() {
 
   // Load session on mount
   useEffect(() => {
-    mountedRef.current = true;
     const existing = localStorage.getItem(STORAGE_KEY);
     if (existing) {
       setSessionId(existing);
@@ -150,14 +150,14 @@ function DecisionAssistant() {
       setSessionId(newId);
       setMessages([WELCOME_MESSAGE]);
     }
-    return () => { mountedRef.current = false; };
-    }, []);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchSession = async (sid: string) => {
     try {
-      const res = await fetch(`${API_CONFIG.baseUrl}/api/decision/session/${sid}`);
+      const signal = getLatestSignal('session');
+      const res = await fetch(`${API_CONFIG.baseUrl}/api/decision/session/${sid}`, { signal });
       if (!res.ok) {
-        if (mountedRef.current) setMessages([WELCOME_MESSAGE]);
+        setMessages([WELCOME_MESSAGE]);
         return;
       }
       const session = await res.json();
@@ -185,9 +185,10 @@ function DecisionAssistant() {
           });
         }
       }
-      if (mountedRef.current) setMessages(loaded.length > 0 ? loaded : [WELCOME_MESSAGE]);
-    } catch {
-      if (mountedRef.current) setMessages([WELCOME_MESSAGE]);
+      setMessages(loaded.length > 0 ? loaded : [WELCOME_MESSAGE]);
+    } catch (err) {
+      if ((err as { name?: string }).name === 'AbortError') return;
+      setMessages([WELCOME_MESSAGE]);
     }
   };
 
@@ -214,11 +215,16 @@ function DecisionAssistant() {
     };
     setMessages(prev => [...prev, userMsg, loadingMsg]);
 
+    const signal = getLatestSignal('ask');
+    const timeoutId = setTimeout(() => {
+      // 超时由外部 AbortController 处理
+    }, 120000);
     try {
       const response = await fetch(API_CONFIG.endpoints.decision.ask, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question: q, domain: 'workforce', session_id: sessionId }),
+        signal,
       });
 
       if (!response.ok) {
@@ -227,34 +233,34 @@ function DecisionAssistant() {
       }
 
       const data: DecisionResponse = await response.json();
-      if (data.session_id && data.session_id !== sessionId && mountedRef.current) {
+      if (data.session_id && data.session_id !== sessionId) {
         setSessionId(data.session_id);
         localStorage.setItem(STORAGE_KEY, data.session_id);
       }
 
-      if (mountedRef.current) {
-        setMessages(prev => prev.map(m =>
-          m.id === loadingMsg.id
-            ? {
-                id: loadingMsg.id, type: 'assistant',
-                content: data.answer.situation_analysis || data.answer.summary || data.answer.recommendation,
-                timestamp: new Date(), result: data,
-              }
-            : m
-        ));
-      }
+      setMessages(prev => prev.map(m =>
+        m.id === loadingMsg.id
+          ? {
+              id: loadingMsg.id, type: 'assistant',
+              content: data.answer.situation_analysis || data.answer.summary || data.answer.recommendation,
+              timestamp: new Date(), result: data,
+            }
+          : m
+      ));
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : '调用失败';
-      if (mountedRef.current) {
-        setMessages(prev => {
-          const filtered = prev.filter(m => m.id !== loadingMsg.id);
-          return [...filtered, {
-            id: (Date.now() + 1).toString(), type: 'assistant',
-            content: `抱歉，发生错误：${message}`,
-            timestamp: new Date(),
-          }];
-        });
-      }
+      const msg = err instanceof Error
+        ? (err.name === 'AbortError' ? '请求超时，请重试' : err.message)
+        : '调用失败';
+      setMessages(prev => {
+        const filtered = prev.filter(m => m.id !== loadingMsg.id);
+        return [...filtered, {
+          id: (Date.now() + 1).toString(), type: 'assistant',
+          content: `抱歉，发生错误：${msg}`,
+          timestamp: new Date(),
+        }];
+      });
+    } finally {
+      clearTimeout(timeoutId);
     }
   };
 
@@ -284,20 +290,27 @@ function DecisionAssistant() {
                 ) : (
                   <>
                     {msg.content && <p style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</p>}
-                    {msg.result && (
+                    {msg.result && (() => {
+                      const r = msg.result!;
+                      const hasContent =
+                        r.response_type === 'no_data' ||
+                        r.answer?.key_issues?.length > 0 ||
+                        r.answer?.options?.length > 0 ||
+                        !!r.answer?.recommendation ||
+                        r.answer?.work_orders?.length > 0 ||
+                        r.evidence_citations?.length > 0 ||
+                        r.evidence?.length > 0 ||
+                        (r.skill_trace && r.skill_trace.length > 0);
+                      if (!hasContent) return null;
+                      return (
                       <div className="decision-result">
-                        {/* 简单响应：只显示纯文本，隐藏所有决策面板 */}
-                        {msg.result.response_type !== 'simple' && (
+                        {r.response_type !== 'simple' && (
                           <>
-                            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
-                              <div><strong>场景：</strong>{msg.result.domain}</div>
-                              <div><strong>意图：</strong>{msg.result.intent}</div>
-                            </div>
 
-                            {msg.result.answer.key_issues?.length > 0 && (
+                            {r.answer.key_issues?.length > 0 && (
                               <div style={{ marginBottom: 8 }}>
                                 <h4>关键问题</h4>
-                                {msg.result.answer.key_issues.map((ki, idx) => (
+                                {r.answer.key_issues.map((ki, idx) => (
                                   <div key={idx} className="decision-card" style={{ marginBottom: 6 }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                                       <span style={severityBadge(ki.severity)}>{ki.severity}</span>
@@ -313,10 +326,10 @@ function DecisionAssistant() {
                               </div>
                             )}
 
-                            {msg.result.answer.options?.length > 0 && (
+                            {r.answer.options?.length > 0 && (
                               <div style={{ marginBottom: 8 }}>
                                 <h4>可选方案</h4>
-                                {msg.result.answer.options.map((opt, idx) => (
+                                {r.answer.options.map((opt, idx) => (
                                   <div key={idx} className="decision-card" style={{ marginBottom: 8 }}>
                                     <strong>{opt.name}</strong>
                                     <p style={{ margin: '4px 0', fontSize: 12, color: '#555' }}>{opt.description}</p>
@@ -334,17 +347,17 @@ function DecisionAssistant() {
                               </div>
                             )}
 
-                            {msg.result.answer.recommendation && (
+                            {r.answer.recommendation && (
                               <div style={{ marginBottom: 8, padding: '8px 10px', background: '#e8f5e9', borderRadius: 6 }}>
-                                <strong>推荐方案：</strong>{msg.result.answer.recommendation}
+                                <strong>推荐方案：</strong>{r.answer.recommendation}
                               </div>
                             )}
 
-                            {msg.result.answer.work_orders?.length > 0 && (
+                            {r.answer.work_orders?.length > 0 && (
                               <div style={{ marginBottom: 8 }}>
                                 <h4>行动工单</h4>
                                 <div className="decision-workorders">
-                                  {msg.result.answer.work_orders.map((wo, idx) => (
+                                  {r.answer.work_orders.map((wo, idx) => (
                                     <div className="decision-card" key={`${wo.title}-${idx}`}>
                                       <div><strong>{wo.title}</strong></div>
                                       <div style={{ fontSize: 12, marginTop: 4 }}>
@@ -378,16 +391,16 @@ function DecisionAssistant() {
                         )}
 
                         {/* 无数据响应：额外提示横幅 */}
-                        {msg.result.response_type === 'no_data' && (
+                        {r.response_type === 'no_data' && (
                           <div style={{ marginTop: 8, padding: '8px 10px', background: '#fff3e0', borderRadius: 6, fontSize: 12 }}>
                             <strong>提示：</strong>未找到相关数据，请尝试调整查询条件或确认数据源已接入。
                           </div>
                         )}
 
                         {/* 证据引用和证据详情：仅 normal 响应展示 */}
-                        {msg.result.response_type !== 'simple' && msg.result.response_type !== 'no_data' && (
+                        {r.response_type !== 'simple' && r.response_type !== 'no_data' && (
                           <>
-                            {msg.result.evidence_citations?.length > 0 && (
+                            {r.evidence_citations?.length > 0 && (
                               <div style={{ marginTop: 8 }}>
                                 <h4
                                   onClick={() => toggleSection(`citations-${msg.id}`)}
@@ -397,7 +410,7 @@ function DecisionAssistant() {
                                 </h4>
                                 {expandedSections[`citations-${msg.id}`] && (
                                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
-                                    {msg.result.evidence_citations.map((cit, idx) => (
+                                    {r.evidence_citations.map((cit, idx) => (
                                       <span key={idx} style={{
                                         fontSize: 11, padding: '2px 8px', background: '#eef',
                                         borderRadius: 12, color: '#446',
@@ -410,7 +423,7 @@ function DecisionAssistant() {
                               </div>
                             )}
 
-                            {msg.result.evidence?.length > 0 && (
+                            {r.evidence?.length > 0 && (
                               <div style={{ marginTop: 8 }}>
                                 <h4
                                   onClick={() => toggleSection(`details-${msg.id}`)}
@@ -420,7 +433,7 @@ function DecisionAssistant() {
                                 </h4>
                                 {expandedSections[`details-${msg.id}`] && (
                                   <ul style={{ marginTop: 6, marginBottom: 0 }}>
-                                    {msg.result.evidence.map((e) => (
+                                    {r.evidence.map((e) => (
                                       <li key={e.evidence_id} style={{ fontSize: 12, marginBottom: 4 }}>
                                         <span style={{ color: '#888' }}>[{e.source_type}]</span>{' '}
                                         {e.citation && <span style={{ color: '#446', fontWeight: 600 }}>{e.citation}</span>}
@@ -434,21 +447,21 @@ function DecisionAssistant() {
                           </>
                         )}
 
-                        {msg.result.skill_trace && msg.result.skill_trace.length > 0 && (
+                        {r.skill_trace && r.skill_trace.length > 0 && (
                           <div style={{ marginTop: 8 }}>
                             <h4
                               onClick={() => toggleSection(`skill-trace-${msg.id}`)}
                               style={{ cursor: 'pointer', userSelect: 'none', fontSize: 13, margin: 0 }}
                             >
                               {expandedSections[`skill-trace-${msg.id}`] ? '▼ ' : '▶ '}
-                              Skill 执行过程 ({msg.result.skill_trace.length} 步)
-                              {msg.result.decision_mode === 'skill_reasoning' && (
+                              Skill 执行过程 ({r.skill_trace.length} 步)
+                              {r.decision_mode === 'skill_reasoning' && (
                                 <span style={{ fontSize: 11, marginLeft: 8, color: '#888' }}>Skill 推理模式</span>
                               )}
                             </h4>
                             {expandedSections[`skill-trace-${msg.id}`] && (
                               <div style={{ marginTop: 6 }}>
-                                {msg.result.skill_trace.map((trace, idx) => (
+                                {r.skill_trace.map((trace, idx) => (
                                   <div key={idx} style={{
                                     marginBottom: 6, padding: '6px 10px',
                                     background: trace.success ? '#f0f7f0' : '#fff0f0',
@@ -475,7 +488,8 @@ function DecisionAssistant() {
                           </div>
                         )}
                       </div>
-                    )}
+                      );
+                    })()}
                   </>
                 )}
               </div>

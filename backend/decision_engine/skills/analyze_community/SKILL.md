@@ -1,8 +1,12 @@
 ---
 name: analyze_community
-description: 检测知识图谱中的社区结构，识别紧密关联的实体群组。无需参数。
+description: 检测知识图谱中的社区结构，识别紧密关联的实体群组。可通过 max_nodes 控制分析规模。
 category: analysis
-parameters: []
+parameters:
+  - name: max_nodes
+    type: integer
+    description: 分析节点数上限（默认5000，最大50000）
+    required: false
 ---
 
 # 社区检测

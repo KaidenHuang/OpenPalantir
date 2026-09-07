@@ -14,7 +14,7 @@ router = APIRouter()
 
 
 @router.get("/models")
-async def get_all_models():
+def get_all_models():
     """
     获取所有模型列表
     
@@ -42,7 +42,7 @@ async def get_all_models():
 
 
 @router.get("/models/{model_id}")
-async def get_model(model_id: int):
+def get_model(model_id: int):
     """
     获取单个模型详情
     
@@ -77,7 +77,7 @@ async def get_model(model_id: int):
 
 
 @router.post("/models")
-async def create_model(
+def create_model(
     name: str = Body(...),
     type: str = Body(...),
     status: str = Body("unknown"),
@@ -142,7 +142,7 @@ async def create_model(
 
 
 @router.put("/models/{model_id}")
-async def update_model(
+def update_model(
     model_id: int,
     name: str = Body(None),
     type: str = Body(None),
@@ -215,7 +215,7 @@ async def update_model(
 
 
 @router.delete("/models/{model_id}")
-async def delete_model(model_id: int):
+def delete_model(model_id: int):
     """
     删除模型
     
@@ -250,7 +250,7 @@ async def delete_model(model_id: int):
 
 
 @router.post("/models/{model_id}/test-connection")
-async def test_model_connection(
+def test_model_connection(
     model_id: int, 
     api_url: str = Body(...), 
     api_key: str = Body(""), 
@@ -310,7 +310,7 @@ async def test_model_connection(
 
 
 @router.post("/models/{model_id}/enable")
-async def enable_model(model_id: int):
+def enable_model(model_id: int):
     """
     启用指定模型，同时禁用其他所有模型
 

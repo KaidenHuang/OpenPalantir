@@ -35,7 +35,7 @@ def _get_entity_or_404(entity_id: str) -> dict:
 # ═══════════════════════════════════════════
 
 @router.get("/nodes")
-async def list_nodes(
+def list_nodes(
     page: int = Query(1, ge=1, description="页码"),
     limit: int = Query(50000, ge=1, le=50000, description="每页条数"),
     entity_type: Optional[str] = Query(None, description="实体类型"),
@@ -73,7 +73,7 @@ async def list_nodes(
 
 
 @router.get("/nodes/{entity_id}")
-async def get_node(entity_id: str):
+def get_node(entity_id: str):
     """获取节点/实体详情"""
     try:
         logger.debug(f"接收获取节点详情请求: entity_id={entity_id}")
@@ -89,7 +89,7 @@ async def get_node(entity_id: str):
 
 
 @router.post("/nodes/search")
-async def search_nodes(request: EntitySearchRequest):
+def search_nodes(request: EntitySearchRequest):
     """搜索节点/实体"""
     try:
         logger.info(f"接收搜索节点请求: query={request.query}, page={request.page}, limit={request.limit}, entity_type={request.entity_type}")
@@ -122,7 +122,7 @@ async def search_nodes(request: EntitySearchRequest):
 
 
 @router.post("/nodes")
-async def add_node(entity: dict = Body(...)):
+def add_node(entity: dict = Body(...)):
     """添加单个节点/实体"""
     try:
         entity_name = entity.get("name", "unknown")
@@ -137,7 +137,7 @@ async def add_node(entity: dict = Body(...)):
 
 
 @router.post("/nodes/batch")
-async def batch_add_nodes(entities: list = Body(...)):
+def batch_add_nodes(entities: list = Body(...)):
     """批量添加节点/实体"""
     try:
         logger.debug(f"接收批量添加节点请求: count={len(entities)}")
@@ -152,7 +152,7 @@ async def batch_add_nodes(entities: list = Body(...)):
 
 
 @router.put("/nodes/{entity_id}")
-async def update_node(entity_id: str, request: EntityUpdateRequest):
+def update_node(entity_id: str, request: EntityUpdateRequest):
     """更新节点/实体"""
     try:
         update_data = request.dict(exclude_unset=True)
@@ -175,7 +175,7 @@ async def update_node(entity_id: str, request: EntityUpdateRequest):
 
 
 @router.delete("/nodes/{entity_id}")
-async def delete_node(entity_id: str):
+def delete_node(entity_id: str):
     """删除节点/实体"""
     try:
         logger.info(f"接收删除节点请求: entity_id={entity_id}")
@@ -194,7 +194,7 @@ async def delete_node(entity_id: str):
 
 
 @router.get("/nodes/{entity_id}/relationships")
-async def get_node_relationships(entity_id: str):
+def get_node_relationships(entity_id: str):
     """获取节点关联的关系"""
     try:
         logger.debug(f"接收获取节点关系请求: entity_id={entity_id}")
@@ -218,7 +218,7 @@ async def get_node_relationships(entity_id: str):
 # ═══════════════════════════════════════════
 
 @router.get("/edges")
-async def get_edges(limit: int = Query(50000, ge=1, le=50000, description="返回边数上限")):
+def get_edges(limit: int = Query(50000, ge=1, le=50000, description="返回边数上限")):
     """获取图谱边（支持 limit 限制，默认 50000=全量，最大 50000）"""
     try:
         logger.debug(f"接收获取图谱边请求, limit={limit}")
@@ -232,7 +232,7 @@ async def get_edges(limit: int = Query(50000, ge=1, le=50000, description="返�
 
 
 @router.get("/graph-data")
-async def get_graph_visualization_data(
+def get_graph_visualization_data(
     entity_types: Optional[str] = Query(None, description="逗号分隔的实体类型，如 person,organization。不传=所有类型"),
     min_edges: int = Query(1, ge=0, le=20, description="最少关联边数，0=含孤立点，默认1=过滤孤立点"),
     max_nodes: int = Query(5000, ge=100, le=10000, description="最大返回节点数")
@@ -263,7 +263,7 @@ async def get_graph_visualization_data(
 # ═══════════════════════════════════════════
 
 @router.post("/relationships")
-async def add_relationship(relationship: dict = Body(...)):
+def add_relationship(relationship: dict = Body(...)):
     """添加单个关系"""
     try:
         source = relationship.get("source", relationship.get("subject", "unknown"))
@@ -280,7 +280,7 @@ async def add_relationship(relationship: dict = Body(...)):
 
 
 @router.post("/relationships/batch")
-async def batch_add_relationships(relationships: list = Body(...), use_create: bool = False):
+def batch_add_relationships(relationships: list = Body(...), use_create: bool = False):
     """批量添加关系
 
     Args:
@@ -303,7 +303,7 @@ async def batch_add_relationships(relationships: list = Body(...), use_create: b
 # ═══════════════════════════════════════════
 
 @router.post("/query")
-async def query_graph(query: str = Body(..., description="Cypher 查询语句")):
+def query_graph(query: str = Body(..., description="Cypher 查询语句")):
     """执行 Cypher 查询"""
     try:
         logger.debug(f"接收查询图谱请求: query={query}")
@@ -317,7 +317,7 @@ async def query_graph(query: str = Body(..., description="Cypher 查询语句"))
 
 
 @router.post("/export")
-async def export_graph(format: str = Body("json", description="导出格式")):
+def export_graph(format: str = Body("json", description="导出格式")):
     """导出图谱"""
     try:
         logger.debug(f"接收导出图谱请求: format={format}")
@@ -344,7 +344,7 @@ async def export_graph(format: str = Body("json", description="导出格式")):
 # ═══════════════════════════════════════════
 
 @router.post("/partition")
-async def partition_graph(method: str = Body("louvain", description="分区方法")):
+def partition_graph(method: str = Body("louvain", description="分区方法")):
     """分区图谱"""
     try:
         logger.debug(f"接收分区图谱请求: method={method}")
@@ -358,7 +358,7 @@ async def partition_graph(method: str = Body("louvain", description="分区方�
 
 
 @router.post("/compress")
-async def compress_graph(compression_ratio: float = Body(0.5, description="压缩比率")):
+def compress_graph(compression_ratio: float = Body(0.5, description="压缩比率")):
     """压缩图谱"""
     try:
         logger.debug(f"接收压缩图谱请求: compression_ratio={compression_ratio}")
@@ -372,7 +372,7 @@ async def compress_graph(compression_ratio: float = Body(0.5, description="压�
 
 
 @router.get("/meta-graph")
-async def get_meta_graph():
+def get_meta_graph():
     """创建元图谱"""
     try:
         logger.debug("接收创建元图谱请求")
@@ -386,7 +386,7 @@ async def get_meta_graph():
 
 
 @router.get("/partition/{entity_name}")
-async def get_entity_partition(entity_name: str):
+def get_entity_partition(entity_name: str):
     """获取实体所在分区"""
     try:
         logger.debug(f"接收获取实体分区请求: entity_name={entity_name}")
@@ -404,7 +404,7 @@ async def get_entity_partition(entity_name: str):
 # ═══════════════════════════════════════════
 
 @router.post("/optimize/schema")
-async def optimize_schema():
+def optimize_schema():
     """优化图谱 schema（创建索引等）"""
     try:
         logger.debug("接收优化 schema 请求")
@@ -418,7 +418,7 @@ async def optimize_schema():
 
 
 @router.post("/optimize/clear-cache")
-async def clear_cache():
+def clear_cache():
     """清除缓存"""
     try:
         logger.debug("接收清除缓存请求")
@@ -432,7 +432,7 @@ async def clear_cache():
 
 
 @router.post("/optimize/query-performance")
-async def get_query_performance(query: str = Body(..., description="Cypher 查询语句")):
+def get_query_performance(query: str = Body(..., description="Cypher 查询语句")):
     """获取查询性能信息"""
     try:
         logger.debug(f"接收获取查询性能信息请求: query={query}")

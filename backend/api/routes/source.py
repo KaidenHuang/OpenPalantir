@@ -14,7 +14,7 @@ router = APIRouter()
 
 
 @router.post("/sources")
-async def create_source(data: dict = Body(...), db: Session = Depends(get_db)):
+def create_source(data: dict = Body(...), db: Session = Depends(get_db)):
     """创建文档源（本地路径或S3 URI）"""
     try:
         name = data.get("name", "").strip()
@@ -63,7 +63,7 @@ async def create_source(data: dict = Body(...), db: Session = Depends(get_db)):
 
 
 @router.get("/sources")
-async def list_sources(include_deleted: bool = False, db: Session = Depends(get_db)):
+def list_sources(include_deleted: bool = False, db: Session = Depends(get_db)):
     """列出所有文档源"""
     try:
         query = db.query(DocumentSource)
@@ -91,7 +91,7 @@ async def list_sources(include_deleted: bool = False, db: Session = Depends(get_
 
 
 @router.delete("/sources/{source_id}")
-async def delete_source(source_id: str, db: Session = Depends(get_db)):
+def delete_source(source_id: str, db: Session = Depends(get_db)):
     """删除文档源。无提取数据时直接删除，有数据时标记删除"""
     try:
         from datetime import datetime
@@ -128,7 +128,7 @@ async def delete_source(source_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/sources/{source_id}/restore")
-async def restore_source(source_id: str, db: Session = Depends(get_db)):
+def restore_source(source_id: str, db: Session = Depends(get_db)):
     """恢复已删除的文档源"""
     try:
         source = db.query(DocumentSource).filter(
@@ -152,7 +152,7 @@ async def restore_source(source_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/sources/{source_id}/browse")
-async def browse_source(source_id: str, prefix: str = "", db: Session = Depends(get_db)):
+def browse_source(source_id: str, prefix: str = "", db: Session = Depends(get_db)):
     """浏览文档源目录（列出文件+子目录）"""
     try:
         source = db.query(DocumentSource).filter(DocumentSource.id == source_id).first()
@@ -209,7 +209,7 @@ async def browse_source(source_id: str, prefix: str = "", db: Session = Depends(
 
 
 @router.post("/sources/{source_id}/summarize")
-async def summarize_file(source_id: str, data: dict = Body(...), db: Session = Depends(get_db)):
+def summarize_file(source_id: str, data: dict = Body(...), db: Session = Depends(get_db)):
     """为源中的某个文件生成 PageIndex 概要（通过异步任务执行）"""
     from task_management.task_manager import task_manager
 
@@ -255,7 +255,7 @@ async def summarize_file(source_id: str, data: dict = Body(...), db: Session = D
 
 
 @router.get("/sources/{source_id}/summary")
-async def get_summary(source_id: str, file: str, db: Session = Depends(get_db)):
+def get_summary(source_id: str, file: str, db: Session = Depends(get_db)):
     """获取已生成的概要内容"""
     try:
         summary_rel_path = file + ".json"
@@ -371,7 +371,7 @@ def _merge_segments_iter(segments, max_chunk: int = 20000, min_size: int = 1000)
 
 
 @router.post("/sources/{source_id}/extract")
-async def extract_from_summary(source_id: str, data: dict = Body(...), db: Session = Depends(get_db)):
+def extract_from_summary(source_id: str, data: dict = Body(...), db: Session = Depends(get_db)):
     """从已生成的概要中提取实体和关系"""
     try:
         file_path = data.get("file", "").strip()
@@ -473,7 +473,7 @@ async def extract_from_summary(source_id: str, data: dict = Body(...), db: Sessi
 
 
 @router.get("/sources/{source_id}/entities")
-async def get_source_entities(source_id: str, file: str, db: Session = Depends(get_db)):
+def get_source_entities(source_id: str, file: str, db: Session = Depends(get_db)):
     """从知识库和图谱中获取已提取的实体和关系"""
     from knowledge_graph.graph_manager import graph_manager
 

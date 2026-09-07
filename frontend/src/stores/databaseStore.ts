@@ -5,7 +5,7 @@
  * 迁移自 DatabaseManagement 和 ERDiagram。
  */
 import { create } from 'zustand';
-import axios from 'axios';
+import { httpGet, httpPost, httpPut, httpDelete } from '../services/httpClient';
 import { API_CONFIG } from '../config/apiConfig';
 import type { DatabaseConnection, DatabaseItem, DbSummary, SchemaResult } from './types';
 
@@ -24,20 +24,20 @@ interface DatabaseState {
   _staleTime: number;
 
   // Actions
-  fetchConnections: (showDeleted?: boolean) => Promise<void>;
+  fetchConnections: (showDeleted?: boolean, signal?: AbortSignal) => Promise<void>;
   setSelectedConnection: (conn: DatabaseConnection | null) => void;
-  fetchDatabases: (connectionId: string) => Promise<void>;
-  fetchSchema: (connectionId: string) => Promise<void>;
-  fetchSummary: (connectionId: string) => Promise<void>;
-  createConnection: (data: Record<string, unknown>) => Promise<void>;
-  updateConnection: (id: string, data: Record<string, unknown>) => Promise<void>;
-  deleteConnection: (id: string) => Promise<void>;
-  restoreConnection: (id: string) => Promise<void>;
-  testConnection: (config: Record<string, unknown>) => Promise<void>;
-  analyzeSchema: (connectionId: string) => Promise<string>;
-  importToGraph: (connectionId: string) => Promise<string>;
-  configureCdc: (connectionId: string) => Promise<void>;
-  startCdc: (connectionId: string) => Promise<void>;
+  fetchDatabases: (connectionId: string, signal?: AbortSignal) => Promise<void>;
+  fetchSchema: (connectionId: string, signal?: AbortSignal) => Promise<void>;
+  fetchSummary: (connectionId: string, signal?: AbortSignal) => Promise<void>;
+  createConnection: (data: Record<string, unknown>, signal?: AbortSignal) => Promise<void>;
+  updateConnection: (id: string, data: Record<string, unknown>, signal?: AbortSignal) => Promise<void>;
+  deleteConnection: (id: string, signal?: AbortSignal) => Promise<void>;
+  restoreConnection: (id: string, signal?: AbortSignal) => Promise<void>;
+  testConnection: (config: Record<string, unknown>, signal?: AbortSignal) => Promise<void>;
+  analyzeSchema: (connectionId: string, signal?: AbortSignal) => Promise<string>;
+  importToGraph: (connectionId: string, signal?: AbortSignal) => Promise<string>;
+  configureCdc: (connectionId: string, signal?: AbortSignal) => Promise<void>;
+  startCdc: (connectionId: string, signal?: AbortSignal) => Promise<void>;
   setImportTaskId: (id: string | null) => void;
 }
 
@@ -52,9 +52,9 @@ export const useDatabaseStore = create<DatabaseState>()((set, get) => ({
   _lastFetched: 0,
   _staleTime: 30_000,
 
-  fetchConnections: async (showDeleted = false) => {
+  fetchConnections: async (showDeleted = false, signal?: AbortSignal) => {
     const params = showDeleted ? { show_deleted: 'true' } : {};
-    const response = await axios.get(API_CONFIG.endpoints.database.connections, { params });
+    const response = await httpGet(API_CONFIG.endpoints.database.connections, { params, signal });
     set({
       connections: (response.data.connections || []) as DatabaseConnection[],
       _lastFetched: Date.now(),
@@ -63,75 +63,82 @@ export const useDatabaseStore = create<DatabaseState>()((set, get) => ({
 
   setSelectedConnection: (conn) => set({ selectedConnection: conn }),
 
-  fetchDatabases: async (connectionId) => {
-    const response = await axios.get(
-      API_CONFIG.endpoints.database.connection(connectionId) + '/databases'
+  fetchDatabases: async (connectionId, signal?: AbortSignal) => {
+    const response = await httpGet(
+      API_CONFIG.endpoints.database.connection(connectionId) + '/databases',
+      { signal }
     );
     set({ databases: (response.data.databases || []) as DatabaseItem[] });
   },
 
-  fetchSchema: async (connectionId) => {
-    const response = await axios.get(
-      API_CONFIG.endpoints.database.analysisResult(connectionId)
+  fetchSchema: async (connectionId, signal?: AbortSignal) => {
+    const response = await httpGet(
+      API_CONFIG.endpoints.database.analysisResult(connectionId),
+      { signal }
     );
     set({ schemaResult: response.data as SchemaResult });
   },
 
-  fetchSummary: async (connectionId) => {
-    const response = await axios.get(
-      API_CONFIG.endpoints.database.summary(connectionId)
+  fetchSummary: async (connectionId, signal?: AbortSignal) => {
+    const response = await httpGet(
+      API_CONFIG.endpoints.database.summary(connectionId),
+      { signal }
     );
     set({ dbSummary: response.data as DbSummary });
   },
 
-  createConnection: async (data) => {
-    await axios.post(API_CONFIG.endpoints.database.connections, data);
+  createConnection: async (data, signal?: AbortSignal) => {
+    await httpPost(API_CONFIG.endpoints.database.connections, data, { signal });
     set({ _lastFetched: 0 });
-    await get().fetchConnections();
+    await get().fetchConnections(undefined, signal);
   },
 
-  updateConnection: async (id, data) => {
-    await axios.put(API_CONFIG.endpoints.database.connection(id), data);
+  updateConnection: async (id, data, signal?: AbortSignal) => {
+    await httpPut(API_CONFIG.endpoints.database.connection(id), data, { signal });
     set({ _lastFetched: 0 });
-    await get().fetchConnections();
+    await get().fetchConnections(undefined, signal);
   },
 
-  deleteConnection: async (id) => {
-    await axios.delete(API_CONFIG.endpoints.database.connection(id));
+  deleteConnection: async (id, signal?: AbortSignal) => {
+    await httpDelete(API_CONFIG.endpoints.database.connection(id), { signal });
     set({ _lastFetched: 0 });
-    await get().fetchConnections();
+    await get().fetchConnections(undefined, signal);
   },
 
-  restoreConnection: async (id) => {
-    await axios.post(API_CONFIG.endpoints.database.restore(id));
+  restoreConnection: async (id, signal?: AbortSignal) => {
+    await httpPost(API_CONFIG.endpoints.database.restore(id), undefined, { signal });
     set({ _lastFetched: 0 });
-    await get().fetchConnections();
+    await get().fetchConnections(undefined, signal);
   },
 
-  testConnection: async (config) => {
-    await axios.post(API_CONFIG.endpoints.database.testConnectionConfig, config);
+  testConnection: async (config, signal?: AbortSignal) => {
+    await httpPost(API_CONFIG.endpoints.database.testConnectionConfig, config, { signal });
   },
 
-  analyzeSchema: async (connectionId) => {
-    const response = await axios.post(
-      API_CONFIG.endpoints.database.analyze(connectionId)
+  analyzeSchema: async (connectionId, signal?: AbortSignal) => {
+    const response = await httpPost(
+      API_CONFIG.endpoints.database.analyze(connectionId),
+      undefined,
+      { signal }
     );
     return response.data.task_id as string;
   },
 
-  importToGraph: async (connectionId) => {
-    const response = await axios.post(
-      API_CONFIG.endpoints.database.import(connectionId)
+  importToGraph: async (connectionId, signal?: AbortSignal) => {
+    const response = await httpPost(
+      API_CONFIG.endpoints.database.import(connectionId),
+      undefined,
+      { signal }
     );
     return response.data.task_id as string;
   },
 
-  configureCdc: async (connectionId) => {
-    await axios.post(API_CONFIG.endpoints.cdc.configure(connectionId));
+  configureCdc: async (connectionId, signal?: AbortSignal) => {
+    await httpPost(API_CONFIG.endpoints.cdc.configure(connectionId), undefined, { signal });
   },
 
-  startCdc: async (connectionId) => {
-    await axios.post(API_CONFIG.endpoints.cdc.startTask(connectionId));
+  startCdc: async (connectionId, signal?: AbortSignal) => {
+    await httpPost(API_CONFIG.endpoints.cdc.startTask(connectionId), undefined, { signal });
   },
 
   setImportTaskId: (id) => set({ importTaskId: id }),

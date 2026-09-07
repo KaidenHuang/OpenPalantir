@@ -179,3 +179,7 @@ class MemoryExtractor:
                 "preferences": all_prefs[-5:],
                 "decisions": all_decs[-5:],
             }
+
+
+# 全局单例
+memory_extractor = MemoryExtractor()

@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import axios from 'axios';
 import { message, Tree, Spin, Modal, Input, Select, Button, Tag, Switch } from 'antd';
 import {
   FolderOutlined, FileOutlined, PlusOutlined, DeleteOutlined,
@@ -7,7 +6,10 @@ import {
 } from '@ant-design/icons';
 import { logger } from '../services/logger';
 import { API_CONFIG } from '../config/apiConfig';
+import { httpGet, httpPost } from '../services/httpClient';
 import { useSourceStore } from '../stores/sourceStore';
+import { useAbortController } from '../hooks/useAbortController';
+import { useSafePolling } from '../hooks/useSafePolling';
 
 interface Source {
   id: string;
@@ -41,10 +43,16 @@ type AxiosErrorLike = { response?: { data?: { detail?: string } }; message?: str
 
 const DocumentViewer: React.FC = () => {
   const {
-    sources, selectedSourceId, fetchSources, createSource,
+    sources, selectedSourceId, fetchSources, createSource, browseFiles: storeBrowseFiles,
     deleteSource: deleteSourceAction, restoreSource: restoreSourceAction,
     setSelectedSourceId, setSelectedFile, setSummary, setEntities,
   } = useSourceStore();
+
+  // 直接从 store 订阅，消除双重状态
+  const files = useSourceStore((s) => s.files) as unknown as FileEntry[];
+  const currentPath = useSourceStore((s) => s.currentPath);
+
+  const { getComponentSignal, getLatestSignal } = useAbortController();
 
   // UI state
   const [sourcesLoading, setSourcesLoading] = useState(false);
@@ -57,9 +65,7 @@ const DocumentViewer: React.FC = () => {
   const [showDeletedSources, setShowDeletedSources] = useState(false);
   const [restoringSourceId, setRestoringSourceId] = useState<string | null>(null);
 
-  // File browser state
-  const [files, setFiles] = useState<FileEntry[]>([]);
-  const [currentPath, setCurrentPath] = useState('');
+  // File browser loading state
   const [filesLoading, setFilesLoading] = useState(false);
 
   // Selected file & summary state (mirrored from store)
@@ -83,10 +89,10 @@ const DocumentViewer: React.FC = () => {
 
   // ── Fetch sources ──────────────────────────────────────────────
 
-  const loadSources = useCallback(async () => {
+  const loadSources = useCallback(async (signal?: AbortSignal) => {
     setSourcesLoading(true);
     try {
-      await fetchSources(showDeletedSources);
+      await fetchSources(showDeletedSources, signal);
     } catch (err) {
       logger.error('DocumentViewer', '获取文档源列表失败', err);
     } finally {
@@ -95,8 +101,9 @@ const DocumentViewer: React.FC = () => {
   }, [fetchSources, showDeletedSources]);
 
   useEffect(() => {
-    loadSources();
-  }, [loadSources]);
+    const signal = getComponentSignal();
+    loadSources(signal);
+  }, [loadSources, getComponentSignal]);
 
   // ── Source CRUD ────────────────────────────────────────────────
 
@@ -124,7 +131,7 @@ const DocumentViewer: React.FC = () => {
       message.success('文档源已删除');
       if (selectedSourceId === sourceId) {
         setSelectedSourceId(null);
-        setFiles([]);
+        useSourceStore.setState({ files: [], currentPath: '' });
         setSelectedFile(null);
         setSummary(null);
         setEntities([]);
@@ -157,28 +164,23 @@ const DocumentViewer: React.FC = () => {
     setSelectedFile(null);
     setSummary(null);
     setEntities([]);
-    setCurrentPath('');
 
     if (!sourceId) {
-      setFiles([]);
+      // 清空 store 的文件列表
+      useSourceStore.setState({ files: [], currentPath: '' });
       return;
     }
 
     await browseFiles(sourceId, '');
   };
 
-  const browseFiles = async (sourceId: string, prefix: string) => {
+  const browseFiles = async (sourceId: string, prefix: string, signal?: AbortSignal) => {
     setFilesLoading(true);
     try {
-      const res = await axios.get(API_CONFIG.endpoints.source.browse(sourceId), {
-        params: { prefix },
-      });
-      setFiles(res.data.entries || []);
-      setCurrentPath(res.data.current_path || '');
+      await storeBrowseFiles(sourceId, prefix, signal);
     } catch (err: unknown) {
       const e = err as AxiosErrorLike;
       message.error(`浏览失败: ${e.response?.data?.detail || e.message}`);
-      setFiles([]);
     } finally {
       setFilesLoading(false);
     }
@@ -197,9 +199,10 @@ const DocumentViewer: React.FC = () => {
     setTaskId(null);
     setSummarizing(false);
 
+    const signal = getLatestSignal('file');
     await Promise.all([
-      loadSummary(selectedSourceId, entry.path),
-      loadEntities(selectedSourceId, entry.path),
+      loadSummary(selectedSourceId, entry.path, signal),
+      loadEntities(selectedSourceId, entry.path, signal),
     ]);
   };
 
@@ -213,11 +216,12 @@ const DocumentViewer: React.FC = () => {
 
   // ── Summary ────────────────────────────────────────────────────
 
-  const loadSummary = async (sourceId: string, file: string) => {
+  const loadSummary = async (sourceId: string, file: string, signal?: AbortSignal) => {
     setSummaryLoading(true);
     try {
-      const res = await axios.get(API_CONFIG.endpoints.source.summary(sourceId), {
+      const res = await httpGet(API_CONFIG.endpoints.source.summary(sourceId), {
         params: { file },
+        signal,
       });
       const data = res.data.summary;
       setSummary(data);
@@ -228,10 +232,11 @@ const DocumentViewer: React.FC = () => {
     }
   };
 
-  const loadEntities = async (sourceId: string, file: string) => {
+  const loadEntities = async (sourceId: string, file: string, signal?: AbortSignal) => {
     try {
-      const res = await axios.get(API_CONFIG.endpoints.source.entities(sourceId), {
+      const res = await httpGet(API_CONFIG.endpoints.source.entities(sourceId), {
         params: { file },
+        signal,
       });
       const data = res.data.entities || [];
       if (data.length > 0) {
@@ -246,9 +251,11 @@ const DocumentViewer: React.FC = () => {
     if (!selectedSourceId || !selectedFile) return;
     setSummarizing(true);
     try {
-      const res = await axios.post(
+      const signal = getComponentSignal();
+      const res = await httpPost(
         API_CONFIG.endpoints.source.summarize(selectedSourceId),
-        { file: selectedFile }
+        { file: selectedFile },
+        { signal }
       );
       setTaskId(res.data.task_id);
     } catch (err: unknown) {
@@ -258,47 +265,35 @@ const DocumentViewer: React.FC = () => {
     }
   };
 
-  // Poll task status for document summary generation
-  useEffect(() => {
-    if (!taskId) return;
+  // Poll task status for document summary generation — 使用 useSafePolling
+  useSafePolling(async () => {
+    const signal = getComponentSignal();
+    const response = await httpGet(API_CONFIG.endpoints.task.get(taskId!), { signal });
+    const status = response.data.status;
 
-    const interval = setInterval(async () => {
-      try {
-        const response = await axios.get(API_CONFIG.endpoints.task.get(taskId));
-        const status = response.data.status;
-
-        if (status === 'completed') {
-          clearInterval(interval);
-          setTaskId(null);
-          setSummarizing(false);
-          if (selectedSourceId && selectedFile) {
-            await loadSummary(selectedSourceId, selectedFile);
-          }
-          message.success('概要生成成功');
-        } else if (status === 'failed') {
-          clearInterval(interval);
-          setTaskId(null);
-          setSummarizing(false);
-          message.error(`概要生成失败: ${response.data.error || '未知错误'}`);
-        }
-      } catch (error) {
-        clearInterval(interval);
-        setTaskId(null);
-        setSummarizing(false);
-        message.error('获取任务状态失败');
+    if (status === 'completed') {
+      setTaskId(null);
+      setSummarizing(false);
+      if (selectedSourceId && selectedFile) {
+        await loadSummary(selectedSourceId, selectedFile);
       }
-    }, 2000);
-
-    return () => clearInterval(interval);
-  }, [taskId, selectedSourceId, selectedFile]); // eslint-disable-line react-hooks/exhaustive-deps
+      message.success('概要生成成功');
+    } else if (status === 'failed') {
+      setTaskId(null);
+      setSummarizing(false);
+      message.error(`概要生成失败: ${response.data.error || '未知错误'}`);
+    }
+  }, 2000, !!taskId);
 
   const handleExtract = async () => {
     if (!selectedSourceId || !selectedFile) return;
     setExtracting(true);
     try {
-      const res = await axios.post(
+      const signal = getComponentSignal();
+      const res = await httpPost(
         API_CONFIG.endpoints.source.extract(selectedSourceId),
-        { file: selectedFile }
+        { file: selectedFile },
+        { signal }
       );
       setEntities(res.data.entities || []);
       message.success(`实体提取完成: ${res.data.entity_count} 个实体, ${res.data.relationship_count} 个关系`);
@@ -380,7 +375,7 @@ const DocumentViewer: React.FC = () => {
               删除源
             </Button>
           )}
-          <Button icon={<ReloadOutlined />} onClick={loadSources}>
+          <Button icon={<ReloadOutlined />} onClick={() => loadSources()}>
             刷新
           </Button>
           <Input.Search

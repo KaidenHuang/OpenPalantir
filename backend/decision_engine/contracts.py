@@ -1,5 +1,4 @@
 import json
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -75,32 +74,43 @@ class DecisionAnswer(BaseModel):
     options: List[Dict[str, Any]] = Field(default_factory=list)
     recommendation: str = ""
     work_orders: List[WorkOrder] = Field(default_factory=list)
+    confidence: float = 0.0
+    confidence_reason: str = ""
 
     @classmethod
     def from_dict(cls, data: dict) -> "DecisionAnswer":
-        """从 LLM 返回的 dict 解析 DecisionAnswer（LLMReasoner 和 ToolReasoner 共用）"""
+        """从 LLM 返回的 dict 解析 DecisionAnswer"""
         work_orders = []
-        for wo in data.get("work_orders", []):
+        for wo in data.get("work_orders") or []:
             if isinstance(wo, dict):
                 work_orders.append(WorkOrder(**wo))
             else:
                 logger.warning(f"[decision_answer] 跳过非 dict 类型的 work_order: {type(wo).__name__}")
 
-        rec = data.get("recommendation", "")
+        rec = data.get("recommendation")
         if isinstance(rec, dict):
             rec = json.dumps(rec, ensure_ascii=False)
+        elif rec is None:
+            rec = ""
 
-        situation = data.get("situation_analysis", "")
+        situation = data.get("situation_analysis")
         if isinstance(situation, dict):
             situation = json.dumps(situation, ensure_ascii=False)
+        elif situation is None:
+            situation = ""
+
+        confidence = float(data.get("confidence") or 0.0)
+        confidence = max(0.0, min(1.0, confidence))
 
         return cls(
-            summary=str(data.get("summary", situation))[:500],
+            summary=str(data.get("summary") or situation or "")[:500],
             situation_analysis=situation,
-            key_issues=data.get("key_issues", []),
-            options=data.get("options", []),
+            key_issues=data.get("key_issues") or [],
+            options=data.get("options") or [],
             recommendation=rec,
             work_orders=work_orders,
+            confidence=confidence,
+            confidence_reason=str(data.get("confidence_reason") or ""),
         )
 
 
@@ -164,6 +174,8 @@ class DecisionResponse(BaseModel):
     evidence_citations: List[EvidenceCitation] = Field(default_factory=list)
     answer: DecisionAnswer = Field(default_factory=DecisionAnswer)
     skill_trace: List[ToolTrace] = Field(default_factory=list)
-    decision_mode: str = "rag_pipeline"  # "rag_pipeline" | "skill_reasoning"
-    response_type: str = "normal"  # "normal" | "simple" | "no_data"
+    decision_mode: str = "agentic_rag"
+    response_type: str = "normal"
+    confidence: float = 0.0
+    needs_human_review: bool = False
     metadata: Dict[str, Any] = Field(default_factory=dict)

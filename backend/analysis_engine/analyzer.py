@@ -10,11 +10,11 @@ class Analyzer:
     def __init__(self):
         pass
     
-    def analyze_path(self, source_entity, target_entity, k=1, weighted=False):
+    def analyze_path(self, source_entity, target_entity, k=1, weighted=False, max_nodes: int = 5000):
         """分析路径"""
         try:
             # 构建图
-            G = self._build_graph()
+            G = self._build_graph(max_nodes=max_nodes)
             
             # 查找路径
             if source_entity in G and target_entity in G:
@@ -106,11 +106,11 @@ class Analyzer:
         except Exception as e:
             raise ValueError(f"路径分析失败: {str(e)}")
     
-    def analyze_community(self):
+    def analyze_community(self, max_nodes: int = 5000):
         """分析社区"""
         try:
             # 构建图
-            G = self._build_graph()
+            G = self._build_graph(max_nodes=max_nodes)
             
             # 将有向图转换为无向图（Louvain算法只支持无向图）
             G = G.to_undirected()
@@ -173,11 +173,11 @@ class Analyzer:
         except Exception as e:
             raise ValueError(f"社区分析失败: {str(e)}")
     
-    def analyze_centrality(self, centrality_types=None):
+    def analyze_centrality(self, centrality_types=None, max_nodes: int = 5000):
         """分析中心性"""
         try:
             # 构建图
-            G = self._build_graph()
+            G = self._build_graph(max_nodes=max_nodes)
             
             # 默认计算所有中心性类型
             if centrality_types is None:
@@ -188,10 +188,11 @@ class Analyzer:
             if 'degree' in centrality_types:
                 degree_centrality = nx.degree_centrality(G)
             
-            # 计算介数中心性
-            betweenness_centrality = {}  
+            # 计算介数中心性（大图使用采样近似）
+            betweenness_centrality = {}
             if 'betweenness' in centrality_types:
-                betweenness_centrality = nx.betweenness_centrality(G)
+                k_samples = min(200, len(G)) if len(G) > 500 else None
+                betweenness_centrality = nx.betweenness_centrality(G, k=k_samples)
             
             # 计算 closeness 中心性
             closeness_centrality = {}  
@@ -394,11 +395,15 @@ class Analyzer:
         except Exception as e:
             raise ValueError(f"报告生成失败: {str(e)}")
     
-    def _build_graph(self):
-        """从图谱数据库构建NetworkX图"""
+    def _build_graph(self, max_nodes: int = 5000):
+        """从图谱数据库构建NetworkX图
+
+        Args:
+            max_nodes: 节点数上限，默认 5000
+        """
         # 获取节点和边
-        nodes = graph_manager.get_nodes()
-        edges = graph_manager.get_edges()
+        nodes = graph_manager.get_nodes(limit=max_nodes)
+        edges = graph_manager.get_edges(limit=max_nodes * 2)
         
         # 创建NetworkX图
         G = nx.DiGraph()

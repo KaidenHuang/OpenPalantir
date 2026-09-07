@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import { httpPost } from '../services/httpClient';
 import { API_CONFIG } from '../config/apiConfig';
 import './AnalysisDashboard.css';
 
@@ -11,7 +11,7 @@ interface AnalysisResult {
 const AnalysisDashboard: React.FC = () => {
   const [activeAnalysis, setActiveAnalysis] = useState('path');
   const [analysisResults, setAnalysisResults] = useState<AnalysisResult[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loadingType, setLoadingType] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   
   // 路径分析参数
@@ -38,15 +38,15 @@ const AnalysisDashboard: React.FC = () => {
     }
 
     try {
-      setLoading(true);
+      setLoadingType('path');
       setError(null);
-      const response = await axios.post(API_CONFIG.endpoints.analysis.path, {
+      const response = await httpPost(API_CONFIG.endpoints.analysis.path, {
         source_entity: sourceEntity,
         target_entity: targetEntity,
         k: pathK,
         weighted: pathWeighted
       });
-      
+
       setAnalysisResults([{
         type: 'path',
         data: response.data
@@ -55,17 +55,17 @@ const AnalysisDashboard: React.FC = () => {
       setError(`路径分析失败: ${(error as Error).message || '未知错误'}`);
       console.error('Error running path analysis:', error);
     } finally {
-      setLoading(false);
+      setLoadingType(null);
     }
   };
 
   // 执行社区分析
   const runCommunityAnalysis = async () => {
     try {
-      setLoading(true);
+      setLoadingType('community');
       setError(null);
-      const response = await axios.post(API_CONFIG.endpoints.analysis.community);
-      
+      const response = await httpPost(API_CONFIG.endpoints.analysis.community);
+
       setAnalysisResults([{
         type: 'community',
         data: response.data
@@ -74,19 +74,19 @@ const AnalysisDashboard: React.FC = () => {
       setError(`社区分析失败: ${(error as Error).message || '未知错误'}`);
       console.error('Error running community analysis:', error);
     } finally {
-      setLoading(false);
+      setLoadingType(null);
     }
   };
 
   // 执行中心性分析
   const runCentralityAnalysis = async () => {
     try {
-      setLoading(true);
+      setLoadingType('centrality');
       setError(null);
-      const response = await axios.post(API_CONFIG.endpoints.analysis.centrality, {
+      const response = await httpPost(API_CONFIG.endpoints.analysis.centrality, {
         centrality_types: centralityTypes
       });
-      
+
       setAnalysisResults([{
         type: 'centrality',
         data: response.data
@@ -95,20 +95,20 @@ const AnalysisDashboard: React.FC = () => {
       setError(`中心性分析失败: ${(error as Error).message || '未知错误'}`);
       console.error('Error running centrality analysis:', error);
     } finally {
-      setLoading(false);
+      setLoadingType(null);
     }
   };
 
   // 执行趋势分析
   const runTrendAnalysis = async () => {
     try {
-      setLoading(true);
+      setLoadingType('trend');
       setError(null);
-      const response = await axios.post(API_CONFIG.endpoints.analysis.trend, {
+      const response = await httpPost(API_CONFIG.endpoints.analysis.trend, {
         time_range: timeRange,
         metrics: trendMetrics
       });
-      
+
       setAnalysisResults([{
         type: 'trend',
         data: response.data
@@ -117,20 +117,20 @@ const AnalysisDashboard: React.FC = () => {
       setError(`趋势分析失败: ${(error as Error).message || '未知错误'}`);
       console.error('Error running trend analysis:', error);
     } finally {
-      setLoading(false);
+      setLoadingType(null);
     }
   };
 
   // 生成分析报告
   const generateReport = async () => {
     try {
-      setLoading(true);
+      setLoadingType('report');
       setError(null);
-      const response = await axios.post(API_CONFIG.endpoints.analysis.report, {
+      const response = await httpPost(API_CONFIG.endpoints.analysis.report, {
         analysis_type: activeAnalysis,
         format: reportFormat
       });
-      
+
       setAnalysisResults([{
         type: 'report',
         data: response.data
@@ -139,7 +139,7 @@ const AnalysisDashboard: React.FC = () => {
       setError(`报告生成失败: ${(error as Error).message || '未知错误'}`);
       console.error('Error generating report:', error);
     } finally {
-      setLoading(false);
+      setLoadingType(null);
     }
   };
 
@@ -422,15 +422,15 @@ const AnalysisDashboard: React.FC = () => {
                 />
                 加权路径
               </label>
-              <button onClick={runPathAnalysis} disabled={loading}>
-                {loading ? '分析中...' : '执行分析'}
+              <button onClick={runPathAnalysis} disabled={loadingType !== null}>
+                {loadingType === 'path' ? '分析中...' : '执行分析'}
               </button>
             </div>
           )}
 
           {activeAnalysis === 'community' && (
-            <button onClick={runCommunityAnalysis} disabled={loading}>
-              {loading ? '分析中...' : '执行分析'}
+            <button onClick={runCommunityAnalysis} disabled={loadingType !== null}>
+              {loadingType === 'community' ? '分析中...' : '执行分析'}
             </button>
           )}
 
@@ -454,8 +454,8 @@ const AnalysisDashboard: React.FC = () => {
                   </label>
                 ))}
               </div>
-              <button onClick={runCentralityAnalysis} disabled={loading || centralityTypes.length === 0}>
-                {loading ? '分析中...' : '执行分析'}
+              <button onClick={runCentralityAnalysis} disabled={loadingType !== null || centralityTypes.length === 0}>
+                {loadingType === 'centrality' ? '分析中...' : '执行分析'}
               </button>
             </div>
           )}
@@ -491,8 +491,8 @@ const AnalysisDashboard: React.FC = () => {
                   </label>
                 ))}
               </div>
-              <button onClick={runTrendAnalysis} disabled={loading || trendMetrics.length === 0}>
-                {loading ? '分析中...' : '执行分析'}
+              <button onClick={runTrendAnalysis} disabled={loadingType !== null || trendMetrics.length === 0}>
+                {loadingType === 'trend' ? '分析中...' : '执行分析'}
               </button>
             </div>
           )}
@@ -505,8 +505,8 @@ const AnalysisDashboard: React.FC = () => {
               <option value="html">HTML格式</option>
               <option value="markdown">Markdown格式</option>
             </select>
-            <button onClick={generateReport} disabled={loading}>
-              {loading ? '生成中...' : '生成报告'}
+            <button onClick={generateReport} disabled={loadingType !== null}>
+              {loadingType === 'report' ? '生成中...' : '生成报告'}
             </button>
           </div>
         </div>
@@ -520,7 +520,7 @@ const AnalysisDashboard: React.FC = () => {
       )}
 
       <div className="analysis-results">
-        {loading ? (
+        {loadingType !== null ? (
           <div className="analysis-loading">
             <div className="loading-spinner"></div>
             <p>分析中...</p>

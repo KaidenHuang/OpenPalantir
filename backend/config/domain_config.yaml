@@ -1,0 +1,63 @@
+# 领域配置 — 替代原有的插件层
+# DecisionKernel 读取此文件获取领域信息
+
+domains:
+  general:
+    description: 通用分析领域
+    entity_types:
+      - name: person
+        description: 人名
+      - name: organization
+        description: 组织（公司/机构/部门）
+      - name: location
+        description: 地点（国家/城市/区域）
+      - name: event
+        description: 事件（会议/活动/项目）
+      - name: concept
+        description: 抽象概念（政策/理论/制度/行业术语）
+    skill_domains: [general]
+
+  workforce:
+    description: 人力资源领域
+    entity_types:
+      - name: person
+        description: 员工/候选人
+      - name: organization
+        description: 部门/团队/公司
+      - name: location
+        description: 办公地点
+      - name: event
+        description: 人事变动（入职/离职/调岗/晋升）
+      - name: concept
+        description: 人力资源概念（绩效/薪资/制度/培训）
+    skill_domains: [general, workforce]
+
+  finance:
+    description: 金融风控领域
+    entity_types:
+      - name: customer
+        description: 客户（个人/企业客户）
+      - name: transaction
+        description: 交易（转账/支付/消费记录）
+      - name: account
+        description: 账户（银行账户/信用账户）
+      - name: institution
+        description: 机构（银行/支付机构/监管机构）
+      - name: event
+        description: 风险事件（逾期/违约/异常交易）
+    skill_domains: [general]
+
+  medical:
+    description: 医疗知识领域
+    entity_types:
+      - name: disease
+        description: 疾病（病症/综合征）
+      - name: drug
+        description: 药物（药品/处方药）
+      - name: symptom
+        description: 症状（临床表现/体征）
+      - name: department
+        description: 科室（医院科室/专科）
+      - name: person
+        description: 人员（患者/医生）
+    skill_domains: [general]

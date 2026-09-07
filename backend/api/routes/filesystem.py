@@ -61,7 +61,7 @@ def _list_directory(path: str):
 
 
 @router.get("/browse")
-async def browse_filesystem(path: str = ""):
+def browse_filesystem(path: str = ""):
     """浏览文件系统，返回指定路径下的文件和目录列表"""
     try:
         # 空路径或根路径 → 返回驱动器列表

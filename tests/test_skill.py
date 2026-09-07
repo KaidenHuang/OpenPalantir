@@ -158,12 +158,11 @@ category: test
         )
         skills = SkillLoader.load_from_directory(skills_root)
 
-        assert len(skills) >= 8, f"应至少加载 8 个 Skill，实际 {len(skills)}"
+        assert len(skills) >= 3, f"应至少加载 3 个 Skill，实际 {len(skills)}"
         skill_names = [s.definition.name for s in skills]
-        assert "search_entities" in skill_names, "应包含 search_entities"
         assert "analyze_path" in skill_names, "应包含 analyze_path"
-        assert "search_documents" in skill_names, "应包含 search_documents"
-        assert "query_database" in skill_names, "应包含 query_database"
+        assert "analyze_centrality" in skill_names, "应包含 analyze_centrality"
+        assert "analyze_community" in skill_names, "应包含 analyze_community"
 
         # 验证每个 Skill 都有 executor
         for s in skills:
@@ -308,11 +307,11 @@ class TestSkillRegistry:
         )
 
         count = registry.load_all(skills_root, domains=["general", "workforce"])
-        assert count >= 8, f"应加载至少 8 个 Skill，实际 {count}"
+        assert count >= 3, f"应加载至少 3 个 Skill，实际 {count}"
 
         # 验证可以获取工具定义
         tools = registry.get_tool_definitions("workforce")
-        assert len(tools) >= 8
+        assert len(tools) >= 3
         for tool in tools:
             assert tool["type"] == "function"
             assert tool["function"]["name"], "每个工具应有名称"

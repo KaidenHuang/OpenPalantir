@@ -5,7 +5,7 @@
  * 迁移自 DocumentViewer。
  */
 import { create } from 'zustand';
-import axios from 'axios';
+import { httpGet, httpPost, httpDelete } from '../services/httpClient';
 import { API_CONFIG } from '../config/apiConfig';
 import type { DocumentSource, Entity, FileEntry, SummaryData } from './types';
 
@@ -25,17 +25,17 @@ interface SourceState {
   _staleTime: number;
 
   // Actions
-  fetchSources: (showDeleted?: boolean) => Promise<void>;
+  fetchSources: (showDeleted?: boolean, signal?: AbortSignal) => Promise<void>;
   setSelectedSourceId: (id: string | null) => void;
-  browseFiles: (sourceId: string, path?: string) => Promise<void>;
+  browseFiles: (sourceId: string, path?: string, signal?: AbortSignal) => Promise<void>;
   setSelectedFile: (file: string | null) => void;
-  fetchSummary: (sourceId: string, filePath: string) => Promise<void>;
-  fetchEntities: (sourceId: string, filePath: string) => Promise<void>;
-  createSource: (name: string, path: string, type: 'local' | 's3') => Promise<void>;
-  deleteSource: (sourceId: string) => Promise<void>;
-  restoreSource: (sourceId: string) => Promise<void>;
-  summarize: (sourceId: string, filePath: string) => Promise<string>;
-  extractEntities: (sourceId: string, filePath: string) => Promise<void>;
+  fetchSummary: (sourceId: string, filePath: string, signal?: AbortSignal) => Promise<void>;
+  fetchEntities: (sourceId: string, filePath: string, signal?: AbortSignal) => Promise<void>;
+  createSource: (name: string, path: string, type: 'local' | 's3', signal?: AbortSignal) => Promise<void>;
+  deleteSource: (sourceId: string, signal?: AbortSignal) => Promise<void>;
+  restoreSource: (sourceId: string, signal?: AbortSignal) => Promise<void>;
+  summarize: (sourceId: string, filePath: string, signal?: AbortSignal) => Promise<string>;
+  extractEntities: (sourceId: string, filePath: string, signal?: AbortSignal) => Promise<void>;
   setTaskId: (id: string | null) => void;
   setSummary: (data: SummaryData | null) => void;
   setEntities: (data: Entity[]) => void;
@@ -53,74 +53,76 @@ export const useSourceStore = create<SourceState>()((set, get) => ({
   _lastFetched: 0,
   _staleTime: 30_000,
 
-  fetchSources: async (showDeleted = false) => {
+  fetchSources: async (showDeleted = false, signal?: AbortSignal) => {
     const params = showDeleted ? { show_deleted: 'true' } : {};
-    const response = await axios.get(API_CONFIG.endpoints.source.list, { params });
+    const response = await httpGet(API_CONFIG.endpoints.source.list, { params, signal });
     set({ sources: (response.data.sources || []) as DocumentSource[] });
   },
 
   setSelectedSourceId: (id) => set({ selectedSourceId: id }),
 
-  browseFiles: async (sourceId, path = '') => {
-    const response = await axios.get(
+  browseFiles: async (sourceId, path = '', signal?: AbortSignal) => {
+    const response = await httpGet(
       API_CONFIG.endpoints.source.browse(sourceId),
-      { params: { path } }
+      { params: { prefix: path }, signal }
     );
     set({
-      files: (response.data.files || []) as FileEntry[],
-      currentPath: path,
+      files: (response.data.entries || response.data.files || []) as FileEntry[],
+      currentPath: (response.data.current_path as string) || path,
     });
   },
 
   setSelectedFile: (file) => set({ selectedFile: file }),
 
-  fetchSummary: async (sourceId, filePath) => {
-    const response = await axios.get(
+  fetchSummary: async (sourceId, filePath, signal?: AbortSignal) => {
+    const response = await httpGet(
       API_CONFIG.endpoints.source.summary(sourceId),
-      { params: { file: filePath } }
+      { params: { file: filePath }, signal }
     );
     set({ summary: response.data as SummaryData });
   },
 
-  fetchEntities: async (sourceId, filePath) => {
-    const response = await axios.get(
+  fetchEntities: async (sourceId, filePath, signal?: AbortSignal) => {
+    const response = await httpGet(
       API_CONFIG.endpoints.source.entities(sourceId),
-      { params: { file: filePath } }
+      { params: { file: filePath }, signal }
     );
     set({ entities: (response.data.entities || []) as Entity[] });
   },
 
-  createSource: async (name, path, type) => {
-    await axios.post(API_CONFIG.endpoints.source.create, {
+  createSource: async (name, path, type, signal?: AbortSignal) => {
+    await httpPost(API_CONFIG.endpoints.source.create, {
       name,
       path,
       source_type: type,
-    });
-    await get().fetchSources();
+    }, { signal });
+    await get().fetchSources(undefined, signal);
   },
 
-  deleteSource: async (sourceId) => {
-    await axios.delete(API_CONFIG.endpoints.source.delete(sourceId));
-    await get().fetchSources();
+  deleteSource: async (sourceId, signal?: AbortSignal) => {
+    await httpDelete(API_CONFIG.endpoints.source.delete(sourceId), { signal });
+    await get().fetchSources(undefined, signal);
   },
 
-  restoreSource: async (sourceId) => {
-    await axios.post(API_CONFIG.endpoints.source.restore(sourceId));
-    await get().fetchSources();
+  restoreSource: async (sourceId, signal?: AbortSignal) => {
+    await httpPost(API_CONFIG.endpoints.source.restore(sourceId), undefined, { signal });
+    await get().fetchSources(undefined, signal);
   },
 
-  summarize: async (sourceId, filePath) => {
-    const response = await axios.post(
+  summarize: async (sourceId, filePath, signal?: AbortSignal) => {
+    const response = await httpPost(
       API_CONFIG.endpoints.source.summarize(sourceId),
-      { file: filePath }
+      { file: filePath },
+      { signal }
     );
     return response.data.task_id as string;
   },
 
-  extractEntities: async (sourceId, filePath) => {
-    await axios.post(
+  extractEntities: async (sourceId, filePath, signal?: AbortSignal) => {
+    await httpPost(
       API_CONFIG.endpoints.source.extract(sourceId),
-      { file: filePath }
+      { file: filePath },
+      { signal }
     );
   },
 

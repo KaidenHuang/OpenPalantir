@@ -15,6 +15,10 @@ parameters:
     type: integer
     description: 返回路径数量（默认1）
     required: false
+  - name: max_nodes
+    type: integer
+    description: 分析节点数上限（默认5000，最大50000）
+    required: false
 ---
 
 # 路径分析

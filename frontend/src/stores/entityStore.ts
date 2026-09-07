@@ -48,8 +48,8 @@ interface EntityState {
   _staleTime: number;
 
   // Actions
-  fetchEntities: (page: number, pageSize: number, search: string, type: string) => Promise<void>;
-  selectEntity: (entity: Entity) => Promise<void>;
+  fetchEntities: (page: number, pageSize: number, search: string, type: string, signal?: AbortSignal) => Promise<void>;
+  selectEntity: (entity: Entity, signal?: AbortSignal) => Promise<void>;
   setPagination: (pagination: Partial<Pagination>) => void;
 }
 
@@ -61,7 +61,7 @@ export const useEntityStore = create<EntityState>()((set, get) => ({
   _lastFetched: 0,
   _staleTime: 10_000,
 
-  fetchEntities: async (page, pageSize, search, type) => {
+  fetchEntities: async (page, pageSize, search, type, signal?: AbortSignal) => {
     set({ loading: true });
     try {
       const entityType = type === 'all' ? undefined : type;
@@ -71,8 +71,8 @@ export const useEntityStore = create<EntityState>()((set, get) => ({
             page,
             limit: pageSize,
             entity_type: entityType,
-          })
-        : await entityService.listEntities(page, pageSize, entityType, search.trim() || undefined);
+          }, signal)
+        : await entityService.listEntities(page, pageSize, entityType, search.trim() || undefined, signal);
 
       if (response.status === 'success' && response.data) {
         const mapped = (response.data.entities || []).map((entity) => ({
@@ -97,12 +97,12 @@ export const useEntityStore = create<EntityState>()((set, get) => ({
     }
   },
 
-  selectEntity: async (entity) => {
+  selectEntity: async (entity, signal?: AbortSignal) => {
     try {
-      const response = await entityService.getEntity(entity.id);
+      const response = await entityService.getEntity(entity.id, signal);
       if (response.status === 'success' && response.data) {
         const entityData = response.data.entity;
-        const relationshipsResponse = await entityService.getEntityRelationships(entity.id);
+        const relationshipsResponse = await entityService.getEntityRelationships(entity.id, signal);
         if (relationshipsResponse.status === 'success' && relationshipsResponse.data) {
           set({
             selectedEntity: {

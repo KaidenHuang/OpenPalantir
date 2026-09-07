@@ -61,10 +61,14 @@ def test_connection_config(config: ConnectionConfig):
 @router.post("/connections", response_model=Dict)
 def create_connection(config: ConnectionConfig, db: Session = Depends(get_db)):
     """创建数据库连接配置"""
+    if not config.name.strip():
+        raise HTTPException(status_code=400, detail="连接名称不能为空")
     try:
         logger.info(f"创建数据库连接: {config.name}")
         connection_id = database_manager.create_connection(config.dict())
         return {"connection_id": connection_id, "message": "连接创建成功"}
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         logger.error(f"创建数据库连接失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -83,11 +87,11 @@ def list_databases(connection_id: str, db: Session = Depends(get_db)):
         logger.error(f"获取数据库列表失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/connections", response_model=List[Dict])
-def get_all_connections(include_deleted: bool = False, db: Session = Depends(get_db)):
+@router.get("/connections", response_model=Dict)
+def get_all_connections(show_deleted: bool = False, db: Session = Depends(get_db)):
     """获取所有数据库连接配置"""
     try:
-        connections = database_manager.get_all_connections(include_deleted=include_deleted)
+        connections = database_manager.get_all_connections(include_deleted=show_deleted)
         # Single query: find all connection_ids that have tables
         conn_with_tables = set(
             row[0] for row in db.query(DatabaseTable.connection_id).distinct().all()
@@ -97,7 +101,7 @@ def get_all_connections(include_deleted: bool = False, db: Session = Depends(get
             d = c.to_dict()
             d["has_schema"] = c.id in conn_with_tables
             result.append(d)
-        return result
+        return {"connections": result}
     except Exception as e:
         logger.error(f"获取数据库连接列表失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))

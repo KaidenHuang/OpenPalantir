@@ -5,6 +5,8 @@
  * 迁移自 GraphVisualization。
  */
 import { create } from 'zustand';
+import axios from 'axios';
+import { httpGet } from '../services/httpClient';
 import { API_CONFIG } from '../config/apiConfig';
 import type { GraphLink, GraphNode } from './types';
 
@@ -51,7 +53,7 @@ interface GraphState {
   _staleTime: number;
 
   // Actions
-  fetchGraphData: (types: string[], minEdges: number) => Promise<void>;
+  fetchGraphData: (types: string[], minEdges: number, signal?: AbortSignal) => Promise<void>;
   setSelectedEntityTypes: (types: string[]) => void;
   setMinEdgeCount: (count: number) => void;
   setSelectedNode: (node: GraphNode | null) => void;
@@ -71,7 +73,7 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
   _lastFetched: 0,
   _staleTime: 30_000,
 
-  fetchGraphData: async (types, minEdges) => {
+  fetchGraphData: async (types, minEdges, signal?: AbortSignal) => {
     set({ loading: true });
 
     try {
@@ -82,10 +84,11 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
       params.set('min_edges', String(minEdges));
       params.set('max_nodes', '5000');
 
-      const resp = await fetch(`${API_CONFIG.endpoints.graph.graphData}?${params.toString()}`);
-      if (!resp.ok) throw new Error('API 调用失败');
+      const result = await httpGet(
+        `${API_CONFIG.endpoints.graph.graphData}?${params.toString()}`,
+        { signal }
+      ).then(r => r.data as { status: string; data: Record<string, any> });
 
-      const result = await resp.json();
       if (result.status !== 'success' || !result.data) {
         throw new Error('API 返回数据异常');
       }
@@ -94,16 +97,16 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
 
       // 首次加载时初始化类型选择
       if (!get().initialized) {
-        const allTypes = Object.keys(available_types);
+        const allTypes = Object.keys(available_types as Record<string, number>);
         set({
-          availableTypes: available_types,
+          availableTypes: available_types as Record<string, number>,
           selectedEntityTypes: allTypes,
           initialized: true,
         });
       }
 
       // 转换为 GraphNode 格式
-      const nodes: GraphNode[] = (rawNodes || []).map((node: Record<string, unknown>) => ({
+      const nodes: GraphNode[] = ((rawNodes || []) as Record<string, unknown>[]).map((node) => ({
         id: (node.id || node.name) as string,
         name: node.name as string,
         type: (node.type as string) || 'Entity',
@@ -120,7 +123,7 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
 
       // 去重边
       const linkMap = new Map<string, GraphLink>();
-      (rawEdges || []).forEach((edge: Record<string, unknown>) => {
+      ((rawEdges || []) as Record<string, unknown>[]).forEach((edge) => {
         const srcId = String(edge.subject_id || '') || nodeNameToId.get(String(edge.source || '')) || String(edge.source || '');
         const tgtId = String(edge.object_id || '') || nodeNameToId.get(String(edge.target || '')) || String(edge.target || '');
         const linkKey = `${srcId}_${tgtId}_${edge.type || 'association'}`;
@@ -143,17 +146,19 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
 
       set({
         graphData: { nodes, links: Array.from(linkMap.values()) },
-        totalNodeCount: total_node_count,
-        totalEdgeCount: total_edge_count,
-        truncated: isTruncated,
+        totalNodeCount: total_node_count as number,
+        totalEdgeCount: total_edge_count as number,
+        truncated: isTruncated as boolean,
         loading: false,
         _lastFetched: Date.now(),
       });
     } catch (error) {
-      if ((error as { name?: string }).name !== 'AbortError') {
-        console.error('获取图谱数据失败:', error);
-        set({ graphData: { nodes: [], links: [] }, loading: false });
+      if (axios.isCancel(error) || (error as { name?: string }).name === 'CanceledError' || (error as { name?: string }).name === 'AbortError') {
+        set({ loading: false });
+        return; // 请求被取消，重置 loading 状态
       }
+      console.error('获取图谱数据失败:', error);
+      set({ graphData: { nodes: [], links: [] }, loading: false });
     }
   },
 

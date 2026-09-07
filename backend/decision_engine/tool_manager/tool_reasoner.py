@@ -53,6 +53,7 @@ class ToolReasoner:
         self.model_client = model_client or get_model_client()
         self.mcp_manager = mcp_manager  # MCPManager 实例，可选
 
+
     @classmethod
     def _load_system_prompt(cls) -> str:
         if not cls._system_prompt:

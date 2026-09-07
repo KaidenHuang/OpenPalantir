@@ -118,6 +118,28 @@ class TestDecisionAnswer:
         assert isinstance(answer.recommendation, str)
         assert "action" in answer.recommendation
 
+    def test_from_dict_null_fields(self):
+        """LLM 返回 null 值时不报错"""
+        data = {
+            "summary": None,
+            "situation_analysis": None,
+            "key_issues": None,
+            "options": None,
+            "recommendation": None,
+            "work_orders": None,
+            "confidence": None,
+            "confidence_reason": None,
+        }
+        answer = DecisionAnswer.from_dict(data)
+        assert answer.summary == ""
+        assert answer.situation_analysis == ""
+        assert answer.key_issues == []
+        assert answer.options == []
+        assert answer.recommendation == ""
+        assert answer.work_orders == []
+        assert answer.confidence == 0.0
+        assert answer.confidence_reason == ""
+
 
 class TestDecisionRequest:
     """DecisionRequest 数据模型测试"""
@@ -148,10 +170,42 @@ class TestDecisionResponse:
         """默认值正确"""
         resp = DecisionResponse()
         assert resp.domain == ""
-        assert resp.decision_mode == "rag_pipeline"
+        assert resp.decision_mode == "agentic_rag"
         assert resp.response_type == "normal"
         assert resp.evidence == []
         assert resp.evidence_citations == []
+        assert resp.confidence == 0.0
+        assert resp.needs_human_review is False
+
+    def test_confidence_fields(self):
+        """置信度字段正确"""
+        resp = DecisionResponse(
+            confidence=0.85,
+            needs_human_review=False,
+        )
+        assert resp.confidence == 0.85
+        assert resp.needs_human_review is False
+
+    def test_decision_answer_confidence(self):
+        """DecisionAnswer 包含置信度"""
+        answer = DecisionAnswer(
+            summary="测试",
+            confidence=0.9,
+            confidence_reason="多源验证",
+        )
+        assert answer.confidence == 0.9
+        assert answer.confidence_reason == "多源验证"
+
+    def test_from_dict_with_confidence(self):
+        """from_dict 解析置信度"""
+        data = {
+            "summary": "测试",
+            "confidence": 0.75,
+            "confidence_reason": "基本可靠",
+        }
+        answer = DecisionAnswer.from_dict(data)
+        assert answer.confidence == 0.75
+        assert answer.confidence_reason == "基本可靠"
 
 
 class TestEvidenceItem:

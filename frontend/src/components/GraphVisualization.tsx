@@ -3,6 +3,7 @@ import { Button } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import ForceGraph3D from 'react-force-graph-3d';
 import { useGraphStore } from '../stores/graphStore';
+import { useAbortController } from '../hooks/useAbortController';
 import type { GraphNode } from '../stores/types';
 
 // 实体类型颜色映射
@@ -27,11 +28,13 @@ const GraphVisualization: React.FC = () => {
     fetchGraphData, setSelectedEntityTypes, setMinEdgeCount, setSelectedNode,
   } = useGraphStore();
 
+  const { getLatestSignal } = useAbortController();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 首次加载
   useEffect(() => {
-    fetchGraphData([], 1);
+    const signal = getLatestSignal('graph');
+    fetchGraphData([], 1, signal);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -40,7 +43,8 @@ const GraphVisualization: React.FC = () => {
     if (!initialized) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      fetchGraphData(selectedEntityTypes, minEdgeCount);
+      const signal = getLatestSignal('graph');
+      fetchGraphData(selectedEntityTypes, minEdgeCount, signal);
     }, 1000);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [selectedEntityTypes, minEdgeCount]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -51,7 +55,8 @@ const GraphVisualization: React.FC = () => {
 
   const handleRefresh = () => {
     if (debounceRef.current) { clearTimeout(debounceRef.current); debounceRef.current = null; }
-    fetchGraphData(selectedEntityTypes, minEdgeCount);
+    const signal = getLatestSignal('graph');
+    fetchGraphData(selectedEntityTypes, minEdgeCount, signal);
   };
 
   if (loading && graphData.nodes.length === 0) {

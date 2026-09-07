@@ -3,6 +3,7 @@ import { Table, Input, Select, Button, Tag } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
 import { useEntityStore } from '../stores/entityStore';
+import { useAbortController } from '../hooks/useAbortController';
 
 interface Entity {
   id: string;
@@ -38,11 +39,13 @@ const EntityManagement: React.FC = () => {
     fetchEntities, selectEntity, setPagination,
   } = useEntityStore();
 
+  const { getComponentSignal, getLatestSignal } = useAbortController();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
 
   useEffect(() => {
-    fetchEntities(1, pagination.pageSize, searchTerm, filterType);
+    const signal = getComponentSignal();
+    fetchEntities(1, pagination.pageSize, searchTerm, filterType, signal);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -50,23 +53,27 @@ const EntityManagement: React.FC = () => {
     const p = pag.current || 1;
     const ps = pag.pageSize || 10;
     setPagination({ current: p, pageSize: ps });
-    fetchEntities(p, ps, searchTerm, filterType);
+    const signal = getLatestSignal('entities');
+    fetchEntities(p, ps, searchTerm, filterType, signal);
   };
 
   const handleSearch = (value: string) => {
     setSearchTerm(value);
     setPagination({ current: 1 });
-    fetchEntities(1, pagination.pageSize, value, filterType);
+    const signal = getLatestSignal('entities');
+    fetchEntities(1, pagination.pageSize, value, filterType, signal);
   };
 
   const handleTypeChange = (value: string) => {
     setFilterType(value);
     setPagination({ current: 1 });
-    fetchEntities(1, pagination.pageSize, searchTerm, value);
+    const signal = getLatestSignal('entities');
+    fetchEntities(1, pagination.pageSize, searchTerm, value, signal);
   };
 
   const handleRefresh = () => {
-    fetchEntities(pagination.current, pagination.pageSize, searchTerm, filterType);
+    const signal = getComponentSignal();
+    fetchEntities(pagination.current, pagination.pageSize, searchTerm, filterType, signal);
   };
 
   const columns: ColumnsType<Entity> = [

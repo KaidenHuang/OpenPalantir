@@ -667,19 +667,21 @@ class ModelClient:
                     f"[model_client] 调用本地 chat API，模型: {self.config.model_name} "
                     f"(尝试 {attempt + 1}/{self.config.max_retries})"
                 )
-                response = requests.post(
-                    f"{self.config.api_url}/api/chat",
-                    json={
+                request_body = {
                         "model": self.config.model_name,
                         "messages": req_messages,
-                        "tools": tools,
-                        "tool_choice": tool_choice,
                         "stream": False,
                         "options": {
                             "temperature": temperature,
                             "num_predict": max_tokens,
                         },
-                    },
+                    }
+                if tools:
+                    request_body["tools"] = tools
+                    request_body["tool_choice"] = tool_choice
+                response = requests.post(
+                    f"{self.config.api_url}/api/chat",
+                    json=request_body,
                     timeout=self.config.timeout,
                 )
                 if response.status_code == 200:
@@ -716,12 +718,13 @@ class ModelClient:
         request_params = {
             "model": self.config.model_name,
             "messages": full_messages,
-            "tools": tools,
-            "tool_choice": tool_choice,
             "stream": False,
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
+        if tools:
+            request_params["tools"] = tools
+            request_params["tool_choice"] = tool_choice
 
         last_error = None
         for attempt in range(self.config.max_retries):
