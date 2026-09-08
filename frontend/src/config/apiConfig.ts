@@ -26,6 +26,8 @@ export const API_CONFIG = {
       updateNode: (entityId: string) => `${API_BASE_URL}/api/graph/nodes/${entityId}`,
       deleteNode: (entityId: string) => `${API_BASE_URL}/api/graph/nodes/${entityId}`,
       nodeRelationships: (entityId: string) => `${API_BASE_URL}/api/graph/nodes/${entityId}/relationships`,
+      nodeSubgraph: (entityId: string, hops: number = 2, limit: number = 100) =>
+        `${API_BASE_URL}/api/graph/nodes/${entityId}/subgraph?hops=${hops}&limit=${limit}`,
       addNode: `${API_BASE_URL}/api/graph/nodes`,
       addNodesBatch: `${API_BASE_URL}/api/graph/nodes/batch`,
       edges: `${API_BASE_URL}/api/graph/edges`,
@@ -33,6 +35,8 @@ export const API_CONFIG = {
       export: `${API_BASE_URL}/api/graph/export`,
       addRelationship: `${API_BASE_URL}/api/graph/relationships`,
       addRelationshipsBatch: `${API_BASE_URL}/api/graph/relationships/batch`,
+      updateRelationship: (relationshipId: string) => `${API_BASE_URL}/api/graph/relationships/${relationshipId}`,
+      deleteRelationship: (relationshipId: string) => `${API_BASE_URL}/api/graph/relationships/${relationshipId}`,
       partition: `${API_BASE_URL}/api/graph/partition`,
       compress: `${API_BASE_URL}/api/graph/compress`,
       metaGraph: `${API_BASE_URL}/api/graph/meta-graph`,
@@ -86,6 +90,12 @@ export const API_CONFIG = {
       summary: (sourceId: string) => `${API_BASE_URL}/api/sources/${sourceId}/summary`,
       extract: (sourceId: string) => `${API_BASE_URL}/api/sources/${sourceId}/extract`,
       entities: (sourceId: string) => `${API_BASE_URL}/api/sources/${sourceId}/entities`,
+    },
+    entityTypes: {
+      list: `${API_BASE_URL}/api/entity-types`,
+      create: `${API_BASE_URL}/api/entity-types`,
+      update: (typeKey: string) => `${API_BASE_URL}/api/entity-types/${typeKey}`,
+      delete: (typeKey: string) => `${API_BASE_URL}/api/entity-types/${typeKey}`,
     }
   }
 };

@@ -6,29 +6,7 @@
  */
 import { create } from 'zustand';
 import { entityService } from '../services/entityService';
-
-interface Entity {
-  id: string;
-  name: string;
-  type: string;
-  confidence: number;
-  count?: number;
-  description?: string;
-  byname?: string | string[];
-  properties?: Record<string, string>;
-  datasource?: string;
-  relationships?: Relationship[];
-}
-
-interface Relationship {
-  subject: string;
-  object: string;
-  type: string;
-  predicate?: string;
-  confidence: number;
-  occurrence_time?: string;
-  description?: string;
-}
+import type { Entity } from './types';
 
 interface Pagination {
   current: number;

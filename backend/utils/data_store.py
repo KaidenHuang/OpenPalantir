@@ -1,8 +1,10 @@
-import hashlib
 import os
 from typing import List, Dict, Any, Tuple
 from system.logger import logger
 from knowledge_graph.graph_manager import graph_manager
+from knowledge_graph.alias_cache import AliasCache
+from models.ids import compute_relationship_id
+from models.graph_models import EntityData, RelationshipData
 
 # 关系分批写入大小（可通过环境变量 NEO4J_REL_BATCH_SIZE 配置，默认 5000）
 _NEO4J_REL_BATCH_SIZE = int(os.getenv('NEO4J_REL_BATCH_SIZE', '5000'))
@@ -60,16 +62,17 @@ class EntityDataStore:
             return entity_count, rel_count
 
         prepared_entities = []
+        name_to_eid: Dict[str, str] = {}  # 原始名 → entity_id（别名解析前）
         for entity in entities:
-            prepared = {
-                'name': entity.get('n', ''),
-                'type': entity.get('t', 'Entity'),
-                'byname': entity.get('bn', None),
-                'count': entity.get('c', 1),
-                'datasource': entity.get('datasource', datasource or ''),
-                'description': entity.get('d', '')
-            }
-            prepared_entities.append(prepared)
+            ed = EntityData.from_llm_dict(entity, datasource=datasource or "")
+            prepared_entities.append(ed.to_neo4j_dict())
+            name_to_eid[ed.name.strip()] = ed.entity_id
+            if ed.byname:
+                name_to_eid[ed.byname.strip()] = ed.entity_id
+
+        # 别名解析：检查缓存，命中则重定向到已有实体
+        alias_cache = AliasCache()
+        prepared_entities, redirected_ids = alias_cache.resolve_entities(prepared_entities)
 
         try:
             result = graph_manager.add_entities(prepared_entities)
@@ -80,6 +83,10 @@ class EntityDataStore:
             for i, entity_id in enumerate(entity_ids):
                 if i < len(prepared_entities):
                     prepared_entities[i]['entity_id'] = entity_id
+
+            # 构建别名缓存（写入成功后）
+            alias_cache.build_from_entities(prepared_entities)
+
         except Exception as e:
             logger.error(f"批量保存实体时出错: {e}")
             return entity_count, rel_count
@@ -91,6 +98,13 @@ class EntityDataStore:
                 if name:
                     entity_name_map[name] = e
                     entity_name_map[name.lower()] = e
+
+            # 将重定向的实体也加入映射（别名 → 已有实体 ID）
+            for old_id, new_id in redirected_ids.items():
+                for name, eid in name_to_eid.items():
+                    if eid == old_id:
+                        entity_name_map[name] = {'entity_id': new_id, 'name': name}
+                        entity_name_map[name.lower()] = {'entity_id': new_id, 'name': name}
 
             prepared_relationships = []
             skipped = 0
@@ -117,7 +131,7 @@ class EntityDataStore:
                     'subject': subject_name,
                     'object': object_name,
                     'predicate': relationship.get('p', 'RELATES_TO'),
-                    'relationship_id': hashlib.md5(f"{subject_name}_{relationship.get('p', 'RELATES_TO')}_{object_name}".encode()).hexdigest(),
+                    'relationship_id': compute_relationship_id(subject_name, relationship.get('p', 'RELATES_TO'), object_name),
                     'occurrence_time': relationship.get('ot', ''),
                     'description': relationship.get('d', ''),
                     'subject_id': subject_id,
@@ -146,15 +160,8 @@ class EntityDataStore:
 
         prepared_entities = []
         for entity in entities:
-            prepared = {
-                'name': entity.get('n', ''),
-                'type': entity.get('t', 'Entity'),
-                'byname': entity.get('bn', None),
-                'count': entity.get('c', 1),
-                'datasource': entity.get('datasource', datasource or ''),
-                'description': entity.get('d', '')
-            }
-            prepared_entities.append(prepared)
+            ed = EntityData.from_llm_dict(entity, datasource=datasource or "")
+            prepared_entities.append(ed.to_neo4j_dict())
 
         try:
             result = graph_manager.add_entities(prepared_entities)
@@ -196,7 +203,7 @@ class EntityDataStore:
                 'subject': subject_name,
                 'object': object_name,
                 'predicate': predicate,
-                'relationship_id': hashlib.md5(f"{subject_name}_{predicate}_{object_name}".encode()).hexdigest(),
+                'relationship_id': compute_relationship_id(subject_name, predicate, object_name),
                 'occurrence_time': relationship.get('ot', ''),
                 'description': relationship.get('d', ''),
                 'subject_id': subject_entity.get('entity_id', '') if subject_entity else '',

@@ -1,27 +1,6 @@
 import { httpGet, httpPost, httpPut, httpDelete } from './httpClient';
 import { API_CONFIG } from '../config/apiConfig';
-
-interface Entity {
-  id: string;
-  name: string;
-  type: string;
-  confidence: number;
-  count?: number;
-  properties?: Record<string, string>;
-  documents?: string[];
-  relationships?: Relationship[];
-  document_id?: string;
-}
-
-interface Relationship {
-  subject: string;
-  object: string;
-  type: string;
-  predicate?: string;
-  confidence: number;
-  occurrence_time?: string;
-  description?: string;
-}
+import type { Entity, Relationship } from '../stores/types';
 
 interface Pagination {
   total_count: number;
@@ -132,6 +111,42 @@ export const entityService = {
       return response.data;
     } catch (error) {
       console.error(`Error getting relationships for entity ${entityId}:`, error);
+      throw error;
+    }
+  },
+
+  // 更新关系属性
+  async updateRelationship(relationshipId: string, props: Record<string, unknown>, signal?: AbortSignal): Promise<{ status: string }> {
+    try {
+      const response = await httpPut(API_CONFIG.endpoints.graph.updateRelationship(relationshipId), props, { signal });
+      return response.data;
+    } catch (error) {
+      console.error(`Error updating relationship ${relationshipId}:`, error);
+      throw error;
+    }
+  },
+
+  // 删除关系
+  async deleteRelationship(relationshipId: string, signal?: AbortSignal): Promise<{ status: string }> {
+    try {
+      const response = await httpDelete(API_CONFIG.endpoints.graph.deleteRelationship(relationshipId), { signal });
+      return response.data;
+    } catch (error) {
+      console.error(`Error deleting relationship ${relationshipId}:`, error);
+      throw error;
+    }
+  },
+
+  // 获取实体 N-hop 子图
+  async getEntitySubgraph(entityId: string, hops: number = 2, limit: number = 100, signal?: AbortSignal): Promise<{
+    status: string;
+    data: { nodes: Entity[]; edges: Array<{ source: string; target: string; predicate: string; confidence: number; relationship_id: string; description: string }> };
+  }> {
+    try {
+      const response = await httpGet(API_CONFIG.endpoints.graph.nodeSubgraph(entityId, hops, limit), { signal });
+      return response.data;
+    } catch (error) {
+      console.error(`Error getting subgraph for entity ${entityId}:`, error);
       throw error;
     }
   },

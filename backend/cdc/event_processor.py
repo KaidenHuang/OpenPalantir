@@ -1,13 +1,13 @@
 """
 CDC 事件处理器 — 将 Debezium 变更事件转化为 Neo4j 实体/关系操作
 """
-import hashlib
 from typing import Dict, Any, Optional
 from datetime import datetime
 
 from config.neo4j_config import neo4j_conn
 from cdc.schema_cache import SchemaCache
 from system.logger import logger
+from models.ids import compute_entity_id, compute_relationship_id
 
 
 class EventProcessor:
@@ -61,7 +61,7 @@ class EventProcessor:
         if not entity_name:
             return  # PK 值为空，跳过
 
-        entity_id = hashlib.md5(entity_name.encode()).hexdigest()
+        entity_id = compute_entity_id(entity_name)
         datasource = f"DBS://{self.connection_id}/{self.database_name}/{table_name}"
         entity_type = self.schema.entity_types.get(table_name, "其他")
         description = self._build_description(table_name, row)
@@ -97,7 +97,7 @@ class EventProcessor:
         if not entity_name:
             return
 
-        entity_id = hashlib.md5(entity_name.encode()).hexdigest()
+        entity_id = compute_entity_id(entity_name)
 
         neo4j_conn.execute_query(
             "MATCH (n:Entity {id: $id}) DETACH DELETE n",
@@ -139,11 +139,9 @@ class EventProcessor:
 
             ref_table = fk["referenced_table_name"]
             target_name = f"{ref_table}:{fk_value}"
-            target_id = hashlib.md5(target_name.encode()).hexdigest()
+            target_id = compute_entity_id(target_name)
             predicate = "Foreign key"
-            rel_id = hashlib.md5(
-                f"{subject_name}_{predicate}_{target_name}".encode()
-            ).hexdigest()
+            rel_id = compute_relationship_id(subject_name, predicate, target_name)
             description = f"{table_name}.{fk['column']}={fk_value} -> {ref_table}"
 
             desired_rels[target_name] = {

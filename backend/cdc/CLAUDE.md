@@ -18,7 +18,7 @@ Redis Stream    key = {topic_prefix}.{db|schema}.{table}
    ↓ CDCConsumer（每 {conn,db} 一个后台线程，XREADGROUP，consumer group = openpalantir-{conn}）
 EventProcessor（c/r → MERGE，u → MERGE，d → DELETE）
    ↓
-Neo4j（实体名 {table}:{pk}，entity_id = MD5(name_type)，与全量导入一致）
+Neo4j（实体名 {table}:{pk}，entity_id = MD5(name)，与全量导入一致）
 ```
 
 ## 文件职责

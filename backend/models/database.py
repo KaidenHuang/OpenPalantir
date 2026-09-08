@@ -194,3 +194,54 @@ class AnalyzedTable(Base):
     uri = Column(String(500), nullable=False)
     entity_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.now)
+
+
+# ── 实体类型元数据 ──
+
+class EntityType(Base):
+    """实体类型元数据（动态管理，替代前端硬编码）"""
+    __tablename__ = "entity_types"
+
+    type_key = Column(String(50), primary_key=True)
+    display_name = Column(String(100), nullable=False)
+    color = Column(String(20), nullable=False, default="#95A5A6")
+    sort_order = Column(Integer, default=0)
+    is_builtin = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.now)
+
+    def to_dict(self) -> Dict:
+        return {
+            "type_key": self.type_key,
+            "display_name": self.display_name,
+            "color": self.color,
+            "sort_order": self.sort_order,
+            "is_builtin": self.is_builtin,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+# 默认实体类型（首次启动时写入）
+_DEFAULT_ENTITY_TYPES = [
+    {"type_key": "person",       "display_name": "人物",   "color": "#3498db", "sort_order": 1},
+    {"type_key": "organization", "display_name": "组织",   "color": "#e74c3c", "sort_order": 2},
+    {"type_key": "location",     "display_name": "地点",   "color": "#27ae60", "sort_order": 3},
+    {"type_key": "event",        "display_name": "事件",   "color": "#f39c12", "sort_order": 4},
+    {"type_key": "concept",      "display_name": "概念",   "color": "#9b59b6", "sort_order": 5},
+    {"type_key": "other",        "display_name": "其他",   "color": "#95A5A6", "sort_order": 99},
+]
+
+
+def init_entity_types():
+    """初始化默认实体类型（幂等：已有则跳过）"""
+    from config.database import SessionLocal
+    db = SessionLocal()
+    try:
+        existing = {row.type_key for row in db.query(EntityType).all()}
+        for t in _DEFAULT_ENTITY_TYPES:
+            if t["type_key"] not in existing:
+                db.add(EntityType(**t, is_builtin=True))
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()

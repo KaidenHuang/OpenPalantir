@@ -97,21 +97,27 @@ def extract_pk_value(row: Dict, pk_columns: List[str]) -> Optional[str]:
 
 def build_entities_batch(rows: List[Dict], table_name: str, entity_type: str,
                           pk_columns: List[str], db_prefix: str) -> List[Dict]:
-    """为一批行构建实体字典列表"""
+    """为一批行构建实体字典列表，行数据列值映射为 attributes"""
     entities = []
     for row in rows:
         entity_name = build_entity_name(table_name, row, pk_columns)
         if not entity_name:
             continue
-        description_parts = [f"{col}={val}" for col, val in row.items()]
-        description = ", ".join(description_parts)
+        # 列值映射为结构化 attributes（保留原始类型）
+        attributes = {}
+        for col, val in row.items():
+            if val is not None:
+                attributes[col] = val
+        # description 取简要的主键描述
+        pk_desc = ", ".join(f"{pk}={row.get(pk, '')}" for pk in pk_columns)
         entities.append({
             "n": entity_name,
             "t": entity_type,
             "bn": None,
             "c": 1,
             "datasource": f"{db_prefix}/{table_name}",
-            "d": description
+            "d": f"{table_name}({pk_desc})",
+            "a": attributes
         })
     return entities
 

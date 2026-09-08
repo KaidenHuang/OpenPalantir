@@ -82,17 +82,25 @@ export interface Entity {
   type: string;
   confidence: number;
   count?: number;
+  description?: string;
+  byname?: string | string[];
+  datasource?: string;
   properties?: Record<string, string>;
+  attributes?: Record<string, any>;
   documents?: string[];
   relationships?: Relationship[];
   document_id?: string;
 }
 
 export interface Relationship {
+  id?: string;
   subject: string;
+  subject_id?: string;
   object: string;
-  type: string;
+  object_id?: string;
+  type?: string;
   predicate?: string;
+  relationship_id?: string;
   confidence: number;
   occurrence_time?: string;
   description?: string;

@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useRef } from 'react';
+import React, { useEffect, useCallback, useRef, useState, useMemo } from 'react';
 import { Button } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import ForceGraph3D from 'react-force-graph-3d';
@@ -26,10 +26,12 @@ const GraphVisualization: React.FC = () => {
     graphData, loading, selectedNode, selectedEntityTypes, availableTypes,
     minEdgeCount, totalNodeCount, totalEdgeCount, truncated, initialized,
     fetchGraphData, setSelectedEntityTypes, setMinEdgeCount, setSelectedNode,
+    expandNeighbors,
   } = useGraphStore();
 
   const { getLatestSignal } = useAbortController();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string; nodeName: string } | null>(null);
 
   // 首次加载
   useEffect(() => {
@@ -51,13 +53,68 @@ const GraphVisualization: React.FC = () => {
 
   const handleNodeClick = useCallback((node: Record<string, unknown>) => {
     setSelectedNode(node as unknown as GraphNode);
+    setContextMenu(null);
   }, [setSelectedNode]);
+
+  const handleNodeRightClick = useCallback((node: Record<string, unknown>, event: MouseEvent) => {
+    event.preventDefault();
+    const nodeId = String(node.id || '');
+    const nodeName = String(node.name || '');
+    setContextMenu({ x: event.clientX, y: event.clientY, nodeId, nodeName });
+  }, []);
+
+  const handleExpandNeighbors = useCallback(async (nodeId: string, hops: number) => {
+    setContextMenu(null);
+    await expandNeighbors(nodeId, hops);
+  }, [expandNeighbors]);
+
+  // 点击空白处关闭右键菜单
+  useEffect(() => {
+    const closeMenu = () => setContextMenu(null);
+    if (contextMenu) {
+      window.addEventListener('click', closeMenu, { once: true });
+      return () => window.removeEventListener('click', closeMenu);
+    }
+  }, [contextMenu]);
 
   const handleRefresh = () => {
     if (debounceRef.current) { clearTimeout(debounceRef.current); debounceRef.current = null; }
     const signal = getLatestSignal('graph');
     fetchGraphData(selectedEntityTypes, minEdgeCount, signal);
   };
+
+  // LOD: 按连接度计算节点大小，高度连接的节点更大
+  const nodeDegreeMap = useMemo(() => {
+    const deg = new Map<string, number>();
+    for (const link of graphData.links) {
+      const s = String(typeof link.source === 'object' ? (link.source as Record<string, unknown>).id : link.source);
+      const t = String(typeof link.target === 'object' ? (link.target as Record<string, unknown>).id : link.target);
+      deg.set(s, (deg.get(s) || 0) + 1);
+      deg.set(t, (deg.get(t) || 0) + 1);
+    }
+    return deg;
+  }, [graphData.links]);
+
+  // 边聚合：同一对节点间的多条边合并为一条粗边
+  const aggregatedLinks = useMemo(() => {
+    if (graphData.links.length < 500) return null; // 少于 500 条边不聚合
+    const map = new Map<string, typeof graphData.links[0] & { _count?: number }>();
+    for (const link of graphData.links) {
+      const s = String(typeof link.source === 'object' ? (link.source as Record<string, unknown>).id : link.source);
+      const t = String(typeof link.target === 'object' ? (link.target as Record<string, unknown>).id : link.target);
+      const key = s < t ? `${s}|${t}` : `${t}|${s}`;
+      const existing = map.get(key);
+      if (existing) {
+        existing._count = (existing._count || 1) + 1;
+        existing.width = Math.min(8, existing.width + 0.5);
+      } else {
+        map.set(key, { ...link, _count: 1 });
+      }
+    }
+    return Array.from(map.values());
+  }, [graphData.links]);
+
+  const displayLinks = aggregatedLinks || graphData.links;
 
   if (loading && graphData.nodes.length === 0) {
     return <div className="graph-loading">加载中...</div>;
@@ -115,21 +172,36 @@ const GraphVisualization: React.FC = () => {
       <div className="graph-container" style={{ flex: 1, minHeight: '500px', width: '100%', overflow: 'hidden' }}>
         <ForceGraph3D
           key="graph-viz-main"
-          graphData={graphData as unknown as { nodes: Record<string, unknown>[]; links: Record<string, unknown>[] }}
+          graphData={{ nodes: graphData.nodes, links: displayLinks } as unknown as { nodes: Record<string, unknown>[]; links: Record<string, unknown>[] }}
           nodeColor={(node: Record<string, unknown>) => node.color as string}
-          nodeLabel={(node: Record<string, unknown>) => node.name as string}
-          nodeVal={(node: Record<string, unknown>) => node.count as number}
+          nodeLabel={(node: Record<string, unknown>) => {
+            const nid = String(node.id || '');
+            const degree = nodeDegreeMap.get(nid) || 0;
+            return `<b>${node.name}</b><br/>类型: ${node.type}<br/>连接数: ${degree}`;
+          }}
+          nodeVal={(node: Record<string, unknown>) => {
+            const nid = String(node.id || '');
+            const degree = nodeDegreeMap.get(nid) || 0;
+            const baseSize = (node.count as number) || 5;
+            // 连接度 >10 的节点放大，>30 更明显
+            return Math.max(baseSize, Math.min(baseSize + degree * 0.8, 30));
+          }}
+          nodeOpacity={0.9}
           linkColor={(link: Record<string, unknown>) => {
             const color = link.color as string;
             const r = parseInt(color.slice(1, 3), 16);
             const g = parseInt(color.slice(3, 5), 16);
             const b = parseInt(color.slice(5, 7), 16);
-            return `rgba(${r}, ${g}, ${b}, 0.6)`;
+            return `rgba(${r}, ${g}, ${b}, 0.5)`;
           }}
           linkWidth={(link: Record<string, unknown>) => link.width as number}
+          linkOpacity={0.4}
           onNodeClick={handleNodeClick}
+          onNodeRightClick={handleNodeRightClick}
           linkLabel={(link: Record<string, unknown>) => {
-            return `关系类型: ${link.type as string}<br/>置信度: ${(link.confidence as number).toFixed(2)}<br/>时间: ${link.occurrence_time as string || '-'}${link.description ? '<br/>描述: ' + (link.description as string) : ''}`;
+            const count = link._count as number | undefined;
+            const countStr = count && count > 1 ? `<br/>合并: ${count} 条` : '';
+            return `关系类型: ${link.type as string}<br/>置信度: ${(link.confidence as number).toFixed(2)}<br/>时间: ${link.occurrence_time as string || '-'}${link.description ? '<br/>描述: ' + (link.description as string) : ''}${countStr}`;
           }}
           linkDirectionalArrowLength={3.5}
           linkDirectionalArrowRelPos={0.8}
@@ -221,6 +293,33 @@ const GraphVisualization: React.FC = () => {
             })()}
           </div>
           <button onClick={() => setSelectedNode(null)} style={{ marginTop: '15px', padding: '8px 16px', backgroundColor: '#3498db', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>关闭</button>
+        </div>
+      )}
+
+      {/* 右键菜单 */}
+      {contextMenu && (
+        <div
+          style={{
+            position: 'fixed', left: contextMenu.x, top: contextMenu.y, zIndex: 9999,
+            background: '#fff', border: '1px solid #d9d9d9', borderRadius: 6,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)', padding: '4px 0', minWidth: 140,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ padding: '4px 12px', fontSize: 12, color: '#999', borderBottom: '1px solid #f0f0f0' }}>
+            {contextMenu.nodeName}
+          </div>
+          {[1, 2, 3].map(hops => (
+            <div
+              key={hops}
+              style={{ padding: '6px 12px', fontSize: 13, cursor: 'pointer' }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#f5f5f5')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+              onClick={() => handleExpandNeighbors(contextMenu.nodeId, hops)}
+            >
+              展开 {hops} 跳邻居
+            </div>
+          ))}
         </div>
       )}
     </div>

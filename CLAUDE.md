@@ -87,7 +87,7 @@ cd tests && pytest
 - **前后端分离**:后端独立处理全部业务逻辑,前端仅调用接口与展示;脱离 UI 后端仍可独立运行。
 - **数据库连接**:后端经 SQLAlchemy 连 MySQL/PostgreSQL/SQLite,前端连 Neo4j。
 - **实体命名**:数据库行级导入用 `{表名}:{主键值}`(如 `db.users:42`)。
-- **资源 ID**:URI 统一为 `{TYPE}://{UUID}/{路径}`(`DOC://` 文档源、`DBS://` 数据库),由 `ResourceIdentifier` 类(`models/resource_identifier.py`)管理;`entity_id` = MD5(`{name}_{type}`),`relationship_id` = MD5(`{subject}_{predicate}_{object}`)。完整规范见 `docs/architecture.md` §4.2。
+- **资源 ID**:URI 统一为 `{TYPE}://{UUID}/{路径}`(`DOC://` 文档源、`DBS://` 数据库),由 `ResourceIdentifier` 类(`models/resource_identifier.py`)管理;`entity_id` = MD5(`name`),`relationship_id` = MD5(`{subject}_{predicate}_{object}`),统一由 `models/ids.py` 生成。完整规范见 `docs/architecture.md` §4.2。
 - **单一存储**:实体/关系写入 Neo4j,通过全文索引实现搜索。
 - **LLM 集成**:经 `ModelClient` 统一调用 Ollama API,支持本地/云端模型。
 - **配置来源**:`backend/.env`(后端)、`frontend/src/config/apiConfig.ts`(前端 API 端点)。

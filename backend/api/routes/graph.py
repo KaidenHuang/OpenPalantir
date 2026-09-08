@@ -213,6 +213,27 @@ def get_node_relationships(entity_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/nodes/{entity_id}/subgraph")
+def get_node_subgraph(
+    entity_id: str,
+    hops: int = Query(2, ge=1, le=5, description="跳数（1-5）"),
+    limit: int = Query(100, ge=10, le=500, description="最大返回节点数"),
+):
+    """获取实体的 N-hop 邻居子图"""
+    try:
+        logger.debug(f"接收获取子图请求: entity_id={entity_id}, hops={hops}, limit={limit}")
+
+        _get_entity_or_404(entity_id)
+        result = graph_manager.get_subgraph(entity_id, hops=hops, limit=limit)
+        logger.info(f"获取子图成功: {entity_id}, nodes={len(result['nodes'])}, edges={len(result['edges'])}")
+        return {"status": "success", "data": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取子图失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ═══════════════════════════════════════════
 # Edge Endpoints
 # ═══════════════════════════════════════════
@@ -295,6 +316,38 @@ def batch_add_relationships(relationships: list = Body(...), use_create: bool = 
         return result
     except Exception as e:
         logger.error(f"批量添加关系失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/relationships/{relationship_id}")
+def update_relationship(relationship_id: str, props: dict = Body(...)):
+    """更新关系属性（predicate/confidence/description 等）"""
+    try:
+        logger.debug(f"接收更新关系请求: id={relationship_id}, props={props}")
+        success = graph_manager.update_relationship(relationship_id, props)
+        if not success:
+            raise HTTPException(status_code=404, detail=f"关系 {relationship_id} 不存在")
+        return {"status": "success", "relationship_id": relationship_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新关系失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/relationships/{relationship_id}")
+def delete_relationship(relationship_id: str):
+    """删除单条关系"""
+    try:
+        logger.debug(f"接收删除关系请求: id={relationship_id}")
+        success = graph_manager.delete_relationship(relationship_id)
+        if not success:
+            raise HTTPException(status_code=404, detail=f"关系 {relationship_id} 不存在或已删除")
+        return {"status": "success", "relationship_id": relationship_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除关系失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

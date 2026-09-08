@@ -8,6 +8,7 @@ import { create } from 'zustand';
 import axios from 'axios';
 import { httpGet } from '../services/httpClient';
 import { API_CONFIG } from '../config/apiConfig';
+import { entityService } from '../services/entityService';
 import type { GraphLink, GraphNode } from './types';
 
 // 实体类型颜色映射
@@ -54,6 +55,7 @@ interface GraphState {
 
   // Actions
   fetchGraphData: (types: string[], minEdges: number, signal?: AbortSignal) => Promise<void>;
+  expandNeighbors: (nodeId: string, hops?: number) => Promise<void>;
   setSelectedEntityTypes: (types: string[]) => void;
   setMinEdgeCount: (count: number) => void;
   setSelectedNode: (node: GraphNode | null) => void;
@@ -165,4 +167,77 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
   setSelectedEntityTypes: (types) => set({ selectedEntityTypes: types }),
   setMinEdgeCount: (count) => set({ minEdgeCount: count }),
   setSelectedNode: (node) => set({ selectedNode: node }),
+
+  expandNeighbors: async (nodeId, hops = 2) => {
+    try {
+      const result = await entityService.getEntitySubgraph(nodeId, hops, 200);
+      if (result.status !== 'success' || !result.data) return;
+
+      const { nodes: subNodes, edges: subEdges } = result.data as unknown as {
+        nodes: Record<string, unknown>[];
+        edges: Record<string, unknown>[];
+      };
+      const state = get();
+      const existingNodeIds = new Set(state.graphData.nodes.map(n => String(n.id)));
+      const existingLinkKeys = new Set(state.graphData.links.map(
+        l => `${String(l.source)}_${String(l.target)}_${l.type}`
+      ));
+
+      // 合并新节点
+      const newNodes: GraphNode[] = [];
+      for (const n of subNodes) {
+        const nid = String(n.id || n.entity_id || '');
+        if (nid && !existingNodeIds.has(nid)) {
+          existingNodeIds.add(nid);
+          newNodes.push({
+            id: nid,
+            name: (n.name as string) || '',
+            type: (n.type as string) || 'other',
+            count: ((n.count as number)) || 10,
+            color: entityTypeColors[(n.type as string)] || '#95A5A6',
+          });
+        }
+      }
+
+      // 构建 name→id 映射（含已有 + 新增）
+      const nameToId = new Map<string, string>();
+      for (const n of [...state.graphData.nodes, ...newNodes]) {
+        if (n.name) nameToId.set(String(n.name), String(n.id));
+      }
+
+      // 合并新边
+      const newLinks: GraphLink[] = [];
+      for (const e of subEdges) {
+        const srcId = String(e.subject_id || '') || nameToId.get(String(e.source)) || String(e.source);
+        const tgtId = String(e.object_id || '') || nameToId.get(String(e.target)) || String(e.target);
+        const linkKey = `${srcId}_${tgtId}_${(e.predicate as string) || 'association'}`;
+        if (!existingLinkKeys.has(linkKey) && existingNodeIds.has(srcId) && existingNodeIds.has(tgtId)) {
+          existingLinkKeys.add(linkKey);
+          newLinks.push({
+            source: srcId,
+            target: tgtId,
+            type: (e.predicate as string) || 'association',
+            confidence: (e.confidence as number) || 0.5,
+            width: Math.max(1, ((e.confidence as number) || 0.5) * 5),
+            color: relationshipTypeColors[(e.predicate as string) || ''] || '#95A5A6',
+            subject_id: String(e.subject_id || ''),
+            object_id: String(e.object_id || ''),
+            occurrence_time: String(e.occurrence_time || ''),
+            description: String(e.description || ''),
+          });
+        }
+      }
+
+      if (newNodes.length > 0 || newLinks.length > 0) {
+        set({
+          graphData: {
+            nodes: [...state.graphData.nodes, ...newNodes],
+            links: [...state.graphData.links, ...newLinks],
+          },
+        });
+      }
+    } catch (error) {
+      console.error('展开邻居失败:', error);
+    }
+  },
 }));
