@@ -15,9 +15,29 @@
 
 import json
 import re
+import datetime
+from decimal import Decimal
 from typing import Any, List, Optional
 
 from system.logger import logger
+
+
+class DBJsonEncoder(json.JSONEncoder):
+    """处理数据库常见非标类型的 JSON 编码器（date/datetime/time/Decimal/bytes）"""
+
+    def default(self, o):
+        if isinstance(o, (datetime.date, datetime.datetime, datetime.time)):
+            return o.isoformat()
+        if isinstance(o, Decimal):
+            return float(o)
+        if isinstance(o, bytes):
+            return o.decode("utf-8", errors="replace")
+        return super().default(o)
+
+
+def db_json_dumps(obj, ensure_ascii=False) -> str:
+    """使用 DBJsonEncoder 序列化，统一处理数据库日期/Decimal 等类型"""
+    return json.dumps(obj, ensure_ascii=ensure_ascii, cls=DBJsonEncoder)
 
 
 # ── 内部辅助函数 ─────────────────────────────────────────────────────────────

@@ -74,7 +74,7 @@ class ModelConfig:
             ModelConfig实例
         """
         return cls(
-            type=config.get('type', 'local'),
+            type=config.get('model_type') or config.get('type', 'local'),
             models=config.get('models', ['qwen2.5:7b']),
             api_url=config.get('api_url', 'http://localhost:11434'),
             api_key=config.get('api_key', ''),

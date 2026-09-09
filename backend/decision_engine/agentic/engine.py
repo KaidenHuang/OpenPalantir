@@ -2,7 +2,7 @@
 AgenticEngine — 统一的 Agentic RAG 引擎
 
 一个 ReAct 循环处理所有场景：
-- 简单查询 → 种子检索 + 1 轮即答
+- 简单查询 → 1 轮即答
 - 复杂分析 → 多轮检索 + 分析 + 反思
 """
 import json
@@ -11,9 +11,9 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 from decision_engine.agentic.context import AgenticContext
-from decision_engine.agentic.seed_retriever import SeedRetriever
 from decision_engine.agentic.tools import ToolRegistry
-from decision_engine.agentic.types import AgenticResult, Observation, SeedResult
+from decision_engine.agentic.types import AgenticResult, Observation
+from decision_engine.config import get_config
 from decision_engine.contracts import DecisionAnswer
 from model_management.model_client import get_model_client
 from system.logger import logger
@@ -54,27 +54,28 @@ def quick_check_intent(question: str) -> str:
 class AgenticEngine:
     """统一的 Agentic RAG 引擎"""
 
-    MAX_TURNS = 10
-    MAX_RESULT_CHARS = 3000
     OBSERVATION_MAX_CHARS = 500
-    CONFIDENCE_THRESHOLD = 0.7
 
     def __init__(self, tool_registry: ToolRegistry, model_client=None):
         self.tools = tool_registry
         self.llm = model_client or get_model_client()
-        self.seed_retriever = SeedRetriever()
         self._prompt_template = self._load_prompt_template()
+
+        # 从配置文件加载上限参数
+        cfg = get_config()
+        agentic_cfg = cfg["agentic"]
+        self.max_turns = agentic_cfg["max_turns"]
+        self.max_result_chars = agentic_cfg["max_result_chars"]
+        self.confidence_threshold = agentic_cfg["confidence_threshold"]
+        self._synthesis_cfg = cfg["forced_synthesis"]
 
     def run(self, question: str, domain: str,
             entity_types: list = None,
             history: list = None,
             memories: list = None,
             long_term_memories: dict = None) -> AgenticResult:
-        """主入口：种子检索 → 构建上下文 → Agentic 循环"""
+        """主入口：构建上下文 → Agentic 循环"""
         start_time = time.time()
-
-        # Phase A: 种子检索
-        seed = self.seed_retriever.retrieve(question)
 
         ctx = AgenticContext(
             question=question,
@@ -83,7 +84,6 @@ class AgenticEngine:
             history=history or [],
             memories=memories or [],
             long_term_memories=long_term_memories or {},
-            seed=seed,
         )
 
         # Phase B: 构建 system prompt
@@ -118,8 +118,8 @@ class AgenticEngine:
 
         tool_calls_count = 0
 
-        for turn in range(self.MAX_TURNS):
-            logger.info(f"[agentic] turn {turn + 1}/{self.MAX_TURNS}")
+        for turn in range(self.max_turns):
+            logger.info(f"[agentic] turn {turn + 1}/{self.max_turns}")
 
             response = self.llm.call_with_tools(
                 messages=messages,
@@ -150,7 +150,7 @@ class AgenticEngine:
                     total_turns=turn + 1,
                     total_tool_calls=tool_calls_count,
                     total_time_ms=total_ms,
-                    needs_human_review=confidence < self.CONFIDENCE_THRESHOLD,
+                    needs_human_review=confidence < self.confidence_threshold,
                     running_summary=ctx.running_summary,
                 )
 
@@ -167,15 +167,18 @@ class AgenticEngine:
                 obs = self._execute_tool_call(tc)
                 ctx.add_observation(obs)
                 tool_calls_count += 1
+                # 传完整结果 JSON（截断到 max_result_chars），让 LLM 获得充分数据
+                result_text = json.dumps(obs.full_result, ensure_ascii=False, default=str)
+                if len(result_text) > self.max_result_chars:
+                    result_text = result_text[:self.max_result_chars] + "...(truncated)"
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc["id"],
-                    "content": obs.summary,
+                    "content": result_text,
                 })
 
-            # 每 3 条观察压缩一次上下文
-            if len(ctx.observations) >= 3:
-                messages = ctx.compress(messages)
+            # 尝试压缩上下文（compress 内部判断是否触发）
+            messages = ctx.compress(messages)
 
             # 每 2 轮插入反思提示
             if turn > 0 and turn % 2 == 0:
@@ -189,18 +192,32 @@ class AgenticEngine:
                 })
 
         # 达到最大轮数，强制综合
+        # 汇总已收集的工具调用信息，帮助 LLM 基于现有数据作答
+        synth_cfg = self._synthesis_cfg
+        tool_summary_parts = []
+        for obs in ctx.observations:
+            result_preview = json.dumps(
+                obs.full_result, ensure_ascii=False, default=str,
+            )[:synth_cfg["preview_chars"]]
+            tool_summary_parts.append(f"- [{obs.tool_name}] {result_preview}")
+        tool_summary = "\n".join(tool_summary_parts[:synth_cfg["max_items"]])
+
         messages.append({
-            "role": "user",
+            "role": "system",
             "content": (
-                "已达到最大工具调用次数。请基于已收集的信息给出最终答案。"
-                "如果信息不足，请在 confidence 中体现。"
+                "已达到最大工具调用次数，不能再调用工具。\n"
+                "以下是已收集的工具调用结果：\n"
+                f"{tool_summary}\n\n"
+                "请基于以上数据直接给出最终 JSON 答案。"
+                "如果数据中有 total_count 或 sample_neighbors，请据此回答统计类问题。"
+                "不要再调用任何工具。"
             ),
         })
         final = self.llm.call_with_tools(messages=messages, tools=tool_defs)
         answer, confidence, conf_reason = self._parse_final(final)
         total_ms = (time.time() - start_time) * 1000
         logger.info(
-            f"[agentic] 强制综合: {self.MAX_TURNS} 轮, "
+            f"[agentic] 强制综合: {self.max_turns} 轮, "
             f"{tool_calls_count} 次工具调用, "
             f"置信度={confidence:.2f}, {total_ms:.0f}ms"
         )
@@ -209,7 +226,7 @@ class AgenticEngine:
             confidence=min(confidence, 0.5),
             confidence_reason=conf_reason + "（达到最大轮数，强制综合）",
             observations=ctx.observations,
-            total_turns=self.MAX_TURNS,
+            total_turns=self.max_turns,
             total_tool_calls=tool_calls_count,
             total_time_ms=total_ms,
             needs_human_review=True,
@@ -263,8 +280,13 @@ class AgenticEngine:
                 "根据历史对话", "此前已确认", "历史上下文",
                 "已完整列出", "如上所述", "如前所述",
                 "无可用工具", "无法访问真实数据", "没有任何可用工具",
+                "Let me try", "let me try", "I need to",
+                "Let me check", "let me check",
             ]
-            if any(p in content for p in meta_patterns) or len(content.strip()) < 50:
+            stripped = content.strip()
+            # 只有内容短（< 200 字符）且包含元评论关键词时才判定
+            is_meta = len(stripped) < 200 and any(p in content for p in meta_patterns)
+            if is_meta:
                 logger.warning(f"[agentic] LLM 输出元评论而非实际回答: {content[:100]}")
                 return (
                     DecisionAnswer(summary="系统未能获取到具体数据，请尝试重新提问。"),
@@ -272,7 +294,7 @@ class AgenticEngine:
                     "LLM 输出元评论，未提供实际数据",
                 )
             return (
-                DecisionAnswer(summary=content[:500]),
+                DecisionAnswer(summary=content[:self._synthesis_cfg["raw_fallback_chars"]]),
                 0.4,
                 "无法解析为结构化 JSON，返回原始文本",
             )
@@ -329,16 +351,12 @@ class AgenticEngine:
             tool_defs = self.tools.get_definitions(ctx.domain)
         tool_desc = self._format_tool_descriptions(tool_defs)
 
-        # 种子上下文
-        seed_context = ctx.seed.format_for_prompt() if ctx.seed else ""
-
         prompt = self._prompt_template.format(
             domain=ctx.domain,
             entity_types_section=ctx.format_entity_types(),
             tool_descriptions=tool_desc,
             history=ctx.format_history(),
             memories=ctx.format_memories(),
-            seed_context=seed_context,
         )
         return prompt
 

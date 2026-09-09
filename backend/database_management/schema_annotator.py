@@ -213,6 +213,7 @@ class SchemaAnnotator:
         for tbl in result.get("tables", []):
             tables_out.append({
                 "table_name": tbl["t"],
+                "table_role": tbl.get("tr", "entity"),
                 "business_description": tbl.get("d", ""),
                 "entity_type": tbl.get("et", "other"),
             })
@@ -268,6 +269,7 @@ class SchemaAnnotator:
             if annotation:
                 table["business_description"] = annotation.get("business_description")
                 table["entity_type"] = annotation.get("entity_type")
+                table["table_role"] = annotation.get("table_role", "entity")
 
         for column in schema.get("columns", []):
             col_name = self._resolve_key(column, 'column_name')

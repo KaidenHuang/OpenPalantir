@@ -292,7 +292,8 @@ class GraphRetriever(BaseRetriever):
             content={"name": name, "type": entity.get("type", ""),
                      "description": entity.get("description", ""),
                      "confidence": entity.get("confidence", 0),
-                     "datasource": entity.get("datasource", "")},
+                     "datasource": entity.get("datasource", ""),
+                     "attributes": entity.get("attributes", {})},
             relevance_score=score,
             metadata=metadata,
         )

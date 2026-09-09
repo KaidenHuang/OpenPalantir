@@ -1,17 +1,10 @@
 """
-SeedRetriever — 轻量级级联种子检索
+种子检索工具函数 — 中文分词（供内置工具复用）
 
-在 Agentic 循环开始前做一次快速检索，为 LLM 提供初始上下文。
-策略：文档/数据库摘要 → 提取 datasource_uri → 过滤 Neo4j 图检索
+SeedRetriever 类已移除，其功能由 list_summaries / get_summary_detail 内置工具替代。
 """
 import re
 from typing import List
-
-from decision_engine.agentic.types import SeedResult
-from decision_engine.contracts import AnalyzedQuery
-from decision_engine.retrievers.document_summary_retriever import DocumentSummaryRetriever
-from decision_engine.retrievers.database_summary_retriever import DatabaseSummaryRetriever
-from system.logger import logger
 
 # 尝试导入 jieba 分词，不可用时降级为正则分割
 try:
@@ -35,88 +28,16 @@ _STOP_WORDS = frozenset({
 })
 
 
-class SeedRetriever:
-    """轻量级级联种子检索
+def _tokenize_question(question: str) -> List[str]:
+    """中文分词：jieba 优先，降级为正则分割 + 去停用词"""
+    if _HAS_JIEBA:
+        tokens = jieba.lcut(question)
+    else:
+        tokens = re.split(r'[的，。,．？?！!、\s:：；;]+', question)
 
-    在海量数据下（百万实体），全局搜索噪声大且慢。
-    级联过滤将检索范围缩小到相关文档/数据库对应的实体子集。
-    """
-
-    MAX_DOC_RESULTS = 5
-    MAX_DB_RESULTS = 5
-    MAX_ENTITIES = 20
-    MAX_SOURCE_FILTERS = 5
-
-    def __init__(self):
-        self._doc_retriever = DocumentSummaryRetriever()
-        self._db_retriever = DatabaseSummaryRetriever()
-
-    @staticmethod
-    def _tokenize(question: str) -> List[str]:
-        """中文分词：jieba 优先，降级为正则分割 + 去停用词"""
-        if _HAS_JIEBA:
-            tokens = jieba.lcut(question)
-        else:
-            tokens = re.split(r'[的，。,．？?！!、\s:：；;]+', question)
-
-        keywords = []
-        for t in tokens:
-            t = t.strip()
-            if len(t) >= 2 and t not in _STOP_WORDS:
-                keywords.append(t)
-        return keywords
-
-    def retrieve(self, question: str) -> SeedResult:
-        """用问题执行级联检索，返回种子结果"""
-        keywords = self._tokenize(question)
-        query = AnalyzedQuery(entities=keywords, intent="general")
-
-        # 阶段 1：文档 + 数据库摘要检索
-        doc_evidence = []
-        db_evidence = []
-        try:
-            doc_evidence = self._doc_retriever.retrieve(query, {})
-        except Exception as e:
-            logger.warning(f"[seed] 文档检索失败: {e}")
-        try:
-            db_evidence = self._db_retriever.retrieve(query, {})
-        except Exception as e:
-            logger.warning(f"[seed] 数据库检索失败: {e}")
-
-        # 阶段 2：提取 datasource_uri（文档 + 数据库）
-        all_uris = list(dict.fromkeys(
-            ev.metadata["datasource"] for ev in doc_evidence + db_evidence
-            if ev.metadata.get("datasource")
-        ))[:self.MAX_SOURCE_FILTERS]
-
-        # 阶段 3：用 URI 过滤图检索（文档和数据库对应的实体）
-        entities = []
-        if all_uris:
-            try:
-                from knowledge_graph.graph_manager import graph_manager
-                for uri in all_uris:
-                    found = graph_manager.search_entities_by_datasource(uri, limit=20)
-                    entities.extend(found)
-            except Exception as e:
-                logger.warning(f"[seed] 图检索失败: {e}")
-
-        # 阶段 4：按相关性排序并截断
-        doc_top = sorted(
-            doc_evidence, key=lambda e: e.relevance_score, reverse=True,
-        )[:self.MAX_DOC_RESULTS]
-        db_top = sorted(
-            db_evidence, key=lambda e: e.relevance_score, reverse=True,
-        )[:self.MAX_DB_RESULTS]
-        entities_top = entities[:self.MAX_ENTITIES]
-
-        logger.info(
-            f"[seed] 种子检索完成: "
-            f"文档={len(doc_top)}, 数据库={len(db_top)}, 实体={len(entities_top)}"
-        )
-
-        return SeedResult(
-            doc_summaries=doc_top,
-            db_summaries=db_top,
-            related_entities=entities_top,
-            total_sources=len(all_uris),
-        )
+    keywords = []
+    for t in tokens:
+        t = t.strip()
+        if len(t) >= 2 and t not in _STOP_WORDS:
+            keywords.append(t)
+    return keywords

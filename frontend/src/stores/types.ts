@@ -156,6 +156,7 @@ export interface DatabaseConnection {
 export interface SchemaTable {
   table_name: string;
   entity_type?: string;
+  table_role?: string;
 }
 
 export interface SchemaColumn {
@@ -188,7 +189,7 @@ export interface SchemaResult {
 export interface DbSummary {
   db_description?: string;
   business_domain?: string;
-  key_entities?: string[];
+  key_entities?: string;
 }
 
 export interface DatabaseItem {

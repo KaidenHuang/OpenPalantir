@@ -36,6 +36,7 @@ interface TableInfo {
   row_count?: number;
   business_description?: string;
   entity_type?: string;
+  table_role?: string;
 }
 
 interface ColumnInfo {
@@ -588,14 +589,14 @@ function DatabaseManagement() {
                 >
                   {isImporting ? '导入中...' : importTaskId ? '已创建任务' : '导入图谱'}
                 </button>
-                <button onClick={handleStartCdc} disabled={!selectedDatabase}>
-                  增量同步
-                </button>
                 {(selectedConnection?.type === 'mysql' || selectedConnection?.type === 'postgresql') && (
                   <button onClick={handleConfigureCdc} disabled={!selectedDatabase}>
                     配置 CDC
                   </button>
                 )}
+                <button onClick={handleStartCdc} disabled={!selectedDatabase}>
+                  增量同步
+                </button>
                 <Button icon={<ReloadOutlined />} onClick={() => loadSchema(selectedConnection.id, selectedConnection.database)}>
                   刷新
                 </Button>
@@ -664,9 +665,9 @@ function DatabaseManagement() {
                               >
                                 <div className="table-header">
                                   <span className="table-name">{table.table_name}</span>
-                                  {table.entity_type && (
-                                    <span className="entity-type">{table.entity_type}</span>
-                                  )}
+                                  <span className={`table-role table-role-${table.table_role || 'entity'}`}>
+                                    {table.table_role === 'junction' ? '关联表' : table.table_role === 'attribute' ? '属性表' : '实体表'}
+                                  </span>
                                 </div>
                                 {table.business_description && (
                                   <p className="table-description">{table.business_description}</p>

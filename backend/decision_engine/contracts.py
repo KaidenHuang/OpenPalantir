@@ -117,7 +117,7 @@ class DecisionAnswer(BaseModel):
 class ToolTrace(BaseModel):
     """单次工具调用的执行记录"""
     step: int = 0
-    skill_name: str = ""
+    tool_name: str = ""
     params: Dict[str, Any] = Field(default_factory=dict)
     result_summary: str = ""
     success: bool = True
@@ -173,7 +173,7 @@ class DecisionResponse(BaseModel):
     evidence: List[EvidenceItem] = Field(default_factory=list)
     evidence_citations: List[EvidenceCitation] = Field(default_factory=list)
     answer: DecisionAnswer = Field(default_factory=DecisionAnswer)
-    skill_trace: List[ToolTrace] = Field(default_factory=list)
+    tool_trace: List[ToolTrace] = Field(default_factory=list)
     decision_mode: str = "agentic_rag"
     response_type: str = "normal"
     confidence: float = 0.0

@@ -62,6 +62,9 @@ class GraphManager:
     def get_entity(self, entity_id: str) -> Optional[Dict[str, Any]]:
         return self.entity_repo.get_entity(entity_id)
 
+    def get_entities_batch(self, entity_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        return self.entity_repo.get_entities_batch(entity_ids)
+
     def search_entities(self, query: str, limit: int = 10, source_filters: List[str] = None,
                         entity_types: List[str] = None) -> List[Dict[str, Any]]:
         return self.entity_repo.search_entities(query, limit, source_filters, entity_types)

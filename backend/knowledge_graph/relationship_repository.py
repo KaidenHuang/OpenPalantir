@@ -4,8 +4,10 @@
 从 GraphManager 中拆出，职责单一：关系增删改查。
 GraphManager 作为薄门面委托调用本模块。
 """
+import json
 from typing import List, Dict, Any
 from config.neo4j_config import neo4j_conn
+from utils.json_utils import db_json_dumps
 from system.logger import logger
 
 
@@ -154,7 +156,8 @@ class RelationshipRepository:
                 'subject_id': relationship.get('subject_id', ''),
                 'object_id': relationship.get('object_id', ''),
                 'occurrence_time': relationship.get('occurrence_time'),
-                'description': relationship.get('description')
+                'description': relationship.get('description'),
+                'attributes': relationship.get('attributes', '{}') if isinstance(relationship.get('attributes'), str) else db_json_dumps(relationship.get('attributes', {})) if relationship.get('attributes') else '{}'
             }
 
             query = """
@@ -164,7 +167,8 @@ class RelationshipRepository:
             ON CREATE SET r.created_at = datetime()
             SET r.predicate = $predicate, r.confidence = $confidence,
                 r.subject_id = $subject_id, r.object_id = $object_id,
-                r.occurrence_time = $occurrence_time, r.description = $description
+                r.occurrence_time = $occurrence_time, r.description = $description,
+                r.attributes = $attributes
             RETURN type(r) as type
             """
             neo4j_conn.execute_query(query, params)
@@ -191,6 +195,8 @@ class RelationshipRepository:
 
             rel_list = []
             for rel in relationships:
+                attrs = rel.get('attributes', {})
+                attrs_str = db_json_dumps(attrs) if attrs else '{}'
                 rel_list.append({
                     'subject_id': rel.get('subject_id', ''),
                     'object_id': rel.get('object_id', ''),
@@ -198,7 +204,8 @@ class RelationshipRepository:
                     'relationship_id': rel.get("relationship_id", ""),
                     'confidence': rel.get('confidence', 0.5),
                     'occurrence_time': rel.get('occurrence_time'),
-                    'description': rel.get('description')
+                    'description': rel.get('description'),
+                    'attributes': attrs_str
                 })
 
             if use_create:
@@ -209,6 +216,7 @@ class RelationshipRepository:
                 CREATE (s)-[rel:RELATED_TO {relationship_id: r.relationship_id}]->(t)
                 SET rel.predicate = r.predicate, rel.confidence = r.confidence,
                     rel.occurrence_time = r.occurrence_time, rel.description = r.description,
+                    rel.attributes = r.attributes,
                     rel.created_at = datetime()
                 """
             else:
@@ -219,7 +227,8 @@ class RelationshipRepository:
                 MERGE (s)-[rel:RELATED_TO {relationship_id: r.relationship_id}]->(t)
                 ON CREATE SET rel.created_at = datetime()
                 SET rel.predicate = r.predicate, rel.confidence = r.confidence,
-                    rel.occurrence_time = r.occurrence_time, rel.description = r.description
+                    rel.occurrence_time = r.occurrence_time, rel.description = r.description,
+                    rel.attributes = r.attributes
                 """
             neo4j_conn.execute_query(query, {"relationships": rel_list})
 

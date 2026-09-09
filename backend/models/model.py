@@ -27,7 +27,7 @@ class ModelInfo(Base):
         return {
             'id': self.id,
             'name': self.name,
-            'type': self.type,
+            'model_type': self.type,
             'status': self.status,
             'models': self.models or [],
             'enabled': self.enabled,

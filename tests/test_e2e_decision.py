@@ -14,21 +14,21 @@ CASES = [
     ("S3", "再见", lambda d: d["response_type"] == "simple"),
     # 事实查询（禁止误调 analyze_*）
     ("F1", "当前有哪几个部门", lambda d:
-        all(t["skill_name"] not in ("analyze_centrality", "analyze_community", "analyze_path")
-            for t in d.get("skill_trace", []))),
+        all(t["tool_name"] not in ("analyze_centrality", "analyze_community", "analyze_path")
+            for t in d.get("tool_trace", []))),
     ("F2", "员工张三在哪个部门", lambda d:
-        all(t["skill_name"] not in ("analyze_centrality", "analyze_community", "analyze_path")
-            for t in d.get("skill_trace", []))),
+        all(t["tool_name"] not in ("analyze_centrality", "analyze_community", "analyze_path")
+            for t in d.get("tool_trace", []))),
     ("F3", "公司有多少员工", lambda d:
-        all(t["skill_name"] not in ("analyze_centrality", "analyze_community", "analyze_path")
-            for t in d.get("skill_trace", []))),
+        all(t["tool_name"] not in ("analyze_centrality", "analyze_community", "analyze_path")
+            for t in d.get("tool_trace", []))),
     # 图分析（正确使用工具）
     ("G1", "分析组织架构中的核心节点", lambda d:
-        any(t["skill_name"] == "analyze_centrality" for t in d.get("skill_trace", []))),
+        any(t["tool_name"] == "analyze_centrality" for t in d.get("tool_trace", []))),
     ("G2", "检测组织中的社区结构", lambda d:
-        any(t["skill_name"] == "analyze_community" for t in d.get("skill_trace", []))),
+        any(t["tool_name"] == "analyze_community" for t in d.get("tool_trace", []))),
     ("G3", "分析张三和李四之间的关联路径", lambda d:
-        any(t["skill_name"] == "analyze_path" for t in d.get("skill_trace", []))),
+        any(t["tool_name"] == "analyze_path" for t in d.get("tool_trace", []))),
     # 异常场景
     ("E2", "...", lambda d: d is not None and "response_type" in d),
 ]
@@ -65,7 +65,7 @@ def run():
         resp_type = result.get("response_type", "?")
         confidence = result.get("confidence", 0)
         summary = result.get("answer", {}).get("summary", "")[:80]
-        tools = [t["skill_name"] for t in result.get("skill_trace", [])]
+        tools = [t["tool_name"] for t in result.get("tool_trace", [])]
         metadata = result.get("metadata", {})
 
         print(f"  耗时: {elapsed:.1f}s")

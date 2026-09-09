@@ -18,6 +18,7 @@ from typing import Optional
 from decision_engine.agentic.engine import AgenticEngine
 from decision_engine.agentic.tools import ToolRegistry
 from decision_engine.agentic.types import AgenticResult, Observation
+from decision_engine.config import get_config
 from decision_engine.contracts import DecisionAnswer
 from model_management.model_client import get_model_client
 from system.logger import logger
@@ -25,22 +26,22 @@ from system.logger import logger
 
 # ── 子 Agent 角色 Prompt ──────────────────────────────────
 
-_PLANNER_PROMPT = """你是一个任务规划专家。你的职责是将复杂的分析问题分解为可执行的子任务。
+_PLANNER_PROMPT_TEMPLATE = """你是一个任务规划专家。你的职责是将复杂的分析问题分解为可执行的子任务。
 
 给定用户问题，请输出 JSON 格式的任务分解：
 ```json
-{{
+{{{{
   "analysis": "对问题的分析（1-2句）",
   "sub_tasks": [
-    {{"id": 1, "type": "research", "description": "需要检索的信息", "query": "具体查询内容"}},
-    {{"id": 2, "type": "analyze", "description": "需要的分析", "query": "具体分析内容"}}
+    {{{{"id": 1, "type": "research", "description": "需要检索的信息", "query": "具体查询内容"}}}},
+    {{{{"id": 2, "type": "analyze", "description": "需要的分析", "query": "具体分析内容"}}}}
   ],
   "mode": "chain"
-}}
+}}}}
 ```
 
 规则：
-- sub_tasks 最多 4 个
+- sub_tasks 最多 {max_subtasks} 个
 - type 只能是 "research"（信息检索）或 "analyze"（图谱分析）
 - 如果问题简单，只生成 1 个 sub_task，mode 设为 "simple"
 - 不要编造数据，只描述需要什么"""
@@ -68,13 +69,13 @@ _CRITIC_PROMPT = """你是一个严谨的审核专家。你的职责是校验答
 class MultiAgentEngine:
     """多 Agent 协作引擎"""
 
-    # 置信度低于此阈值时触发 Critic 校验
-    CRITIC_THRESHOLD = 0.6
-
     def __init__(self, tool_registry: ToolRegistry, model_client=None):
         self.tools = tool_registry
         self.llm = model_client or get_model_client()
         self._single_engine = AgenticEngine(tool_registry, self.llm)
+
+        # 从配置文件加载多 Agent 参数
+        self._ma_cfg = get_config()["multi_agent"]
 
     def run(self, question: str, domain: str,
             entity_types: list = None,
@@ -96,10 +97,11 @@ class MultiAgentEngine:
         )
 
         # Phase 2: 低置信度时触发 Critic 校验
-        if result.confidence < self.CRITIC_THRESHOLD and result.total_tool_calls > 0:
+        critic_threshold = self._ma_cfg["critic_threshold"]
+        if result.confidence < critic_threshold and result.total_tool_calls > 0:
             logger.info(
                 f"[multi_agent] Phase 2: 置信度 {result.confidence:.2f} "
-                f"< {self.CRITIC_THRESHOLD}，触发 Critic 校验"
+                f"< {critic_threshold}，触发 Critic 校验"
             )
             result = self._critic_review(question, result)
 
@@ -117,7 +119,7 @@ class MultiAgentEngine:
 
             # 收集证据摘要
             evidence_summary = ""
-            for obs in result.observations[:5]:
+            for obs in result.observations[:self._ma_cfg["critic_evidence"]]:
                 evidence_summary += f"- [{obs.tool_name}] {obs.summary}\n"
 
             critic_input = (
@@ -160,7 +162,7 @@ class MultiAgentEngine:
                 result.confidence = new_confidence
                 result.confidence_reason = (
                     f"{result.confidence_reason}；"
-                    f"Critic 审核: {'; '.join(issues[:3])}"
+                    f"Critic 审核: {'; '.join(issues[:self._ma_cfg['critic_max_issues']])}"
                 )
                 result.needs_human_review = True
 

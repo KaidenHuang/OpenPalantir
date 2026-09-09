@@ -8,6 +8,7 @@ from decision_engine.contracts import (
     AnalyzedQuery, ConversationSession, ConversationTurn, DecisionAnswer,
     EvidenceCitation, EvidenceItem,
 )
+from decision_engine.config import get_config
 
 CONVERSATIONS_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "conversations")
 
@@ -71,7 +72,9 @@ class _ConversationManager:
         self._save(session)
         return turn_id
 
-    def get_history(self, session_id: str, max_turns: int = 3) -> List[Dict]:
+    def get_history(self, session_id: str, max_turns: int = None) -> List[Dict]:
+        if max_turns is None:
+            max_turns = get_config()["conversation"]["max_history_turns"]
         session = self._cache.get(session_id) or self._load(session_id)
         if not session:
             return []

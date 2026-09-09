@@ -1049,6 +1049,27 @@
   border-radius: 10px;
 }
 
+.database-management .table-role {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.database-management .table-role-entity {
+  background-color: #e7f3ff;
+  color: #0069d9;
+}
+
+.database-management .table-role-junction {
+  background-color: #fff3e0;
+  color: #e65100;
+}
+
+.database-management .table-role-attribute {
+  background-color: #e8f5e9;
+  color: #2e7d32;
+}
+
 .database-management .table-description {
   margin: 6px 0;
   font-size: 12px;

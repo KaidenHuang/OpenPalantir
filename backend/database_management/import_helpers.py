@@ -54,13 +54,14 @@ def refine_pks_via_dialect(pk_columns: Dict[str, List[str]], columns_by_table: D
 
 
 def make_relationship(subject: str, object_: str, predicate: str, confidence: float = 0.8,
-                       description: str = "") -> Dict:
+                       description: str = "", attributes: dict = None) -> Dict:
     return {
         "s": subject,
         "o": object_,
         "p": predicate,
         "ot": "",
-        "d": description
+        "d": description,
+        "a": attributes or {}
     }
 
 
@@ -140,12 +141,20 @@ def dedup_relationships(relationships: List[Dict]) -> List[Dict]:
 def build_relationships_from_index(foreign_keys: List[Dict], inferred_relationships: List[Dict],
                                     pk_index: Dict[str, Dict[str, str]],
                                     fk_index: Dict[str, Dict[str, Dict[str, str]]],
-                                    max_cross_product_pairs: int = 50) -> List[Dict]:
-    """使用 PK/FK 索引构建关系，无需完整行数据"""
+                                    max_cross_product_pairs: int = 50,
+                                    skip_tables: set = None) -> List[Dict]:
+    """使用 PK/FK 索引构建关系，无需完整行数据
+
+    Args:
+        skip_tables: 跳过这些表的 FK 关系（junction/attribute 表已有专门处理路径）
+    """
     relationships = []
+    skip = skip_tables or set()
 
     for fk in foreign_keys:
         source_table = fk.get("table_name") or fk.get("TABLE_NAME", "")
+        if source_table in skip:
+            continue
         source_column = fk.get("column_name") or fk.get("COLUMN_NAME", "")
         target_table = fk.get("referenced_table_name") or fk.get("REFERENCED_TABLE_NAME", "")
 
@@ -198,3 +207,196 @@ def build_relationships_from_index(foreign_keys: List[Dict], inferred_relationsh
     if relationships:
         relationships = dedup_relationships(relationships)
     return relationships
+
+
+# ── 表角色分类与非实体表处理 ──
+
+
+def classify_tables_by_role(
+    tables: List[Dict],
+    pk_columns: Dict[str, List[str]],
+    foreign_keys: List[Dict],
+    columns_by_table: Dict[str, List[Dict]],
+) -> Dict[str, str]:
+    """根据 table_role 分类所有表，返回 {table_name: role}
+
+    优先级：
+    1. LLM 标注的 table_role（Phase 1 已标注）
+    2. 结构启发式兜底（LLM 未标注或标注异常时）
+    """
+    # 按 table_name 分组 FK
+    fk_by_table: Dict[str, List[Dict]] = {}
+    for fk in foreign_keys:
+        table = fk.get("table_name") or fk.get("TABLE_NAME", "")
+        if table:
+            fk_by_table.setdefault(table, []).append(fk)
+
+    # 收集被 FK 引用的表集合（用于 attribute 表判定）
+    referenced_tables = set()
+    for fk in foreign_keys:
+        ref = fk.get("referenced_table_name") or fk.get("REFERENCED_TABLE_NAME", "")
+        if ref:
+            referenced_tables.add(ref)
+
+    role_map: Dict[str, str] = {}
+    for table_info in tables:
+        name = table_info.get("table_name", "")
+        if not name:
+            continue
+
+        # 1. 优先使用 LLM 标注
+        llm_role = table_info.get("table_role", "")
+        if llm_role in ("entity", "junction", "attribute"):
+            role_map[name] = llm_role
+            continue
+
+        # 2. 结构启发式兜底
+        pks = set(pk_columns.get(name, []))
+        fks = fk_by_table.get(name, [])
+        fk_cols = set(fk.get("column_name") or fk.get("COLUMN_NAME", "") for fk in fks)
+        ref_tables = set(
+            fk.get("referenced_table_name") or fk.get("REFERENCED_TABLE_NAME", "")
+            for fk in fks
+        )
+        all_cols = set(c["column_name"] for c in columns_by_table.get(name, []))
+        non_fk_cols = all_cols - fk_cols
+
+        # junction: PK 全为 FK 且引用 >= 2 个不同表
+        if (pks and len(pks) >= 2
+                and pks.issubset(fk_cols)
+                and len(ref_tables) >= 2):
+            role_map[name] = "junction"
+            logger.info(f"表 {name} 通过启发式识别为 junction（关联表）")
+            continue
+
+        # attribute: 仅有 1 个 FK 指向实体表，且非 FK 列较少，自身不被其他表引用
+        if (len(fks) == 1
+                and len(ref_tables) == 1
+                and name not in referenced_tables
+                and len(non_fk_cols) <= 5):
+            role_map[name] = "attribute"
+            logger.info(f"表 {name} 通过启发式识别为 attribute（属性表）")
+            continue
+
+        role_map[name] = "entity"
+
+    # 日志统计
+    counts = {"entity": 0, "junction": 0, "attribute": 0}
+    for role in role_map.values():
+        counts[role] = counts.get(role, 0) + 1
+    logger.info(
+        f"表角色分类完成: 共 {len(role_map)} 个表 "
+        f"(entity={counts['entity']}, junction={counts['junction']}, attribute={counts['attribute']})"
+    )
+    return role_map
+
+
+def build_junction_relationships(
+    junction_tables: List[str],
+    junction_row_data: Dict[str, List[Dict]],
+    fk_defs_by_table: Dict[str, List[Dict]],
+    pk_index: Dict[str, Dict[str, str]],
+) -> List[Dict]:
+    """关联表每行 → 被引用实体间的直接关系边
+
+    例：dept_emp(emp_no=10001, dept_no=d005, from_date=..., to_date=...)
+    → employees:10001 --[dept_emp {from_date, to_date}]--> departments:d005
+    """
+    relationships = []
+
+    for jt_name in junction_tables:
+        fks = fk_defs_by_table.get(jt_name, [])
+        if len(fks) < 2:
+            continue
+
+        # 提取 FK 列名和引用的目标表
+        fk_info = []
+        fk_col_names = set()
+        for fk in fks:
+            col = fk.get("column_name") or fk.get("COLUMN_NAME", "")
+            ref_table = fk.get("referenced_table_name") or fk.get("REFERENCED_TABLE_NAME", "")
+            if col and ref_table:
+                fk_info.append({"col": col, "ref_table": ref_table})
+                fk_col_names.add(col)
+
+        if len(fk_info) < 2:
+            continue
+
+        rows = junction_row_data.get(jt_name, [])
+        for row in rows:
+            # 解析每行的 FK 值 → 目标实体名
+            entities_in_row = []
+            for fi in fk_info:
+                fk_val = row.get(fi["col"])
+                if fk_val is None or str(fk_val).strip() == "" or str(fk_val) == "None":
+                    continue
+                target_entity = pk_index.get(fi["ref_table"], {}).get(str(fk_val))
+                if target_entity:
+                    entities_in_row.append((fi["ref_table"], target_entity))
+
+            if len(entities_in_row) < 2:
+                continue
+
+            # 非 FK 列作为关系属性
+            attrs = {k: v for k, v in row.items()
+                     if k not in fk_col_names and v is not None}
+
+            # 为每对 (A, B) 创建单向关系 A→B（避免双向重复）
+            for i in range(len(entities_in_row)):
+                for j in range(i + 1, len(entities_in_row)):
+                    src_table, src_entity = entities_in_row[i]
+                    tgt_table, tgt_entity = entities_in_row[j]
+                    desc = f"{jt_name}: {src_entity} -> {tgt_entity}"
+                    relationships.append(
+                        make_relationship(src_entity, tgt_entity, jt_name, 1.0, desc, attrs)
+                    )
+
+    if relationships:
+        relationships = dedup_relationships(relationships)
+    return relationships
+
+
+def collect_attribute_data(
+    attribute_tables: List[str],
+    attribute_row_data: Dict[str, List[Dict]],
+    fk_defs_by_table: Dict[str, List[Dict]],
+    pk_index: Dict[str, Dict[str, str]],
+) -> Dict[str, Dict[str, List[Dict]]]:
+    """属性表行 → 按父实体分组，返回 {parent_entity_name: {table_name: [rows]}}
+
+    例：titles(emp_no=10001, title=Engineer, from_date=..., to_date=...)
+    → {"employees:10001": {"titles": [{"title": "Engineer", "from_date": ..., "to_date": ...}]}}
+    """
+    result: Dict[str, Dict[str, List[Dict]]] = {}
+
+    for at_name in attribute_tables:
+        fks = fk_defs_by_table.get(at_name, [])
+        if len(fks) != 1:
+            continue
+
+        fk = fks[0]
+        fk_col = fk.get("column_name") or fk.get("COLUMN_NAME", "")
+        ref_table = fk.get("referenced_table_name") or fk.get("REFERENCED_TABLE_NAME", "")
+        if not fk_col or not ref_table:
+            continue
+
+        # 收集 FK 列名（含复合主键中的非 FK 列也不排除，只去掉外键列本身）
+        rows = attribute_row_data.get(at_name, [])
+        for row in rows:
+            fk_val = row.get(fk_col)
+            if fk_val is None or str(fk_val).strip() == "" or str(fk_val) == "None":
+                continue
+
+            parent_entity = pk_index.get(ref_table, {}).get(str(fk_val))
+            if not parent_entity:
+                continue
+
+            # 去掉 FK 列，剩余列作为属性记录
+            attr_record = {k: v for k, v in row.items()
+                          if k != fk_col and v is not None}
+            if not attr_record:
+                continue
+
+            result.setdefault(parent_entity, {}).setdefault(at_name, []).append(attr_record)
+
+    return result

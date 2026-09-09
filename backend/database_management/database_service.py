@@ -141,6 +141,7 @@ class DatabaseService:
                     row_count=table_data.get("table_rows"),
                     business_description=table_data.get("business_description"),
                     entity_type=table_data.get("entity_type"),
+                    table_role=table_data.get("table_role", "entity"),
                     created_at=datetime.now()
                 )
                 db.add(table)

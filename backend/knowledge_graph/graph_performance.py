@@ -84,19 +84,17 @@ class GraphPerformanceOptimizer:
 
     def clear_cache(self, pattern: str = "graph:*"):
         """清除缓存"""
-        logger.info(f"[clear_cache] 开始清除缓存: pattern={pattern}")
-        if self.use_redis:
-            try:
-                keys = self.redis_client.keys(pattern)
-                if keys:
-                    self.redis_client.delete(*keys)
-                logger.info(f"[clear_cache] 清除缓存成功: 清除了 {len(keys)} 个缓存项")
-                return {"status": "success", "message": f"清除了 {len(keys)} 个缓存项"}
-            except Exception as e:
-                logger.error(f"[clear_cache] 清除缓存失败: {str(e)}")
-                return {"status": "error", "message": f"清除缓存失败: {str(e)}"}
-        logger.info("[clear_cache] Redis不可用，跳过缓存清除")
-        return {"status": "warning", "message": "Redis不可用，跳过缓存清除"}
+        if not self.use_redis:
+            return {"status": "warning", "message": "Redis不可用，跳过缓存清除"}
+        try:
+            keys = self.redis_client.keys(pattern)
+            if keys:
+                self.redis_client.delete(*keys)
+            logger.debug(f"[clear_cache] 清除缓存: pattern={pattern}, 清除 {len(keys)} 项")
+            return {"status": "success", "message": f"清除了 {len(keys)} 个缓存项"}
+        except Exception as e:
+            logger.warning(f"[clear_cache] 清除缓存失败: {str(e)}")
+            return {"status": "error", "message": f"清除缓存失败: {str(e)}"}
 
     def cache_graph_data(self, key: str, data: Any):
         """缓存图谱数据"""

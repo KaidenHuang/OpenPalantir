@@ -6,32 +6,36 @@ AgenticContext — Agentic 循环的上下文窗口管理
 2. 每 3 条观察压缩为 running_summary，旧观察移出
 3. 硬性 token 预算，超出时最旧观察优先淘汰
 """
-from typing import List, Optional
+from typing import List
 
-from decision_engine.agentic.types import Observation, SeedResult
+from decision_engine.agentic.types import Observation
+from decision_engine.config import get_config
 
 
 class AgenticContext:
     """管理 Agentic 循环中的上下文窗口"""
 
-    MAX_OBSERVATIONS_IN_CONTEXT = 6
     OBSERVATION_SUMMARY_CHARS = 500
 
     def __init__(self, question: str, domain: str,
                  entity_types: list = None,
                  history: list = None,
                  memories: list = None,
-                 long_term_memories: dict = None,
-                 seed: Optional[SeedResult] = None):
+                 long_term_memories: dict = None):
         self.question = question
         self.domain = domain
         self.entity_types = entity_types or []
         self.history = history or []
         self.memories = memories or []
         self.long_term_memories = long_term_memories or {}
-        self.seed = seed
         self.observations: List[Observation] = []
         self.running_summary: str = ""
+
+        # 从配置文件加载上下文管理参数
+        cfg = get_config()["context"]
+        self.max_observations = cfg["max_observations"]
+        self.compress_batch = cfg["compress_batch"]
+        self.keep_groups = cfg["keep_groups"]
 
     def add_observation(self, obs: Observation):
         """添加一条工具调用观察"""
@@ -40,14 +44,15 @@ class AgenticContext:
     def compress(self, messages: list) -> list:
         """将最早的观察压缩到 running_summary，重建消息列表
 
-        仅当观察数超过 MAX_OBSERVATIONS_IN_CONTEXT 时触发。
+        仅当观察数超过 max_observations 时触发。
         """
-        if len(self.observations) <= self.MAX_OBSERVATIONS_IN_CONTEXT:
+        if len(self.observations) <= self.max_observations:
             return messages
 
-        # 取最早的 3 条进行压缩
-        oldest = self.observations[:3]
-        self.observations = self.observations[3:]
+        # 取最早的 compress_batch 条进行压缩
+        batch = self.compress_batch
+        oldest = self.observations[:batch]
+        self.observations = self.observations[batch:]
 
         # 追加到 running_summary
         new_findings = "\n".join(
@@ -74,7 +79,7 @@ class AgenticContext:
         context_msg = {"role": "system", "content": "\n".join(parts)}
 
         # 保留最后 N 个完整的 assistant+tool 消息组，避免孤立 tool 消息
-        tail = self._extract_complete_groups(messages[2:], keep_groups=2)
+        tail = self._extract_complete_groups(messages[2:], keep_groups=self.keep_groups)
         return head + [context_msg] + tail
 
     @staticmethod

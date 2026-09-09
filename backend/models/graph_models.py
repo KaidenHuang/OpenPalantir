@@ -9,6 +9,7 @@
 from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 from models.ids import compute_entity_id, compute_relationship_id
+from utils.json_utils import db_json_dumps
 
 
 class EntityData(BaseModel):
@@ -41,7 +42,6 @@ class EntityData(BaseModel):
 
     def to_neo4j_dict(self) -> dict:
         """转为 Neo4j 写入格式（与 graph_manager 兼容）"""
-        import json
         return {
             "name": self.name,
             "type": self.type,
@@ -50,7 +50,7 @@ class EntityData(BaseModel):
             "byname": self.byname,
             "datasource": self.datasource,
             "description": self.description,
-            "attributes": json.dumps(self.attributes, ensure_ascii=False) if self.attributes else "{}",
+            "attributes": db_json_dumps(self.attributes) if self.attributes else "{}",
         }
 
 
@@ -62,6 +62,7 @@ class RelationshipData(BaseModel):
     occurrence_time: str = ""
     description: str = ""
     confidence: float = 0.5
+    attributes: Dict[str, Any] = Field(default_factory=dict)
 
     @property
     def relationship_id(self) -> str:

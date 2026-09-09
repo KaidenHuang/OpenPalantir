@@ -20,6 +20,7 @@ class SchemaCache:
         self.pk_columns: Dict[str, List[str]] = {}            # {table: [pk_col_name, ...]}
         self.fk_columns: Dict[str, List[Dict]] = {}           # {table: [{column, ref_table, ref_column}, ...]}
         self.entity_types: Dict[str, str] = {}                # {table: entity_type}
+        self.table_roles: Dict[str, str] = {}                  # {table: table_role}
         self.tables: List[str] = []                           # 表名列表
 
     def load(self):
@@ -37,6 +38,7 @@ class SchemaCache:
                 table_name = table_info["table_name"]
                 self.tables.append(table_name)
                 self.entity_types[table_name] = table_info.get("entity_type", "其他")
+                self.table_roles[table_name] = table_info.get("table_role", "entity")
 
             # 加载列信息（按表分组）
             columns_by_table: Dict[str, List[Dict]] = {}
@@ -102,3 +104,7 @@ class SchemaCache:
     def get_all_column_names(self, table_name: str) -> List[str]:
         """获取表的所有列名"""
         return self.table_columns.get(table_name, [])
+
+    def get_table_role(self, table_name: str) -> str:
+        """获取表角色: entity / junction / attribute"""
+        return self.table_roles.get(table_name, "entity")

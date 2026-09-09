@@ -155,6 +155,32 @@ class EntityRepository:
             logger.error(f"获取实体失败: {e}")
             return None
 
+    def get_entities_batch(self, entity_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """批量获取实体，单次 Cypher 查询，返回 {id: entity_dict}。
+        超过 5000 个 ID 时自动分块查询。"""
+        if not entity_ids:
+            return {}
+        entities = {}
+        chunk_size = 5000
+        try:
+            for i in range(0, len(entity_ids), chunk_size):
+                chunk = entity_ids[i:i + chunk_size]
+                query = """
+                MATCH (n:Entity)
+                WHERE n.id IN $ids
+                RETURN n{.*} as node
+                """
+                result = neo4j_conn.execute_query(query, {"ids": chunk})
+                for r in result:
+                    node = r['node']
+                    node['entity_id'] = node.get('id', '')
+                    _deserialize_attributes(node)
+                    entities[node['id']] = node
+            return entities
+        except Exception as e:
+            logger.error(f"批量获取实体失败: {e}")
+            return entities
+
     def search_entities(self, query: str, limit: int = 10, source_filters: List[str] = None,
                         entity_types: List[str] = None) -> List[Dict[str, Any]]:
         """搜索实体，优先全文索引，降级 CONTAINS"""

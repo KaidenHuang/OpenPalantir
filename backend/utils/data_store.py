@@ -206,6 +206,7 @@ class EntityDataStore:
                 'relationship_id': compute_relationship_id(subject_name, predicate, object_name),
                 'occurrence_time': relationship.get('ot', ''),
                 'description': relationship.get('d', ''),
+                'attributes': relationship.get('a', {}),
                 'subject_id': subject_entity.get('entity_id', '') if subject_entity else '',
                 'object_id': object_entity.get('entity_id', '') if object_entity else ''
             }

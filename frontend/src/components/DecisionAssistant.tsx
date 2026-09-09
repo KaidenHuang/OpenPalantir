@@ -50,9 +50,9 @@ interface EvidenceItem {
   relevance_score: number;
 }
 
-interface SkillTraceStep {
+interface ToolTraceStep {
   step: number;
-  skill_name: string;
+  tool_name: string;
   params: Record<string, unknown>;
   result_summary: string;
   success: boolean;
@@ -76,7 +76,7 @@ interface DecisionResponse {
   evidence: EvidenceItem[];
   evidence_citations: EvidenceCitation[];
   answer: DecisionAnswer;
-  skill_trace?: SkillTraceStep[];
+  tool_trace?: ToolTraceStep[];
   decision_mode?: string;
   response_type?: string;  // "normal" | "simple" | "no_data"
 }
@@ -303,7 +303,7 @@ function DecisionAssistant() {
                         r.answer?.work_orders?.length > 0 ||
                         r.evidence_citations?.length > 0 ||
                         r.evidence?.length > 0 ||
-                        (r.skill_trace && r.skill_trace.length > 0);
+                        (r.tool_trace && r.tool_trace.length > 0);
                       if (!hasContent) return null;
                       return (
                       <div className="decision-result">
@@ -477,21 +477,18 @@ function DecisionAssistant() {
                           );
                         })()}
 
-                        {r.skill_trace && r.skill_trace.length > 0 && (
+                        {r.tool_trace && r.tool_trace.length > 0 && (
                           <div style={{ marginTop: 8 }}>
                             <h4
-                              onClick={() => toggleSection(`skill-trace-${msg.id}`)}
+                              onClick={() => toggleSection(`tool-trace-${msg.id}`)}
                               style={{ cursor: 'pointer', userSelect: 'none', fontSize: 13, margin: 0 }}
                             >
-                              {expandedSections[`skill-trace-${msg.id}`] ? '▼ ' : '▶ '}
-                              Skill 执行过程 ({r.skill_trace.length} 步)
-                              {r.decision_mode === 'skill_reasoning' && (
-                                <span style={{ fontSize: 11, marginLeft: 8, color: '#888' }}>Skill 推理模式</span>
-                              )}
+                              {expandedSections[`tool-trace-${msg.id}`] ? '▼ ' : '▶ '}
+                              工具调用链 ({r.tool_trace.length} 步)
                             </h4>
-                            {expandedSections[`skill-trace-${msg.id}`] && (
+                            {expandedSections[`tool-trace-${msg.id}`] && (
                               <div style={{ marginTop: 6 }}>
-                                {r.skill_trace.map((trace, idx) => (
+                                {r.tool_trace.map((trace, idx) => (
                                   <div key={idx} style={{
                                     marginBottom: 6, padding: '6px 10px',
                                     background: trace.success ? '#f0f7f0' : '#fff0f0',
@@ -500,7 +497,7 @@ function DecisionAssistant() {
                                     fontSize: 12,
                                   }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                      <strong>Step {trace.step}: {trace.skill_name}</strong>
+                                      <strong>Step {trace.step}: {trace.tool_name}</strong>
                                       <span style={{ color: '#888', fontSize: 11 }}>
                                         {trace.execution_time_ms.toFixed(0)}ms
                                       </span>

@@ -50,6 +50,7 @@ class DatabaseTable(Base):
     row_count = Column(Integer)
     business_description = Column(Text)
     entity_type = Column(String(100))
+    table_role = Column(String(50), default="entity")
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, onupdate=datetime.now)
     
@@ -63,6 +64,7 @@ class DatabaseTable(Base):
             "row_count": self.row_count,
             "business_description": self.business_description,
             "entity_type": self.entity_type,
+            "table_role": self.table_role,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None
         }

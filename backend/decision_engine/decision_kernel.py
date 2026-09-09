@@ -121,7 +121,7 @@ class DecisionKernel:
 
         # 3. 记忆注入
         inject_memories(request, domain)
-        history = conv_manager.get_history(session_id, max_turns=3)
+        history = conv_manager.get_history(session_id)
 
         # 4. 快速判断：简单社交意图
         intent = quick_check_intent(request.question)
@@ -152,10 +152,10 @@ class DecisionKernel:
         )
 
         # 7. 构建工具追踪
-        skill_trace = [
+        tool_trace = [
             ToolTrace(
                 step=i + 1,
-                skill_name=obs.tool_name,
+                tool_name=obs.tool_name,
                 params=obs.params,
                 result_summary=obs.summary,
                 success=obs.success,
@@ -205,7 +205,7 @@ class DecisionKernel:
             evidence=evidence,
             evidence_citations=evidence_citations,
             answer=result.answer,
-            skill_trace=skill_trace,
+            tool_trace=tool_trace,
             decision_mode="agentic_rag",
             response_type="normal",
             confidence=result.confidence,

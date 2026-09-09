@@ -79,7 +79,7 @@ def get_model(model_id: int):
 @router.post("/models")
 def create_model(
     name: str = Body(...),
-    type: str = Body(...),
+    model_type: str = Body(...),
     status: str = Body("unknown"),
     models: list = Body([]),
     enabled: bool = Body(False),
@@ -88,34 +88,34 @@ def create_model(
 ):
     """
     创建新模型
-    
+
     Args:
         name: 模型名称
-        type: 模型类型，local 或 cloud
+        model_type: 模型类型，local 或 cloud
         status: 模型状态，默认为 unknown
         models: 模型列表
-        priority: 模型优先级
+        enabled: 是否启用
         api_url: API地址
         api_key: API密钥
-    
+
     Returns:
         dict: 创建结果响应
     """
     try:
-        logger.info(f"接收创建模型请求: name={name}, type={type}")
-        
+        logger.info(f"接收创建模型请求: name={name}, model_type={model_type}")
+
         # 验证类型值
-        if type not in ['local', 'cloud']:
-            logger.error(f"创建模型失败: 无效的模型类型 type={type}")
+        if model_type not in ['local', 'cloud']:
+            logger.error(f"创建模型失败: 无效的模型类型 model_type={model_type}")
             raise HTTPException(status_code=400, detail="无效的模型类型，必须是 'local' 或 'cloud'")
-        
+
         # 设置默认值
         if api_url is None:
-            api_url = "http://localhost:11434" if type == "local" else "https://api.openai.com/v1"
+            api_url = "http://localhost:11434" if model_type == "local" else "https://api.openai.com/v1"
 
         model_data = {
             "name": name,
-            "type": type,
+            "type": model_type,
             "status": status,
             "models": models,
             "enabled": enabled,
@@ -145,7 +145,7 @@ def create_model(
 def update_model(
     model_id: int,
     name: str = Body(None),
-    type: str = Body(None),
+    model_type: str = Body(None),
     status: str = Body(None),
     models: list = Body(None),
     enabled: bool = Body(None),
@@ -154,33 +154,33 @@ def update_model(
 ):
     """
     更新模型
-    
+
     Args:
         model_id: 模型ID
         name: 模型名称（可选）
-        type: 模型类型（可选）
+        model_type: 模型类型（可选）
         status: 模型状态（可选）
         models: 模型列表（可选）
-        priority: 模型优先级（可选）
+        enabled: 是否启用（可选）
         api_url: API地址（可选）
         api_key: API密钥（可选）
-    
+
     Returns:
         dict: 更新结果响应
     """
     try:
         logger.info(f"接收更新模型请求: model_id={model_id}")
-        
+
         # 验证类型值
-        if type is not None and type not in ['local', 'cloud']:
-            logger.error(f"更新模型失败: 无效的模型类型 type={type}")
+        if model_type is not None and model_type not in ['local', 'cloud']:
+            logger.error(f"更新模型失败: 无效的模型类型 model_type={model_type}")
             raise HTTPException(status_code=400, detail="无效的模型类型，必须是 'local' 或 'cloud'")
-        
+
         model_data = {}
         if name is not None:
             model_data["name"] = name
-        if type is not None:
-            model_data["type"] = type
+        if model_type is not None:
+            model_data["type"] = model_type
         if status is not None:
             model_data["status"] = status
         if models is not None:

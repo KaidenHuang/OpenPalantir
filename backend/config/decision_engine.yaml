@@ -1,0 +1,40 @@
+# 决策引擎配置 — 所有可调参数集中管理
+# 修改后重启后端生效
+
+# Agentic 循环核心参数
+agentic:
+  max_turns: 15              # ReAct 最大轮数（原 10，复杂问题需要更多探索）
+  max_result_chars: 5000     # 工具结果注入上下文的截断长度（原 3000）
+  confidence_threshold: 0.5  # 低于此值标记需人工审核
+
+# 上下文窗口管理
+context:
+  max_observations: 10       # 上下文中保留的最大观察条数（原 6）
+  compress_batch: 5          # 每次压缩的观察条数（原 3）
+  keep_groups: 3             # 保留最近的完整 assistant+tool 消息组数（原 2）
+
+# 对话与历史
+conversation:
+  max_history_turns: 5       # 历史对话最大轮数（原 3，多轮追问保留更多上下文）
+
+# 强制综合（达到最大轮数时强制输出答案）
+forced_synthesis:
+  max_items: 12              # 汇总的工具结果条数（原 8）
+  preview_chars: 1200        # 每条结果预览字符数（原 800）
+  raw_fallback_chars: 1000   # 非 JSON 原始文本兜底截断长度（原 500）
+
+# 多 Agent 协作
+multi_agent:
+  critic_threshold: 0.6      # 触发 Critic 校验的置信度阈值
+  critic_evidence: 8         # Critic 审核时的证据条数（原 5）
+  critic_max_issues: 3       # Critic 问题展示最大数
+  hallucination_penalty: -0.3 # 幻觉置信度惩罚
+  planner_max_subtasks: 6    # Planner 子任务上限（原 4，复杂问题需要更多分解）
+
+# 记忆系统
+memory:
+  short_term_ttl_days: 7     # 短期记忆过期天数
+  promotion_check_days: 6    # 过期前提升检查阈值
+  long_term_max_items: 20    # 长期记忆条数上限（原 10）
+  long_term_max_chars: 500   # 长期记忆总字数上限（原 300）
+  retrieve_limit: 5          # 记忆检索返回条数

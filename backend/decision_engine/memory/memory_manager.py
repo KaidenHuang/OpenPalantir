@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from config.database import SessionLocal
+from decision_engine.config import get_config
 from models.memory import ShortTermMemory
 from system.logger import logger
 
@@ -17,14 +18,10 @@ from system.logger import logger
 _MEMORY_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "conversations")
 _MEMORY_FILE = os.path.join(_MEMORY_DIR, "MEMORY.md")
 
-# 短期记忆 TTL（天）
-SHORT_TERM_TTL_DAYS = 7
-# 过期前提升检查阈值（天）
-PROMOTION_CHECK_DAYS = 6
-# 长期记忆条数上限
-MAX_LONG_TERM_ITEMS = 10
-# 长期记忆总字数上限
-MAX_LONG_TERM_CHARS = 300
+
+def _mem_cfg():
+    """获取记忆配置（延迟加载，避免模块导入时触发配置加载）"""
+    return get_config()["memory"]
 
 
 class MemoryManager:
@@ -50,7 +47,7 @@ class MemoryManager:
                 session_id=session_id,
                 domain=domain,
                 created_at=now,
-                expires_at=now + timedelta(days=SHORT_TERM_TTL_DAYS),
+                expires_at=now + timedelta(days=_mem_cfg()["short_term_ttl_days"]),
             )
             db.add(entry)
             db.commit()
@@ -79,7 +76,7 @@ class MemoryManager:
                         session_id=entry.get("session_id", ""),
                         domain=entry.get("domain", "general"),
                         created_at=now,
-                        expires_at=now + timedelta(days=SHORT_TERM_TTL_DAYS),
+                        expires_at=now + timedelta(days=_mem_cfg()["short_term_ttl_days"]),
                     )
                     for entry in entries
                 ]
@@ -135,7 +132,7 @@ class MemoryManager:
             # 检查是否需要提升检查
             for row, _ in scored:
                 days_old = (now - row.created_at).total_seconds() / 86400
-                if days_old >= PROMOTION_CHECK_DAYS and row.importance >= 0.7:
+                if days_old >= _mem_cfg()["promotion_check_days"] and row.importance >= 0.7:
                     self._check_promotion(row)
 
             result = [r[0].to_dict() for r in scored[:limit]]
@@ -260,13 +257,15 @@ class MemoryManager:
             total = len(preferences) + len(decisions)
             total_chars = sum(len(s) for s in preferences + decisions)
 
-            if total > MAX_LONG_TERM_ITEMS or total_chars > MAX_LONG_TERM_CHARS:
+            if total > _mem_cfg()["long_term_max_items"] or total_chars > _mem_cfg()["long_term_max_chars"]:
+                max_items = _mem_cfg()["long_term_max_items"]
+                max_chars = _mem_cfg()["long_term_max_chars"]
                 logger.info(
-                    f"[memory] 长期记忆超限 (条目={total}/{MAX_LONG_TERM_ITEMS}, "
-                    f"字数={total_chars}/{MAX_LONG_TERM_CHARS})，截断保留最新"
+                    f"[memory] 长期记忆超限 (条目={total}/{max_items}, "
+                    f"字数={total_chars}/{max_chars})，截断保留最新"
                 )
-                preferences = preferences[-MAX_LONG_TERM_ITEMS // 2:]
-                decisions = decisions[-MAX_LONG_TERM_ITEMS // 2:]
+                preferences = preferences[-max_items // 2:]
+                decisions = decisions[-max_items // 2:]
 
             now = datetime.now().isoformat()
             domain = "workforce"

@@ -80,11 +80,16 @@ export const useDatabaseStore = create<DatabaseState>()((set, get) => ({
   },
 
   fetchSummary: async (connectionId, signal?: AbortSignal) => {
-    const response = await httpGet(
-      API_CONFIG.endpoints.database.summary(connectionId),
-      { signal }
-    );
-    set({ dbSummary: response.data as DbSummary });
+    try {
+      const response = await httpGet(
+        API_CONFIG.endpoints.database.summary(connectionId),
+        { signal }
+      );
+      const data = response.data as Record<string, unknown>;
+      set({ dbSummary: (data.summary ?? null) as DbSummary | null });
+    } catch {
+      set({ dbSummary: null });
+    }
   },
 
   createConnection: async (data, signal?: AbortSignal) => {

@@ -93,9 +93,9 @@ const AttributesEditor: React.FC<{
             </>
           ) : (
             <>
-              <span style={{ flex: 1, wordBreak: 'break-all' }}>{String(val)}</span>
+              <span style={{ flex: 1, wordBreak: 'break-all', maxHeight: 120, overflowY: 'auto', display: 'block', fontFamily: 'monospace', fontSize: 11, lineHeight: '1.4' }}>{typeof val === 'object' && val !== null ? JSON.stringify(val) : String(val)}</span>
               <Button size="small" type="text" icon={<EditOutlined />}
-                onClick={() => { setEditingKey(key); setEditingValue(String(val)); }} />
+                onClick={() => { setEditingKey(key); setEditingValue(typeof val === 'object' && val !== null ? JSON.stringify(val, null, 2) : String(val)); }} />
               <Popconfirm title="删除此属性？" onConfirm={() => handleDelete(key)}>
                 <Button size="small" type="text" danger icon={<DeleteOutlined />} />
               </Popconfirm>

@@ -196,6 +196,7 @@ class SchemaAnalyzeHandler(TaskHandler):
                                 "description": f"包含字段: {', '.join(cols_with_types)}",
                                 "summary": tbl.get("business_description", ""),
                                 "entity_type": tbl.get("entity_type", ""),
+                                "table_role": tbl.get("table_role", "entity"),
                                 "keys": table_keys,
                             }
                         )
