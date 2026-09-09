@@ -161,6 +161,7 @@ class RelationshipRepository:
             MATCH (s:Entity {name: $source})
             MATCH (t:Entity {name: $target})
             MERGE (s)-[r:RELATED_TO {relationship_id: $relationship_id}]->(t)
+            ON CREATE SET r.created_at = datetime()
             SET r.predicate = $predicate, r.confidence = $confidence,
                 r.subject_id = $subject_id, r.object_id = $object_id,
                 r.occurrence_time = $occurrence_time, r.description = $description
@@ -207,7 +208,8 @@ class RelationshipRepository:
                 MATCH (t:Entity {id: r.object_id})
                 CREATE (s)-[rel:RELATED_TO {relationship_id: r.relationship_id}]->(t)
                 SET rel.predicate = r.predicate, rel.confidence = r.confidence,
-                    rel.occurrence_time = r.occurrence_time, rel.description = r.description
+                    rel.occurrence_time = r.occurrence_time, rel.description = r.description,
+                    rel.created_at = datetime()
                 """
             else:
                 query = """
@@ -215,6 +217,7 @@ class RelationshipRepository:
                 MATCH (s:Entity {id: r.subject_id})
                 MATCH (t:Entity {id: r.object_id})
                 MERGE (s)-[rel:RELATED_TO {relationship_id: r.relationship_id}]->(t)
+                ON CREATE SET rel.created_at = datetime()
                 SET rel.predicate = r.predicate, rel.confidence = r.confidence,
                     rel.occurrence_time = r.occurrence_time, rel.description = r.description
                 """

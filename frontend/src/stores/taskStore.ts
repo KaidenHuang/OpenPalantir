@@ -9,6 +9,10 @@ import { httpGet, httpPost, httpDelete } from '../services/httpClient';
 import { API_CONFIG } from '../config/apiConfig';
 import type { Task } from './types';
 
+// WebSocket 连接管理（模块级单例）
+let _ws: WebSocket | null = null;
+let _wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
 interface TaskState {
   // 数据
   tasks: Task[];
@@ -28,6 +32,13 @@ interface TaskState {
   deleteTask: (taskId: string, signal?: AbortSignal) => Promise<void>;
   stopTask: (taskId: string, signal?: AbortSignal) => Promise<void>;
   clearSelection: () => void;
+  connectWS: () => void;
+  disconnectWS: () => void;
+}
+
+function _getWsUrl(): string {
+  const base = API_CONFIG.baseUrl.replace(/^http/, 'ws');
+  return `${base}/ws/tasks`;
 }
 
 export const useTaskStore = create<TaskState>()((set, get) => ({
@@ -87,5 +98,63 @@ export const useTaskStore = create<TaskState>()((set, get) => ({
 
   clearSelection: () => {
     set({ selectedTaskId: null, selectedTask: null });
+  },
+
+  connectWS: () => {
+    if (_ws && _ws.readyState === WebSocket.OPEN) return;
+
+    try {
+      _ws = new WebSocket(_getWsUrl());
+
+      _ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'task_progress') {
+            // 更新内存中任务的进度
+            set((state) => ({
+              tasks: state.tasks.map((t) =>
+                t.task_id === data.task_id ? { ...t, progress: data.progress } : t
+              ),
+            }));
+          } else if (data.type === 'task_update') {
+            // 状态变更 → 本地更新 + 重新拉取完整列表
+            set((state) => ({
+              tasks: state.tasks.map((t) =>
+                t.task_id === data.task_id ? { ...t, status: data.status } : t
+              ),
+              _lastFetched: 0,
+            }));
+            get().fetchTasks();
+          }
+        } catch {
+          // 忽略解析错误
+        }
+      };
+
+      _ws.onclose = () => {
+        _ws = null;
+        // 3 秒后重连
+        _wsReconnectTimer = setTimeout(() => {
+          get().connectWS();
+        }, 3000);
+      };
+
+      _ws.onerror = () => {
+        _ws?.close();
+      };
+    } catch {
+      // WebSocket 创建失败，静默降级为轮询模式
+    }
+  },
+
+  disconnectWS: () => {
+    if (_wsReconnectTimer) {
+      clearTimeout(_wsReconnectTimer);
+      _wsReconnectTimer = null;
+    }
+    if (_ws) {
+      _ws.close();
+      _ws = null;
+    }
   },
 }));

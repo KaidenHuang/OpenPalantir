@@ -374,6 +374,12 @@ class TaskManager:
                 def progress_callback(progress: int):
                     with self.lock:
                         task.progress = progress
+                    from websocket.task_ws import task_ws_manager
+                    task_ws_manager.broadcast_sync({
+                        "type": "task_progress",
+                        "task_id": task_id,
+                        "progress": progress,
+                    })
 
                 handler = handler_class()
                 result = handler.execute(task, progress_callback)
@@ -410,7 +416,6 @@ class TaskManager:
     def _update_task_in_db(self, task_id: str, status: str, result: str = None, error: str = None):
         """更新数据库中的任务状态"""
         try:
-            # 直接使用task_id更新数据库
             db = SessionLocal()
             try:
                 update_data = {"status": status}
@@ -421,6 +426,15 @@ class TaskManager:
                 self.task_service.update_task(db, task_id, **update_data)
             finally:
                 db.close()
+
+            # WebSocket 广播任务状态变更
+            from websocket.task_ws import task_ws_manager
+            task_ws_manager.broadcast_sync({
+                "type": "task_update",
+                "task_id": task_id,
+                "status": status,
+                "error": error,
+            })
         except Exception as e:
             logger.error(f"[_update_task_in_db] 异常: {str(e)}")
             raise

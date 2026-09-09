@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import sys
 import os
 
@@ -63,6 +63,19 @@ app.include_router(filesystem.router, prefix="/api/filesystem", tags=["filesyste
 app.include_router(source.router, prefix="/api", tags=["source"])
 app.include_router(cdc_routes.router, tags=["cdc"])
 app.include_router(entity_types.router, prefix="/api/entity-types", tags=["entity-types"])
+
+# WebSocket 任务实时推送
+from websocket.task_ws import task_ws_manager
+
+@app.websocket("/ws/tasks")
+async def websocket_tasks(websocket: WebSocket):
+    """任务状态实时推送 WebSocket 端点"""
+    await task_ws_manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        task_ws_manager.disconnect(websocket)
 
 
 @app.on_event("shutdown")

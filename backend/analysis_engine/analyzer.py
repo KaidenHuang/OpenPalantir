@@ -266,101 +266,228 @@ class Analyzer:
             raise ValueError(f"中心性分析失败: {str(e)}")
     
     def analyze_trend(self, time_range, metrics=None):
-        """分析趋势"""
+        """分析趋势 — 基于 Neo4j 实体的 created_at 时间戳聚合"""
         try:
-            # 默认指标
             if metrics is None:
                 metrics = ['entity_count', 'relationship_count', 'community_count', 'centrality_trend']
-            
-            # 构建图
-            G = self._build_graph()
-            
-            # 生成时间序列数据
-            # 这里使用模拟数据，实际项目中应该从数据库获取真实的时间序列数据
+
             import datetime
-            import random
-            
-            # 生成时间标签
+
+            # 解析时间范围 → 天数 + 时间粒度
             end_date = datetime.datetime.now()
             if time_range == 'last_7_days':
-                days = 7
-                labels = [(end_date - datetime.timedelta(days=i)).strftime('%m-%d') for i in range(days-1, -1, -1)]
+                days, granularity = 7, 'day'
             elif time_range == 'last_30_days':
-                days = 30
-                labels = [(end_date - datetime.timedelta(days=i)).strftime('%m-%d') for i in range(days-1, -1, -1)]
+                days, granularity = 30, 'day'
             elif time_range == 'last_3_months':
-                months = 3
-                labels = [(end_date - datetime.timedelta(days=i*30)).strftime('%Y-%m') for i in range(months-1, -1, -1)]
+                days, granularity = 90, 'week'
             elif time_range == 'last_12_months':
-                months = 12
-                labels = [(end_date - datetime.timedelta(days=i*30)).strftime('%Y-%m') for i in range(months-1, -1, -1)]
+                days, granularity = 365, 'month'
             else:
-                # 默认最近5个月
-                months = 5
-                labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May']
-            
-            # 生成趋势数据
+                days, granularity = 150, 'month'
+
+            since_date = (end_date - datetime.timedelta(days=days)).isoformat()
+
+            # 生成时间标签（用于返回结果的 labels 数组）
+            if granularity == 'day':
+                labels = [(end_date - datetime.timedelta(days=i)).strftime('%m-%d')
+                          for i in range(days - 1, -1, -1)]
+            elif granularity == 'week':
+                weeks = (days + 6) // 7
+                labels = [(end_date - datetime.timedelta(weeks=i)).strftime('%m-%d')
+                          for i in range(weeks - 1, -1, -1)]
+            else:  # month
+                months = max(1, days // 30)
+                labels = [(end_date - datetime.timedelta(days=i * 30)).strftime('%Y-%m')
+                          for i in range(months - 1, -1, -1)]
+
             trends = []
-            
+
+            # 实体数量趋势 — 从 Neo4j 查询
             if 'entity_count' in metrics:
-                # 实体数量趋势
-                base_count = len(G.nodes())
-                values = [base_count + random.randint(-5, 10) for _ in labels]
+                entity_values = self._query_trend_from_neo4j(
+                    'Entity', since_date, granularity, days, labels
+                )
                 trends.append({
                     'metric': 'entity_count',
                     'label': '实体数量',
-                    'values': values,
-                    'labels': labels
+                    'values': entity_values,
+                    'labels': labels,
                 })
-            
+
+            # 关系数量趋势 — 从 Neo4j 查询
             if 'relationship_count' in metrics:
-                # 关系数量趋势
-                base_count = len(G.edges())
-                values = [base_count + random.randint(-10, 20) for _ in labels]
+                rel_values = self._query_rel_trend_from_neo4j(
+                    since_date, granularity, days, labels
+                )
                 trends.append({
                     'metric': 'relationship_count',
                     'label': '关系数量',
-                    'values': values,
-                    'labels': labels
+                    'values': rel_values,
+                    'labels': labels,
                 })
-            
+
+            # 社区数量 — 仅当前快照值（Louvain 每次实时计算，无历史）
             if 'community_count' in metrics:
-                # 社区数量趋势
-                from community import community_louvain
-                # 将有向图转换为无向图（Louvain算法只支持无向图）
-                undirected_G = G.to_undirected()
-                partition = community_louvain.best_partition(undirected_G)
-                base_count = len(set(partition.values()))
-                values = [max(1, base_count + random.randint(-2, 3)) for _ in labels]
+                G = self._build_graph()
+                try:
+                    from community import community_louvain
+                    partition = community_louvain.best_partition(G.to_undirected())
+                    current_count = len(set(partition.values()))
+                except Exception:
+                    current_count = 0
                 trends.append({
                     'metric': 'community_count',
                     'label': '社区数量',
-                    'values': values,
-                    'labels': labels
+                    'values': [current_count] * len(labels),
+                    'labels': labels,
+                    'note': '仅显示当前快照值，无历史数据',
                 })
-            
+
+            # 中心性趋势 — 仅当前快照值
             if 'centrality_trend' in metrics:
-                # 中心性趋势
-                degree_centrality = nx.degree_centrality(G)
-                top_node = max(degree_centrality, key=degree_centrality.get)
-                base_centrality = degree_centrality[top_node]
-                values = [base_centrality * (0.8 + random.random() * 0.4) for _ in labels]
+                G = self._build_graph()
+                if G.number_of_nodes() > 0:
+                    degree_centrality = nx.degree_centrality(G)
+                    top_node = max(degree_centrality, key=degree_centrality.get)
+                    base_centrality = degree_centrality[top_node]
+                else:
+                    top_node = ''
+                    base_centrality = 0.0
                 trends.append({
                     'metric': 'centrality_trend',
                     'label': '中心性趋势',
-                    'values': values,
+                    'values': [base_centrality] * len(labels),
                     'labels': labels,
-                    'node': top_node
+                    'node': top_node,
+                    'note': '仅显示当前快照值，无历史数据',
                 })
-            
+
             return {
                 'time_range': time_range,
                 'metrics': metrics,
                 'trends': trends,
-                'generated_at': datetime.datetime.now().isoformat()
+                'generated_at': datetime.datetime.now().isoformat(),
             }
         except Exception as e:
             raise ValueError(f"趋势分析失败: {str(e)}")
+
+    def _query_trend_from_neo4j(self, label, since_date, granularity, days, labels):
+        """从 Neo4j 查询实体创建时间趋势（累计数）"""
+        from config.neo4j_config import neo4j_conn
+
+        # 根据粒度构建 Cypher 日期截断
+        if granularity == 'day':
+            trunc_unit = 'day'
+        elif granularity == 'week':
+            trunc_unit = 'week'
+        else:
+            trunc_unit = 'month'
+
+        query = f"""
+        MATCH (n:{label})
+        WHERE n.created_at >= datetime($since)
+        WITH date.truncate('{trunc_unit}', n.created_at.date()) AS bucket, count(n) AS cnt
+        RETURN bucket.year AS y, bucket.month AS m, bucket.day AS d, cnt
+        ORDER BY bucket
+        """
+
+        try:
+            results = neo4j_conn.execute_query(query, {"since": since_date})
+        except Exception:
+            return [0] * len(labels)
+
+        # 构建 {日期标签: 新增数} 映射
+        bucket_counts = {}
+        for row in results:
+            y, m, d, cnt = row.get('y'), row.get('m'), row.get('d'), row.get('cnt', 0)
+            if granularity == 'day':
+                key = f"{m:02d}-{d:02d}"
+            elif granularity == 'week':
+                key = f"{m:02d}-{d:02d}"
+            else:
+                key = f"{y}-{m:02d}"
+            bucket_counts[key] = bucket_counts.get(key, 0) + cnt
+
+        # 映射到 labels 并计算累计数
+        new_counts = [bucket_counts.get(lbl, 0) for lbl in labels]
+
+        # 获取时间窗口前的基础数量
+        base_query = f"""
+        MATCH (n:{label})
+        WHERE n.created_at < datetime($since)
+        RETURN count(n) AS cnt
+        """
+        try:
+            base_results = neo4j_conn.execute_query(base_query, {"since": since_date})
+            base_count = base_results[0].get('cnt', 0) if base_results else 0
+        except Exception:
+            base_count = 0
+
+        # 累计：base + 逐期新增
+        cumulative = []
+        running = base_count
+        for cnt in new_counts:
+            running += cnt
+            cumulative.append(running)
+
+        return cumulative
+
+    def _query_rel_trend_from_neo4j(self, since_date, granularity, days, labels):
+        """从 Neo4j 查询关系创建时间趋势（累计数）"""
+        from config.neo4j_config import neo4j_conn
+
+        if granularity == 'day':
+            trunc_unit = 'day'
+        elif granularity == 'week':
+            trunc_unit = 'week'
+        else:
+            trunc_unit = 'month'
+
+        query = f"""
+        MATCH ()-[r:RELATED_TO]->()
+        WHERE r.created_at >= datetime($since)
+        WITH date.truncate('{trunc_unit}', r.created_at.date()) AS bucket, count(r) AS cnt
+        RETURN bucket.year AS y, bucket.month AS m, bucket.day AS d, cnt
+        ORDER BY bucket
+        """
+
+        try:
+            results = neo4j_conn.execute_query(query, {"since": since_date})
+        except Exception:
+            return [0] * len(labels)
+
+        bucket_counts = {}
+        for row in results:
+            y, m, d, cnt = row.get('y'), row.get('m'), row.get('d'), row.get('cnt', 0)
+            if granularity == 'day':
+                key = f"{m:02d}-{d:02d}"
+            elif granularity == 'week':
+                key = f"{m:02d}-{d:02d}"
+            else:
+                key = f"{y}-{m:02d}"
+            bucket_counts[key] = bucket_counts.get(key, 0) + cnt
+
+        new_counts = [bucket_counts.get(lbl, 0) for lbl in labels]
+
+        base_query = """
+        MATCH ()-[r:RELATED_TO]->()
+        WHERE r.created_at < datetime($since)
+        RETURN count(r) AS cnt
+        """
+        try:
+            base_results = neo4j_conn.execute_query(base_query, {"since": since_date})
+            base_count = base_results[0].get('cnt', 0) if base_results else 0
+        except Exception:
+            base_count = 0
+
+        cumulative = []
+        running = base_count
+        for cnt in new_counts:
+            running += cnt
+            cumulative.append(running)
+
+        return cumulative
     
     def generate_report(self, analysis_type, format='html'):
         """生成分析报告"""

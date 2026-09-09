@@ -356,12 +356,17 @@ def clear_debezium_state(
     1. 删除旧 offsets.dat（实例目录或全局默认）；
     2. 删除 Redis 中的 schema history key（旧库 DDL 历史）。
     """
-    # 1. offsets.dat：多实例用实例目录，否则复用 offset_store 默认路径
+    # 1. offsets.dat：多实例用实例目录，否则用全局默认路径
     if instance_id:
         offset_file = str(instance_offset_path(instance_id))
     else:
-        from cdc.offset_store import _default_offset_file
-        offset_file = _default_offset_file()
+        env_path = os.getenv("DEBEZIUM_OFFSET_FILE")
+        if env_path:
+            offset_file = env_path
+        else:
+            offset_file = str(
+                DEBEZIUM_HOME / "data" / "debezium" / "offsets" / "offsets.dat"
+            )
     if os.path.exists(offset_file):
         os.remove(offset_file)
         logger.info("[debezium_config] 已删除旧 offsets.dat: %s", offset_file)

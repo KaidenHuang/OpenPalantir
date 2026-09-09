@@ -5,7 +5,7 @@ import { logger } from '../services/logger';
 import { useTaskStore } from '../stores/taskStore';
 
 const TaskList: React.FC = () => {
-  const { tasks, loading, fetchTasks, deleteTask, stopTask, setSelectedTaskId } = useTaskStore();
+  const { tasks, loading, fetchTasks, deleteTask, stopTask, setSelectedTaskId, connectWS, disconnectWS } = useTaskStore();
   const [error, setError] = useState<string | null>(null);
   const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
   const [stoppingTaskId, setStoppingTaskId] = useState<string | null>(null);
@@ -15,8 +15,10 @@ const TaskList: React.FC = () => {
   useEffect(() => {
     logger.info('TaskList', '任务列表组件挂载');
     fetchTasks();
+    connectWS();
     return () => {
       logger.info('TaskList', '任务列表组件卸载');
+      disconnectWS();
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

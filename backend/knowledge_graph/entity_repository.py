@@ -69,6 +69,7 @@ class EntityRepository:
 
             query = """
             MERGE (e:Entity {id: $id})
+            ON CREATE SET e.created_at = datetime()
             SET e.name = $name, e.type = $type, e.count = $count,
                 e.confidence = $confidence, e.byname = $byname,
                 e.datasource = $datasource, e.description = $description,
@@ -123,7 +124,7 @@ class EntityRepository:
             SET n.name = e.name, n.type = e.type, n.count = e.count,
                 n.confidence = e.confidence, n.byname = e.byname,
                 n.datasource = e.datasource, n.description = e.description,
-                n.attributes = e.attributes
+                n.attributes = e.attributes, n.created_at = datetime()
             """
             neo4j_conn.execute_query(query, {"entities": entity_list})
 

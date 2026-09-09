@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useEffect } from 'react'
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import './App.css'
 import GraphVisualization from './components/GraphVisualization'
 import DocumentViewer from './components/DocumentViewer'
@@ -10,10 +11,25 @@ import DatabaseManagement from './components/DatabaseManagement'
 import DecisionAssistant from './components/DecisionAssistant'
 import { logger } from './services/logger'
 
-function App() {
-  const [activeTab, setActiveTab] = useState('document')
+// 标签页配置：路径 → 组件映射
+const TABS = [
+  { key: 'document', label: '文档管理', path: '/document' },
+  { key: 'database', label: '数据库管理', path: '/database' },
+  { key: 'entity', label: '实体管理', path: '/entity' },
+  { key: 'graph', label: '图谱可视化', path: '/graph' },
+  { key: 'task', label: '任务管理', path: '/task' },
+  { key: 'model', label: '模型管理', path: '/model' },
+  { key: 'analysis', label: '分析报告', path: '/analysis' },
+  { key: 'decision', label: '智能决策', path: '/decision' },
+] as const
 
-  // 记录组件挂载日志
+function AppContent() {
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  // 从 URL 路径推导当前激活标签
+  const activeTab = TABS.find(t => location.pathname.startsWith(t.path))?.key || 'document'
+
   useEffect(() => {
     logger.info('App', 'App组件挂载')
     return () => {
@@ -21,116 +37,48 @@ function App() {
     }
   }, [])
 
-  // 记录tab切换日志
-  const handleTabChange = (tab: string) => {
-    logger.info('App', `切换到标签页: ${tab}`)
-    setActiveTab(tab)
+  const handleTabChange = (tab: typeof TABS[number]) => {
+    logger.info('App', `切换到标签页: ${tab.key}`)
+    navigate(tab.path)
   }
 
   return (
     <div className="app">
       <nav className="nav">
-        <button
-          className={activeTab === 'document' ? 'active' : ''}
-          onClick={() => handleTabChange('document')}
-        >
-          文档管理
-        </button>
-        <button
-          className={activeTab === 'database' ? 'active' : ''}
-          onClick={() => handleTabChange('database')}
-        >
-          数据库管理
-        </button>
-        <button
-          className={activeTab === 'entity' ? 'active' : ''}
-          onClick={() => handleTabChange('entity')}
-        >
-          实体管理
-        </button>
-        <button
-          className={activeTab === 'graph' ? 'active' : ''}
-          onClick={() => handleTabChange('graph')}
-        >
-          图谱可视化
-        </button>
-        <button
-          className={activeTab === 'task' ? 'active' : ''}
-          onClick={() => handleTabChange('task')}
-        >
-          任务管理
-        </button>
-        <button
-          className={activeTab === 'model' ? 'active' : ''}
-          onClick={() => handleTabChange('model')}
-        >
-          模型管理
-        </button>
-        <button
-          className={activeTab === 'analysis' ? 'active' : ''}
-          onClick={() => handleTabChange('analysis')}
-        >
-          分析报告
-        </button>
-        <button
-          className={activeTab === 'decision' ? 'active' : ''}
-          onClick={() => handleTabChange('decision')}
-        >
-          智能决策
-        </button>
+        {TABS.map(tab => (
+          <button
+            key={tab.key}
+            className={activeTab === tab.key ? 'active' : ''}
+            onClick={() => handleTabChange(tab)}
+          >
+            {tab.label}
+          </button>
+        ))}
         <img src="/openpalantir.svg" alt="OpenPalantir" className="nav-logo" />
       </nav>
-      
+
       <main className="main">
-        {activeTab === 'document' && (
-          <div className="tab-content">
-            <DocumentViewer />
-          </div>
-        )}
-
-        {activeTab === 'database' && (
-          <div className="tab-content">
-            <DatabaseManagement />
-          </div>
-        )}
-
-        {activeTab === 'entity' && (
-          <div className="tab-content">
-            <EntityManagement />
-          </div>
-        )}
-
-        {activeTab === 'graph' && (
-          <div className="tab-content">
-            <GraphVisualization />
-          </div>
-        )}
-
-        {activeTab === 'task' && (
-          <div className="tab-content">
-            <TaskManagement />
-          </div>
-        )}
-
-        {activeTab === 'model' && (
-          <div className="tab-content">
-            <ModelManagement />
-          </div>
-        )}
-
-        {activeTab === 'analysis' && (
-          <div className="tab-content">
-            <AnalysisDashboard />
-          </div>
-        )}
-
-        {activeTab === 'decision' && (
-          <div className="tab-content">
-            <DecisionAssistant />
-          </div>
-        )}
+        <Routes>
+          <Route path="/document" element={<div className="tab-content"><DocumentViewer /></div>} />
+          <Route path="/database" element={<div className="tab-content"><DatabaseManagement /></div>} />
+          <Route path="/entity" element={<div className="tab-content"><EntityManagement /></div>} />
+          <Route path="/graph" element={<div className="tab-content"><GraphVisualization /></div>} />
+          <Route path="/task" element={<div className="tab-content"><TaskManagement /></div>} />
+          <Route path="/model" element={<div className="tab-content"><ModelManagement /></div>} />
+          <Route path="/analysis" element={<div className="tab-content"><AnalysisDashboard /></div>} />
+          <Route path="/decision" element={<div className="tab-content"><DecisionAssistant /></div>} />
+          <Route path="*" element={<Navigate to="/document" replace />} />
+        </Routes>
       </main>
     </div>
+  )
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <AppContent />
+    </BrowserRouter>
   )
 }
 

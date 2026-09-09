@@ -12,6 +12,7 @@ from typing import Optional
 import yaml
 
 from decision_engine.agentic.engine import AgenticEngine, quick_check_intent, SIMPLE_DEFAULTS
+from decision_engine.agentic.multi_agent import MultiAgentEngine
 from decision_engine.agentic.tools import ToolRegistry
 from decision_engine.contracts import (
     AnalyzedQuery, DecisionAnswer, DecisionRequest, DecisionResponse,
@@ -73,7 +74,7 @@ class DecisionKernel:
     """决策内核 — 全局会话管理 + AgenticEngine（惰性初始化）"""
 
     def __init__(self):
-        self._agentic: Optional[AgenticEngine] = None
+        self._agentic: Optional[MultiAgentEngine] = None
         self._initialized = False
 
     def _ensure_initialized(self):
@@ -100,7 +101,7 @@ class DecisionKernel:
             mcp_manager = None
 
         tool_registry = ToolRegistry(skill_registry, mcp_manager)
-        self._agentic = AgenticEngine(tool_registry)
+        self._agentic = MultiAgentEngine(tool_registry)
 
     def run(self, request: DecisionRequest) -> DecisionResponse:
         """主入口"""

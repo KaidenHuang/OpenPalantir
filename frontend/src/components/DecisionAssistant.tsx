@@ -29,8 +29,10 @@ interface DecisionAnswer {
   situation_analysis: string;
   key_issues: KeyIssue[];
   options: Option[];
-  recommendation: string;
+  recommendation: string | { option: string; reason?: string } | null;
   work_orders: WorkOrder[];
+  confidence?: number;
+  confidence_reason?: string;
 }
 
 interface EvidenceCitation {
@@ -242,7 +244,7 @@ function DecisionAssistant() {
         m.id === loadingMsg.id
           ? {
               id: loadingMsg.id, type: 'assistant',
-              content: data.answer.situation_analysis || data.answer.summary || data.answer.recommendation,
+              content: data.answer.situation_analysis || data.answer.summary || (typeof data.answer.recommendation === 'string' ? data.answer.recommendation : '') || '',
               timestamp: new Date(), result: data,
             }
           : m
@@ -296,7 +298,8 @@ function DecisionAssistant() {
                         r.response_type === 'no_data' ||
                         r.answer?.key_issues?.length > 0 ||
                         r.answer?.options?.length > 0 ||
-                        !!r.answer?.recommendation ||
+                        (typeof r.answer?.recommendation === 'object' && r.answer.recommendation !== null && !!r.answer.recommendation.option) ||
+                        (typeof r.answer?.recommendation === 'string' && !!r.answer.recommendation) ||
                         r.answer?.work_orders?.length > 0 ||
                         r.evidence_citations?.length > 0 ||
                         r.evidence?.length > 0 ||
@@ -347,9 +350,17 @@ function DecisionAssistant() {
                               </div>
                             )}
 
-                            {r.answer.recommendation && (
+                            {r.answer.recommendation &&
+                              typeof r.answer.recommendation === 'object' &&
+                              r.answer.recommendation.option && (
                               <div style={{ marginBottom: 8, padding: '8px 10px', background: '#e8f5e9', borderRadius: 6 }}>
-                                <strong>推荐方案：</strong>{r.answer.recommendation}
+                                <strong>推荐方案：</strong>
+                                {r.answer.recommendation.option}
+                                {r.answer.recommendation.reason && (
+                                  <span style={{ color: '#555', marginLeft: 8, fontSize: 12 }}>
+                                    — {r.answer.recommendation.reason}
+                                  </span>
+                                )}
                               </div>
                             )}
 
@@ -446,6 +457,25 @@ function DecisionAssistant() {
                             )}
                           </>
                         )}
+
+                        {/* 多 Agent 审核标记 */}
+                        {(() => {
+                          const reason = r.answer?.confidence_reason || '';
+                          const hasCritic = reason.includes('Critic');
+                          if (!hasCritic) return null;
+                          return (
+                            <div style={{
+                              marginTop: 8, padding: '6px 10px',
+                              background: '#fff8e1', borderRadius: 6,
+                              borderLeft: '3px solid #f39c12', fontSize: 12,
+                            }}>
+                              <strong>🔍 多 Agent 审核</strong>
+                              <span style={{ color: '#666', marginLeft: 8 }}>
+                                {reason.split('Critic')[1]?.replace(/^[：:;\s]*/, '') || 'Critic 已审核'}
+                              </span>
+                            </div>
+                          );
+                        })()}
 
                         {r.skill_trace && r.skill_trace.length > 0 && (
                           <div style={{ marginTop: 8 }}>
