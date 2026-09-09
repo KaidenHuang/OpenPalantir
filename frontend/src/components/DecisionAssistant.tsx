@@ -182,6 +182,7 @@ function DecisionAssistant() {
               evidence: turn.evidence || [],
               evidence_citations: turn.evidence_citations || [],
               answer: turn.answer,
+              tool_trace: turn.tool_trace || [],
               response_type: turn.response_type || 'normal',
             },
           });

@@ -138,14 +138,10 @@ class DecisionKernel:
             long_term_memories=request.context.get("long_term_memories", {}),
         )
 
-        # 6. 保存会话 + 提取记忆
+        # 6. 提取记忆
         analyzed = AnalyzedQuery(
             domain=domain, intent="general",
             entities=[], entity_types={},
-        )
-        conv_manager.add_turn(
-            session_id, request.question, analyzed, result.answer,
-            response_type="normal",
         )
         memory_extractor.extract_async(
             request.question, result.answer.summary, session_id, domain,
@@ -196,6 +192,15 @@ class DecisionKernel:
                     source_type=ev_item.source_type,
                     source_id=ev_item.source_name,
                 ))
+
+        # 11. 保存会话（包含证据和工具追踪）
+        conv_manager.add_turn(
+            session_id, request.question, analyzed, result.answer,
+            evidence=evidence,
+            evidence_citations=evidence_citations,
+            tool_trace=tool_trace,
+            response_type="normal",
+        )
 
         return DecisionResponse(
             domain=domain,

@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 
 from decision_engine.contracts import (
     AnalyzedQuery, ConversationSession, ConversationTurn, DecisionAnswer,
-    EvidenceCitation, EvidenceItem,
+    EvidenceCitation, EvidenceItem, ToolTrace,
 )
 from decision_engine.config import get_config
 
@@ -54,6 +54,7 @@ class _ConversationManager:
                  analyzed_query: AnalyzedQuery, answer: DecisionAnswer,
                  evidence: Optional[List[EvidenceItem]] = None,
                  evidence_citations: Optional[List[EvidenceCitation]] = None,
+                 tool_trace: Optional[List[ToolTrace]] = None,
                  response_type: str = "normal") -> str:
         session = self._cache.get(session_id) or self._load(session_id)
         if not session:
@@ -65,6 +66,7 @@ class _ConversationManager:
             analyzed_query=analyzed_query, answer=answer,
             evidence=evidence or [],
             evidence_citations=evidence_citations or [],
+            tool_trace=tool_trace or [],
             timestamp=datetime.now().isoformat(),
             response_type=response_type,
         ))

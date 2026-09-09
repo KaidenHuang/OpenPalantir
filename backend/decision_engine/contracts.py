@@ -131,6 +131,7 @@ class ConversationTurn(BaseModel):
     answer: DecisionAnswer = Field(default_factory=DecisionAnswer)
     evidence: List[EvidenceItem] = Field(default_factory=list)
     evidence_citations: List[EvidenceCitation] = Field(default_factory=list)
+    tool_trace: List[ToolTrace] = Field(default_factory=list)
     timestamp: str = ""
     response_type: str = "normal"  # "normal" | "simple" | "no_data"
 
