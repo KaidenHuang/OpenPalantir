@@ -38,6 +38,16 @@ _DEFAULTS = {
         "long_term_max_chars": 500,
         "retrieve_limit": 5,
     },
+    "tools": {
+        "search_max_limit": 50,
+        "search_default_limit": 10,
+        "neighbors_max_limit": 100,
+        "neighbors_default_limit": 20,
+        "summaries_max_limit": 10,
+        "summaries_default_limit": 5,
+        "subgraph_max_hops": 5,
+        "subgraph_max_limit": 200,
+    },
 }
 
 

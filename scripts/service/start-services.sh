@@ -168,7 +168,7 @@ start_frontend() {
     fi
 
     cd "$frontend_dir"
-    setsid npm run dev >> "$PROJECT_ROOT/logs/frontend.log" 2>&1 &
+    setsid node node_modules/vite/bin/vite.js >> "$PROJECT_ROOT/logs/frontend.log" 2>&1 &
     disown
     cd "$PROJECT_ROOT"
 

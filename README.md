@@ -15,6 +15,10 @@
 
 OpenPalantir 是一个基于 AI 的数据分析与知识图谱构建系统。支持文档（PDF/Word/Markdown/图片）、数据库（MySQL/PostgreSQL/SQLite）等多种数据源，通过规则引擎和 LLM 为数据源构建摘要，并提取实体与关系，存入 Neo4j 图数据库，提供图谱分析（路径分析、社区发现、中心性计算、趋势分析）和问答型智能决策能力。
 
+<p align="center">
+  <img src="docs/图谱可视化页面.png" alt="图谱可视化" width="800"/>
+</p>
+
 ## 功能特性
 
 - **多源数据接入** — 支持 PDF、Word、Markdown、图片（OCR）、MySQL、PostgreSQL、SQLite 等

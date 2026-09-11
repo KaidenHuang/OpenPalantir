@@ -109,12 +109,24 @@ def build_entities_batch(rows: List[Dict], table_name: str, entity_type: str,
         for col, val in row.items():
             if val is not None:
                 attributes[col] = val
+        # 自动选择 byname：优先选含 "name" 的非主键字符串列，否则取第一个非主键字符串值
+        byname = None
+        pk_set = set(pk_columns)
+        name_candidates = []
+        for col, val in row.items():
+            if val is not None and isinstance(val, str) and col not in pk_set:
+                if "name" in col.lower():
+                    byname = val
+                    break
+                name_candidates.append(val)
+        if byname is None and name_candidates:
+            byname = name_candidates[0]
         # description 取简要的主键描述
         pk_desc = ", ".join(f"{pk}={row.get(pk, '')}" for pk in pk_columns)
         entities.append({
             "n": entity_name,
             "t": entity_type,
-            "bn": None,
+            "bn": byname,
             "c": 1,
             "datasource": f"{db_prefix}/{table_name}",
             "d": f"{table_name}({pk_desc})",

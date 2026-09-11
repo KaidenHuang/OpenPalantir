@@ -26,7 +26,8 @@
   - `list_summaries` → 发现系统中有哪些文档和数据库（**必须首先调用**，获取 datasource 供后续工具使用）
   - `get_summary_detail` → 获取某个文档的段落结构或数据库的表结构详情（datasource 来自 list_summaries 返回）
   - `search_entities` → 按关键词搜索实体，获取完整属性（如 birth_date、salaries、titles 等）。支持 `filters` 参数按属性精确筛选（如 `{{"gender": "F"}}`）
-  - `explore_neighbors` → 从已知实体出发，沿关系遍历找到关联实体（如：查找某部门的员工、某人的上级）。支持 `filters` 参数对邻居属性精确筛选并统计匹配数量（如 `{{"gender": "F"}}` 返回 `matched_count`）
+  - `explore_neighbors` → 从已知实体出发，沿关系遍历找到关联实体（如：查找某部门的员工、某人的上级）。支持 `filters` 参数对邻居属性精确筛选并统计匹配数量（如 `{{"gender": "F"}}` 返回 `matched_count`）；支持 `mode="aggregate"` 做 COUNT/SUM/AVG/MIN/MAX 聚合统计
+  - `explore_subgraph` → 多跳遍历（1-5 hops），发现间接关系和组织层级（如：CEO→经理→员工链路）
   - `analyze_path` → 仅用于分析两个指定实体之间的关联路径
   - `analyze_centrality` → 仅用于分析节点中心性/影响力
   - `analyze_community` → 仅用于检测社区结构/群组
@@ -36,6 +37,22 @@
   - "张三的薪资/年龄" → `list_summaries` 发现数据库 → `search_entities` 找到张三，查看 attributes 中的具体数据
   - "系统有哪些数据" → `list_summaries` 发现数据源 → `get_summary_detail` 查看详情
   - "A和B之间有什么关系" → `explore_neighbors` 从 A 出发查找关系
+- **高级查询策略**：
+  - **范围过滤**：filters 支持操作符 `$gt`/`$lt`/`$gte`/`$lte`/`$ne`/`$in`/`$regex`
+    - "薪资超过10000的员工" → `filters={{"salary": {{"$gt": 10000}}}}`
+    - "2023年后入职" → `filters={{"hire_date": {{"$gte": "2023-01-01"}}}}`
+    - "姓张的员工" → `filters={{"name": {{"$regex": "^张"}}}}`
+  - **聚合统计**：`explore_neighbors` 的 `mode="aggregate"` 支持 COUNT/SUM/AVG/MIN/MAX
+    - "部门平均薪资" → `explore_neighbors(entity_name="XX部门", predicate="dept_emp", mode="aggregate", aggregate={{"op":"AVG","field":"salaries"}})`（注意：薪资字段名是 `salaries`，因为来自 salaries 表）
+    - "男女比例" → `aggregate={{"op":"COUNT","group_by":"gender"}}`
+    - "比较A和B部门" → 两次 aggregate 调用，比较 result.value
+    - **重要**：`op`/`field`/`group_by` 必须嵌套在 `aggregate` 对象内，不能放在顶层参数
+  - **多跳遍历**：`explore_subgraph` 用于 1-5 跳的间接关系发现
+    - "组织层级" → `explore_subgraph(entity_name="CEO", hops=3, predicate_filter="reports_to")`
+    - "A和C之间有什么间接关系" → `explore_subgraph(entity_name="A", hops=2)`
+  - **字段选择**：`fields=["salary","name"]` 仅返回指定属性，节省 token
+  - **分页**：`search_entities` 的 `offset=10` 获取下一批结果
+  - **排序**：`sort_by={{"field":"salary","order":"desc"}}` 按属性排序
 - **严禁**：为了"做点什么"而调用不匹配的工具；凭推测编造具体数据
 
 ## 第三步：反思

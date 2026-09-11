@@ -1,4 +1,5 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import asyncio
 import sys
 import os
 
@@ -45,6 +46,19 @@ init_system_integration(app)
 # 记录应用启动日志
 logger.info("分析决策系统API服务启动")
 
+# 启动时回填 byname（非阻塞，后台线程执行）
+def _backfill_byname():
+    try:
+        from knowledge_graph.graph_manager import graph_manager
+        count = graph_manager.backfill_byname()
+        if count > 0:
+            logger.info(f"[startup] byname 回填完成: {count} 个实体")
+    except Exception as e:
+        logger.warning(f"[startup] byname 回填失败（不影响服务）: {e}")
+
+import threading
+threading.Thread(target=_backfill_byname, daemon=True).start()
+
 @app.get("/")
 async def root():
     return {"message": "分析决策系统API服务运行中"}
@@ -66,6 +80,10 @@ app.include_router(entity_types.router, prefix="/api/entity-types", tags=["entit
 
 # WebSocket 任务实时推送
 from websocket.task_ws import task_ws_manager
+
+@app.on_event("startup")
+async def startup_ws_loop():
+    task_ws_manager.set_main_loop(asyncio.get_running_loop())
 
 @app.websocket("/ws/tasks")
 async def websocket_tasks(websocket: WebSocket):

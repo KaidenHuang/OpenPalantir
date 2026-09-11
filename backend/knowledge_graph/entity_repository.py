@@ -518,7 +518,8 @@ class EntityRepository:
                      relationship_id: r.relationship_id,
                      description: r.description,
                      subject_id: r.subject_id,
-                     object_id: r.object_id
+                     object_id: r.object_id,
+                     occurrence_time: r.occurrence_time
                    }}) AS edges
             """
             result = neo4j_conn.execute_query(query, {"id": entity_id, "limit": safe_limit})
@@ -605,3 +606,70 @@ class EntityRepository:
         except Exception as e:
             logger.error(f"[delete_entities_by_datasource] 删除失败: {e}")
             raise
+
+    # ── 回填 ──
+
+    def backfill_byname(self) -> int:
+        """回填 byname 为空的实体。从 attributes JSON 中提取描述性字段作为 byname。
+        优先选择含 'name' 的非主键字符串列，否则取第一个字符串值。
+        """
+        try:
+            # 分批获取 byname 为空的实体
+            fetch_query = """
+            MATCH (n:Entity)
+            WHERE n.byname IS NULL AND n.attributes IS NOT NULL
+            RETURN n.id AS id, n.attributes AS attrs
+            LIMIT 5000
+            """
+            updated = 0
+            while True:
+                result = neo4j_conn.execute_query(fetch_query, {})
+                if not result:
+                    break
+
+                batch = []
+                for record in result:
+                    entity_id = record["id"]
+                    raw_attrs = record["attrs"]
+                    if isinstance(raw_attrs, str):
+                        try:
+                            attrs = json.loads(raw_attrs)
+                        except (json.JSONDecodeError, TypeError):
+                            continue
+                    elif isinstance(raw_attrs, dict):
+                        attrs = raw_attrs
+                    else:
+                        continue
+
+                    byname = None
+                    name_candidates = []
+                    for col, val in attrs.items():
+                        if val is not None and isinstance(val, str):
+                            if "name" in col.lower():
+                                byname = val
+                                break
+                            name_candidates.append(val)
+                    if byname is None and name_candidates:
+                        byname = name_candidates[0]
+
+                    if byname:
+                        batch.append({"id": entity_id, "byname": byname})
+
+                if batch:
+                    neo4j_conn.execute_query(
+                        "UNWIND $batch AS item "
+                        "MATCH (n:Entity {id: item.id}) "
+                        "SET n.byname = item.byname",
+                        {"batch": batch}
+                    )
+                    updated += len(batch)
+
+                if len(result) < 5000:
+                    break
+
+            if updated > 0:
+                logger.info(f"[backfill_byname] 回填了 {updated} 个实体的 byname")
+            return updated
+        except Exception as e:
+            logger.error(f"[backfill_byname] 回填失败: {e}")
+            return 0

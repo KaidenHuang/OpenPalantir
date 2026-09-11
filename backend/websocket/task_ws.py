@@ -3,7 +3,8 @@ WebSocket 任务状态推送 — 广播任务进度和状态变更给所有连�
 """
 import asyncio
 import json
-from typing import List
+import threading
+from typing import List, Optional
 
 from fastapi import WebSocket
 from system.logger import logger
@@ -14,6 +15,11 @@ class TaskWSManager:
 
     def __init__(self):
         self._connections: List[WebSocket] = []
+        self._main_loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def set_main_loop(self, loop: asyncio.AbstractEventLoop):
+        """保存主线程的 event loop，供后台线程跨线程调度"""
+        self._main_loop = loop
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
@@ -43,12 +49,12 @@ class TaskWSManager:
         """同步接口 — 在后台线程中调度广播（供 task_manager 调用）"""
         if not self._connections:
             return
+        loop = self._main_loop
+        if loop is None or loop.is_closed():
+            logger.warning("[ws] 同步广播跳过: 主 event loop 未就绪")
+            return
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.ensure_future(self.broadcast(data))
-            else:
-                loop.run_until_complete(self.broadcast(data))
+            asyncio.run_coroutine_threadsafe(self.broadcast(data), loop)
         except Exception as e:
             logger.warning(f"[ws] 同步广播失败: {e}")
 
