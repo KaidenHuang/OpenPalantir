@@ -172,7 +172,7 @@ backend/
 │   ├── debezium_config.py         # Debezium 配置渲染
 │   ├── schema_cache.py            # Schema 缓存
 │   └── offset_store.py            # offset 序列化（预留）
-│   —— 详细指南见 cdc/CLAUDE.md
+│   —— 详细指南见 cdc/AGENTS.md
 │
 ├── task_management/               # 异步任务管理
 │   ├── task_manager.py            # 任务调度器
@@ -313,7 +313,7 @@ CREATE CONSTRAINT IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE
 - **LLM 集成**：经 `model_management/model_client.py` 统一调用 Ollama API
 - **MCP 工具**：通过 `config/mcp_servers.json` 配置外部 MCP Server，自动纳入 AgenticEngine ReAct 循环
 - **Agentic 引擎**：统一 ReAct 循环（MAX_TURNS=10），种子检索提供初始上下文，上下文窗口自动压缩
-- **CDC 增量同步**：基于 Debezium Server + Redis Streams，设计与操作详见 `cdc/CLAUDE.md`
+- **CDC 增量同步**：基于 Debezium Server + Redis Streams，设计与操作详见 `cdc/AGENTS.md`
 - **设计优先**：当前阶段不考虑向后兼容，设计不合理之处直接改掉或删除
 
 ## 测试指南
@@ -352,5 +352,5 @@ CREATE CONSTRAINT IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE
 | [docs/data-flow.md](../docs/data-flow.md) | 文档分析/数据库导入/CDC/决策引擎业务流程 |
 | [docs/cdc-setup.md](../docs/cdc-setup.md) | CDC 增量同步：新环境配置与启动顺序 |
 | [docs/development-guide.md](../docs/development-guide.md) | 开发环境搭建与代码规范 |
-| [cdc/CLAUDE.md](cdc/CLAUDE.md) | CDC 模块详细设计指南 |
+| [cdc/AGENTS.md](cdc/AGENTS.md) | CDC 模块详细设计指南 |
 | [INSTALL.md](../INSTALL.md) | 安装部署与环境变量参考 |

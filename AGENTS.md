@@ -174,4 +174,4 @@ python run-all-tests.py    # 集成测试 + 报告
 | [docs/cdc-setup.md](docs/cdc-setup.md) | CDC 增量同步：新环境配置、完整启动顺序、关键设计 |
 | [docs/development-guide.md](docs/development-guide.md) | 开发环境搭建、添加功能、代码规范 |
 | [INSTALL.md](INSTALL.md) | 安装部署、环境变量参考、系统要求、常见问题 |
-| [backend/cdc/CLAUDE.md](backend/cdc/CLAUDE.md) | CDC 模块（`backend/cdc/`）设计、关键设计、多类型支持、修改注意 |
+| [backend/cdc/AGENTS.md](backend/cdc/AGENTS.md) | CDC 模块（`backend/cdc/`）设计、关键设计、多类型支持、修改注意 |
