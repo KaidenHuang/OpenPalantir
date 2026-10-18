@@ -19,55 +19,33 @@ from decision_engine.contracts import (
 
 
 class TestAnalyzedQuery:
-    """AnalyzedQuery 数据模型测试"""
+    """AnalyzedQuery 数据模型测试（收窄后的真实契约：keywords + domain）"""
 
     def test_default_values(self):
         """默认值正确"""
         q = AnalyzedQuery()
         assert q.domain == "general"
-        assert q.intent == ""
-        assert q.entities == []
-        assert q.entity_types == {}
-        assert q.sub_questions == []
+        assert q.keywords == []
 
     def test_full_construction(self):
         """完整构造"""
         q = AnalyzedQuery(
             domain="finance",
-            intent="风险评估",
-            entities=["客户A", "交易B"],
-            entity_types={"客户A": "客户", "交易B": "交易"},
-            sub_questions=["客户A的风险等级？"],
-            reasoning="分析客户风险",
-            direct_answer="",
+            keywords=["客户A", "交易B"],
         )
         assert q.domain == "finance"
-        assert q.intent == "风险评估"
-        assert len(q.entities) == 2
-        assert q.entity_types["客户A"] == "客户"
-
-    def test_direct_answer_for_simple_queries(self):
-        """简单问题（问候）的 direct_answer 字段"""
-        q = AnalyzedQuery(
-            intent="greeting",
-            direct_answer="你好！我是 AI 助手，有什么可以帮你的？",
-        )
-        assert q.direct_answer != ""
-        assert q.intent == "greeting"
+        assert q.keywords == ["客户A", "交易B"]
 
     def test_serialization(self):
         """序列化到 JSON 再反序列化"""
         q = AnalyzedQuery(
             domain="workforce",
-            intent="组织分析",
-            entities=["研发部"],
-            constraints={"dept": "研发部"},
+            keywords=["研发部"],
         )
         data = q.model_dump()
         restored = AnalyzedQuery(**data)
         assert restored.domain == q.domain
-        assert restored.intent == q.intent
-        assert restored.entities == q.entities
+        assert restored.keywords == q.keywords
 
 
 class TestDecisionAnswer:

@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 from config.database import SessionLocal
-from task_management.task_service import TaskService
+from models.task import Task as TaskRow
 from task_management.handlers import (SchemaAnalyzeHandler, SchemaImportHandler,
                                        CdcStartHandler, DocumentSummaryHandler,
                                        DocumentRefreshHandler, WikiGenerateHandler)
@@ -55,6 +55,9 @@ def _apply_db_row(task: "Task", db_task) -> "Task":
     return task
 
 
+_TERMINAL_STATUSES = ("completed", "failed", "stopped")
+
+
 class TaskManager:
     _handlers = {
         "database_schema_analyze": SchemaAnalyzeHandler,
@@ -73,8 +76,7 @@ class TaskManager:
         self.lock = threading.Lock()
         self.worker_thread = threading.Thread(target=self._process_tasks, daemon=True)
         self.worker_thread.start()
-        self.task_service = TaskService()
-        
+
         # 从数据库加载任务
         self._load_tasks()
 
@@ -90,7 +92,8 @@ class TaskManager:
             try:
                 # 直接从payload中获取document_id
                 document_id = payload.get("document_id")
-                db_task = self.task_service.create_task(db, task_type, document_id, "pending", task_id)
+                db.add(TaskRow(id=task_id, type=task_type, status="pending", file_id=document_id))
+                db.commit()
             finally:
                 db.close()
             
@@ -118,7 +121,7 @@ class TaskManager:
             # 从数据库中获取
             db = SessionLocal()
             try:
-                db_task = self.task_service.get_task(db, task_id)
+                db_task = db.query(TaskRow).filter(TaskRow.id == task_id).first()
                 if db_task:
                     # 创建payload，包含document_id
                     payload = {}
@@ -149,7 +152,7 @@ class TaskManager:
             # 直接从数据库中获取
             db = SessionLocal()
             try:
-                db_task = self.task_service.get_task(db, task_id)
+                db_task = db.query(TaskRow).filter(TaskRow.id == task_id).first()
                 if db_task:
                     task = _apply_db_row(Task(task_id=db_task.id, task_type=db_task.type, payload={}), db_task)
 
@@ -170,7 +173,7 @@ class TaskManager:
             # 直接从数据库中获取
             db = SessionLocal()
             try:
-                db_task = self.task_service.get_task(db, task_id)
+                db_task = db.query(TaskRow).filter(TaskRow.id == task_id).first()
                 if db_task and db_task.status == "completed":
                     return db_task.result
             finally:
@@ -188,7 +191,7 @@ class TaskManager:
             # 直接从数据库中获取任务列表
             db = SessionLocal()
             try:
-                db_tasks = self.task_service.get_tasks(db, skip=0, limit=1000)
+                db_tasks = db.query(TaskRow).offset(0).limit(1000).all()
                 tasks = []
                 for db_task in db_tasks:
                     task = _apply_db_row(Task(task_id=db_task.id, task_type=db_task.type, payload={}), db_task)
@@ -227,8 +230,10 @@ class TaskManager:
             # 从数据库中删除
             db = SessionLocal()
             try:
-                db_task = self.task_service.delete_task(db, task_id)
+                db_task = db.query(TaskRow).filter(TaskRow.id == task_id).first()
                 if db_task:
+                    db.delete(db_task)
+                    db.commit()
                     logger.info(f"[delete_task] 返回值: 删除成功, task_id={task_id}")
                     return True
                 else:
@@ -273,22 +278,17 @@ class TaskManager:
                     self.running_tasks.remove(task_id)
                     logger.info(f"[stop_task] 任务已从运行列表中移除: task_id={task_id}")
             
-            # 更新数据库状态
-            db = SessionLocal()
-            try:
-                db_task = self.task_service.update_task(db, task_id, status="stopped")
-                if db_task:
-                    # 更新内存中的任务状态
-                    with self.lock:
-                        task.status = "stopped"
-                        task.completed_at = datetime.now().isoformat()
-                    logger.info(f"[stop_task] 返回值: 任务已停止, task_id={task_id}")
-                    return True
-                else:
-                    logger.warning(f"[stop_task] 返回值: 任务不存在, task_id={task_id}")
-                    return False
-            finally:
-                db.close()
+            # 更新数据库状态（收尾语义：stopped 属终态，complete_time/广播由 _update_task_in_db 统一处理）
+            found = self._update_task_in_db(task_id, "stopped")
+            with self.lock:
+                task.status = "stopped"
+                task.completed_at = datetime.now().isoformat()
+            if found:
+                logger.info(f"[stop_task] 返回值: 任务已停止, task_id={task_id}")
+                return True
+            else:
+                logger.warning(f"[stop_task] 返回值: 任务不存在, task_id={task_id}")
+                return False
         except Exception as e:
             logger.error(f"[stop_task] 异常: {str(e)}")
             raise
@@ -318,7 +318,7 @@ class TaskManager:
             # 直接从数据库获取任务
             db = SessionLocal()
             try:
-                db_task = self.task_service.get_task(db, task_id)
+                db_task = db.query(TaskRow).filter(TaskRow.id == task_id).first()
                 if not db_task:
                     logger.warning(f"[_execute_task] 未找到任务: task_id={task_id}")
                     return
@@ -328,17 +328,11 @@ class TaskManager:
                     task = self.tasks.get(task_id)
                     if not task:
                         logger.warning(f"[_execute_task] 内存中未找到任务: task_id={task_id}")
-                        # 如果内存中没有任务，创建一个新的Task对象
-                        # 创建payload，包含document_id
+                        # 如果内存中没有任务，创建一个新的Task对象（payload 含 document_id）
+                        payload = {}
                         if db_task.file_id:
                             payload["document_id"] = db_task.file_id
-
-                        task = Task(
-                            task_id=db_task.id,
-                            task_type=db_task.type,
-                            payload=payload
-                        )
-                        _apply_db_row(task, db_task)
+                        task = _apply_db_row(Task(task_id=db_task.id, task_type=db_task.type, payload=payload), db_task)
                         self.tasks[task_id] = task
             finally:
                 db.close()
@@ -354,11 +348,7 @@ class TaskManager:
                     with self.lock:
                         task.progress = progress
                     try:
-                        db = SessionLocal()
-                        try:
-                            self.task_service.update_task(db, task_id, progress=progress)
-                        finally:
-                            db.close()
+                        self._update_task_in_db(task_id, progress=progress)
                     except Exception as db_err:
                         logger.warning(f"[_execute_task] 进度落库失败（不影响执行）: {db_err}")
                     from websocket.task_ws import task_ws_manager
@@ -379,8 +369,8 @@ class TaskManager:
                         task.completed_at = datetime.now().isoformat()
                     if task_id in self.running_tasks:
                         self.running_tasks.remove(task_id)
-                    if not was_stopped:
-                        self._update_task_in_db(task_id, "completed", result=task.result)
+                if not was_stopped:
+                    self._update_task_in_db(task_id, "completed", result=task.result)
                 if was_stopped:
                     logger.info(f"[_execute_task] 任务已停止: task_id={task_id}")
                 else:
@@ -392,7 +382,7 @@ class TaskManager:
                     task.completed_at = datetime.now().isoformat()
                     if task_id in self.running_tasks:
                         self.running_tasks.remove(task_id)
-                    self._update_task_in_db(task_id, "failed", error=str(e))
+                self._update_task_in_db(task_id, "failed", error=str(e))
                 logger.error(f"[_execute_task] 任务执行失败: task_id={task_id}, error={str(e)}")
                 raise
         except Exception as e:
@@ -400,28 +390,44 @@ class TaskManager:
             raise
 
 
-    def _update_task_in_db(self, task_id: str, status: str, result: str = None, error: str = None):
-        """更新数据库中的任务状态"""
+    def _update_task_in_db(self, task_id: str, status: str = None,
+                           result: str = None, error: str = None, progress: int = None) -> bool:
+        """任务收尾/状态变更的唯一落库缝：字段更新、terminal 态补 complete_time、WS 广播同处收敛
+
+        Returns:
+            目标任务行是否存在
+        """
         try:
             db = SessionLocal()
+            found = False
             try:
-                update_data = {"status": status}
-                if result:
-                    update_data["result"] = str(result)
-                if error:
-                    update_data["error"] = error
-                self.task_service.update_task(db, task_id, **update_data)
+                row = db.query(TaskRow).filter(TaskRow.id == task_id).first()
+                if row:
+                    found = True
+                    if status is not None:
+                        row.status = status
+                    if result:
+                        row.result = str(result)
+                    if error:
+                        row.error = error
+                    if progress is not None:
+                        row.progress = progress
+                    if status in _TERMINAL_STATUSES and row.complete_time is None:
+                        row.complete_time = datetime.now()
+                    db.commit()
             finally:
                 db.close()
 
             # WebSocket 广播任务状态变更
-            from websocket.task_ws import task_ws_manager
-            task_ws_manager.broadcast_sync({
-                "type": "task_update",
-                "task_id": task_id,
-                "status": status,
-                "error": error,
-            })
+            if status is not None:
+                from websocket.task_ws import task_ws_manager
+                task_ws_manager.broadcast_sync({
+                    "type": "task_update",
+                    "task_id": task_id,
+                    "status": status,
+                    "error": error,
+                })
+            return found
         except Exception as e:
             logger.error(f"[_update_task_in_db] 异常: {str(e)}")
             raise
@@ -433,7 +439,7 @@ class TaskManager:
             db = SessionLocal()
             try:
                 # 只加载未完成的任务
-                tasks = self.task_service.get_tasks(db, skip=0, limit=1000)
+                tasks = db.query(TaskRow).offset(0).limit(1000).all()
                 loaded_count = 0
                 for db_task in tasks:
                     if db_task.status in ["pending", "running"]:

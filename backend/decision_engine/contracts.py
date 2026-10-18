@@ -7,15 +7,14 @@ from system.logger import logger
 
 
 class AnalyzedQuery(BaseModel):
+    """检索关键词与领域标签 —— 决策引擎唯一还需要「分析结果」的消费点
+
+    旧 9 字段宽假契约（intent/entities/entity_types/constraints/…）随
+    query_analyzer 一起消亡：不再有生产它的模块，每个调用点都只能手工捏空壳。
+    收窄为真实消费者使用的两个值。
+    """
     domain: str = "general"
-    intent: str = ""
-    entities: List[str] = Field(default_factory=list)
-    entity_types: Dict[str, str] = Field(default_factory=dict)
-    constraints: Dict[str, Any] = Field(default_factory=dict)
-    required_sources: List[str] = Field(default_factory=list)
-    sub_questions: List[str] = Field(default_factory=list)
-    reasoning: str = ""
-    direct_answer: str = ""  # 简单问题（问候/身份/能力等）的直接回答，正常问题为空
+    keywords: List[str] = Field(default_factory=list)
 
 
 class RawEvidence(BaseModel):

@@ -105,10 +105,8 @@ main.py (FastAPI 应用入口)
   │   │   ├─ types.py                 ← Observation, SeedResult, AgenticResult
   │   │   └─ prompts/prompt_agentic.md← system prompt 模板
   │   ├─ retrievers/                  ← 检索器
-  │   │   ├─ base_retriever.py        ← 检索器抽象基类
-  │   │   ├─ document_summary_retriever.py ← 文档摘要检索
-  │   │   ├─ database_summary_retriever.py ← 数据库摘要检索
-  │   │   └─ graph_retriever.py       ← Neo4j 图谱检索
+  │   │   ├─ summary_retriever.py     ← 摘要检索（文档 + 数据库 JSON，共享打分 helper）
+  │   │   └─ embedding_utils.py       ← 向量召回 + hybrid_rank
   │   ├─ memory/                      ← 记忆系统
   │   │   ├─ memory_manager.py        ← 短期记忆（SQLite,7天TTL）+ 长期记忆（MEMORY.md）
   │   │   └─ memory_extractor.py      ← LLM 记忆提取（单 worker 线程）
@@ -150,8 +148,7 @@ main.py (FastAPI 应用入口)
   │   ├─ event_processor.py           ← Debezium 事件 → Neo4j 操作
   │   └─ schema_cache.py              ← 表结构缓存 (PK/FK/列名)
   ├─ task_management/                 ← 异步任务
-  │   ├─ task_manager.py              ← 任务队列 + 执行器（按 task_type 分发 handler）
-  │   ├─ task_service.py              ← 任务状态 CRUD
+  │   ├─ task_manager.py              ← 任务队列 + 执行器（按 task_type 分发 handler；唯一落库缝）
   │   └─ handlers/                    ← schema_analyze / schema_import / cdc_start /
   │                                     document_summary / document_refresh / wiki_generate
   ├─ file_sources/                    ← 文件源抽象

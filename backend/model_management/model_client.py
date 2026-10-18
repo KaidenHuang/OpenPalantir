@@ -239,13 +239,7 @@ class ModelClient:
         # 使用统一 JSON 提取入口
         result = _extract_json_unified(response_text)
         if result is not None:
-            if isinstance(result, dict):
-                entities = result.get('entities') or result.get('entity') or []
-                relationships = result.get('relationships') or result.get('relations') or result.get('relation') or []
-                if entities or relationships:
-                    logger.info(f"JSON解析成功，实体: {len(entities)} 个，关系: {len(relationships)} 条")
-            elif isinstance(result, list):
-                logger.info(f"JSON解析成功，列表长度: {len(result)}")
+            logger.info(f"JSON解析成功，类型: {type(result).__name__}")
         else:
             logger.warning(f"JSON提取失败，原始响应长度: {len(response_text)}")
             logger.info(f"原始响应前500字符: {response_text[:500]}")

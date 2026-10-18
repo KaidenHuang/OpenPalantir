@@ -212,7 +212,7 @@ AgenticEngine 是统一的 ReAct 循环引擎，可通过以下方式扩展：
    - `MAX_TURNS`（默认 10）— ReAct 循环最大轮数
    - `CONFIDENCE_THRESHOLD`（默认 0.7）— 低于此值标记需人工复核
    - `OBSERVATION_MAX_CHARS`（默认 500）— 单条观察截断长度
-5. **添加检索器**：在 `backend/decision_engine/retrievers/` 新增检索器类，继承 `BaseRetriever`，然后在 `SeedRetriever` 中注册调用。
+5. **添加检索器**：在 `backend/decision_engine/retrievers/` 扩展 `summary_retriever.py`（共享打分/glob 帮助函数），并在 `tools.py` 或 `SeedRetriever` 中接入。
 
 ### 3.4 配置外部 MCP Server
 

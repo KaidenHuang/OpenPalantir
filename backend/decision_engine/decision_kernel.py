@@ -150,10 +150,7 @@ class DecisionKernel:
         )
 
         # 6. 提取记忆
-        analyzed = AnalyzedQuery(
-            domain=domain, intent="general",
-            entities=[], entity_types={},
-        )
+        analyzed = AnalyzedQuery(domain=domain, keywords=[])
         memory_extractor.extract_async(
             request.question, result.answer.summary, session_id, domain,
         )
@@ -255,7 +252,7 @@ class DecisionKernel:
             confidence=1.0,
             confidence_reason="简单社交意图，无需检索",
         )
-        analyzed = AnalyzedQuery(domain=domain, intent=intent)
+        analyzed = AnalyzedQuery(domain=domain)
         conv_manager.add_turn(
             session_id, question, analyzed, answer, response_type="simple",
         )

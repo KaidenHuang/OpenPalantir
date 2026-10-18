@@ -64,16 +64,12 @@ interface ToolTraceStep {
 
 interface AnalyzedQuery {
   domain: string;
-  intent: string;
-  entities: string[];
-  constraints: Record<string, unknown>;
-  sub_questions: string[];
-  reasoning: string;
+  keywords: string[];
 }
 
 interface DecisionResponse {
   domain: string;
-  intent: string;
+  intent?: string;
   session_id: string;
   analyzed_query: AnalyzedQuery;
   evidence: EvidenceItem[];
@@ -225,7 +221,6 @@ function DecisionAssistant() {
             timestamp: new Date(turn.timestamp),
             result: {
               domain: session.domain,
-              intent: turn.analyzed_query?.intent || '',
               session_id: sid,
               analyzed_query: turn.analyzed_query,
               evidence: turn.evidence || [],

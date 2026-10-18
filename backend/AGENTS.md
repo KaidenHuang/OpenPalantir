@@ -119,10 +119,7 @@ backend/
 │   │   ├── memory_manager.py
 │   │   └── memory_extractor.py
 │   ├── retrievers/                # 检索器
-│   │   ├── base_retriever.py
-│   │   ├── graph_retriever.py
-│   │   ├── document_summary_retriever.py
-│   │   ├── database_summary_retriever.py
+│   │   ├── summary_retriever.py   # 摘要检索（文档 + 数据库 JSON，共享打分 helper）
 │   │   └── embedding_utils.py     # 向量召回 + hybrid_rank（embedding 缓存于 embedding_cache）
 │   ├── skills/                    # 内置技能
 │   │   ├── analyze_path/          # 路径分析
@@ -195,8 +192,7 @@ backend/
 │   —— 详细指南见 cdc/AGENTS.md
 │
 ├── task_management/               # 异步任务管理
-│   ├── task_manager.py            # 任务调度器（_handlers 按 task_type 分发）
-│   ├── task_service.py            # 任务服务
+│   ├── task_manager.py            # 任务调度器（_handlers 按 task_type 分发；唯一落库缝）
 │   └── handlers/                  # 任务处理器
 │       ├── base.py                # 处理器基类
 │       ├── document_summary.py    # 文档摘要

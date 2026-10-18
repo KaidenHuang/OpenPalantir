@@ -688,9 +688,9 @@ def _execute_explore_subgraph(params: dict) -> dict:
 def _execute_list_summaries(params: dict) -> dict:
     """搜索文档和数据库摘要，返回匹配数据源的高层概要"""
     from decision_engine.agentic.seed_retriever import _tokenize_question
-    from decision_engine.contracts import AnalyzedQuery
-    from decision_engine.retrievers.document_summary_retriever import DocumentSummaryRetriever
-    from decision_engine.retrievers.database_summary_retriever import DatabaseSummaryRetriever
+    from decision_engine.retrievers.summary_retriever import (
+        search_database_summaries, search_document_summaries,
+    )
 
     query_str = params.get("query", "")
     if not query_str:
@@ -703,14 +703,13 @@ def _execute_list_summaries(params: dict) -> dict:
     summary_type = params.get("type", "all")
     limit = min(params.get("limit", default_limit), max_limit)
 
-    keywords = _tokenize_question(query_str)
-    query = AnalyzedQuery(entities=keywords, intent="general")
+    keywords = set(_tokenize_question(query_str))
 
     results = {"documents": [], "databases": []}
 
     if summary_type in ("all", "document"):
         try:
-            doc_ev = DocumentSummaryRetriever().retrieve(query, {})
+            doc_ev = search_document_summaries(keywords)
             # 去重：只保留文档级摘要（按 datasource 去重），不含段落级
             seen = set()
             for ev in sorted(doc_ev, key=lambda e: e.relevance_score, reverse=True):
@@ -730,7 +729,7 @@ def _execute_list_summaries(params: dict) -> dict:
 
     if summary_type in ("all", "database"):
         try:
-            db_ev = DatabaseSummaryRetriever().retrieve(query, {})
+            db_ev = search_database_summaries(keywords)
             # 只保留数据库级摘要：datasource 格式为 DBS://uuid/db_name（不含表名）
             seen = set()
             for ev in sorted(db_ev, key=lambda e: e.relevance_score, reverse=True):

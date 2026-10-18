@@ -58,9 +58,10 @@ class LLMEntityEnhancer:
             max_retries: 最大重试次数，默认3次
             retry_delay: 重试间隔（秒），默认1秒
         """
-        # 处理model_config为None的情况
+        # 处理model_config为None的情况：走全局工厂（缓存复用），无可用模型再退回默认客户端
         if model_config is None:
-            self.model_client = ModelClient()
+            from model_management.model_client import get_model_client
+            self.model_client = get_model_client() or ModelClient()
         elif isinstance(model_config, dict):
             config = ModelConfig.from_dict(model_config)
             config.max_retries = max_retries
