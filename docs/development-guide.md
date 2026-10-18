@@ -296,12 +296,12 @@ export default function NewFeature() {
 # 推荐
 def get_entity(entity_id: str) -> dict | None:
     """获取实体，不存在返回 None"""
-    return graph_manager.get_entity(entity_id)
+    return entity_repo.get_entity(entity_id)
 
 # 不推荐
 def get_entity(entity_id):
     # 这个函数用于获取实体
-    result = graph_manager.get_entity(entity_id)
+    result = entity_repo.get_entity(entity_id)
     return result
 ```
 
@@ -367,10 +367,10 @@ results = neo4j_conn.execute_query(
     {"type": "人物", "limit": 10}
 )
 
-# 使用 GraphManager (推荐)
-from knowledge_graph.graph_manager import graph_manager
-entity = graph_manager.get_entity(entity_id)
-entities, total = graph_manager.list_entities_with_pagination(...)
+# 使用仓库单例 (推荐)
+from knowledge_graph.entity_repository import entity_repo
+entity = entity_repo.get_entity(entity_id)
+entities, total = entity_repo.list_entities_with_pagination(...)
 ```
 
 ---

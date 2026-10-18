@@ -141,16 +141,16 @@ class TestGraphRecycle:
         assert "WITH r WHERE size(coalesce(r.datasources, [])) = 0" in query
         assert "DETACH" not in query
 
-    def test_graph_manager_recycles_edges_then_entities(self):
-        from knowledge_graph.graph_manager import graph_manager
+    def test_recycle_recycles_edges_then_entities(self):
+        from knowledge_graph import recycle
 
         calls = []
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(graph_manager.rel_repo, "recycle_datasource",
+            mp.setattr(recycle.rel_repo, "recycle_datasource",
                        lambda prefix, **kw: calls.append("edges") or 5)
-            mp.setattr(graph_manager.entity_repo, "recycle_datasource",
+            mp.setattr(recycle.entity_repo, "recycle_datasource",
                        lambda prefix, **kw: calls.append("entities") or 2)
-            assert graph_manager.recycle_datasource("DOC://s1/") == {"edges": 5, "entities": 2}
+            assert recycle.recycle_datasource("DOC://s1/") == {"edges": 5, "entities": 2}
 
         assert calls == ["edges", "entities"]
 

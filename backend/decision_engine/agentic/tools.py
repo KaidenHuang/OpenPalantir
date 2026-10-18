@@ -187,7 +187,8 @@ def _tool_cfg() -> dict:
 
 def _execute_search_entities(params: dict) -> dict:
     """搜索知识图谱中的实体，支持属性筛选、分页、排序、字段选择"""
-    from knowledge_graph.graph_manager import graph_manager
+    from knowledge_graph.entity_repository import entity_repo
+    from knowledge_graph.relationship_repository import rel_repo
 
     query = params.get("query", "")
     if not query:
@@ -211,11 +212,11 @@ def _execute_search_entities(params: dict) -> dict:
         # offset > 0 时使用分页查询
         total_available = None
         if offset > 0:
-            entities, total_available = graph_manager.search_entities_with_pagination(
+            entities, total_available = entity_repo.search_entities_with_pagination(
                 query=query, limit=fetch_limit, offset=offset, entity_type=entity_type
             )
         else:
-            entities = graph_manager.search_entities(
+            entities = entity_repo.search_entities(
                 query=query, limit=fetch_limit, entity_types=entity_types
             )
         entities = _sanitize_neo4j_types(entities)
@@ -247,7 +248,8 @@ def _execute_search_entities(params: dict) -> dict:
 
 def _execute_explore_neighbors(params: dict) -> dict:
     """从已知实体出发，沿关系遍历找到关联实体（含属性），支持属性筛选统计和聚合"""
-    from knowledge_graph.graph_manager import graph_manager
+    from knowledge_graph.entity_repository import entity_repo
+    from knowledge_graph.relationship_repository import rel_repo
 
     entity_name = params.get("entity_name", "")
     if not entity_name:
@@ -277,7 +279,7 @@ def _execute_explore_neighbors(params: dict) -> dict:
 
     # 1) 找起始实体
     try:
-        found = graph_manager.search_entities(query=entity_name, limit=5)
+        found = entity_repo.search_entities(query=entity_name, limit=5)
     except Exception as e:
         return {"found": False, "error": f"搜索起始实体失败: {e}"}
 
@@ -289,7 +291,7 @@ def _execute_explore_neighbors(params: dict) -> dict:
 
     # 2) 获取所有关系
     try:
-        relationships = graph_manager.get_entity_relationships(entity_id)
+        relationships = rel_repo.get_entity_relationships(entity_id)
     except Exception as e:
         return {"found": True, "entity": entity, "neighbors": [], "error": f"获取关系失败: {e}"}
 
@@ -340,7 +342,7 @@ def _execute_explore_neighbors(params: dict) -> dict:
             "description": rel.get("description", ""),
         }
 
-    batch_entities = graph_manager.get_entities_batch(neighbor_ids) if neighbor_ids else {}
+    batch_entities = entity_repo.get_entities_batch(neighbor_ids) if neighbor_ids else {}
 
     neighbors = []
     for nid in neighbor_ids:
@@ -386,7 +388,8 @@ def _execute_explore_neighbors(params: dict) -> dict:
 def _build_neighbor_summary(entity: dict, filtered: list, filtered_count: int,
                             total_relations: int, fields: list = None) -> dict:
     """关系数量大时，返回统计摘要而非逐条数据"""
-    from knowledge_graph.graph_manager import graph_manager
+    from knowledge_graph.entity_repository import entity_repo
+    from knowledge_graph.relationship_repository import rel_repo
 
     # 取少量样本（最多 5 个）来展示数据结构
     sample_neighbors = []
@@ -397,7 +400,7 @@ def _build_neighbor_summary(entity: dict, filtered: list, filtered_count: int,
 
         neighbor_entity = None
         try:
-            neighbor_entity = graph_manager.get_entity(neighbor_id)
+            neighbor_entity = entity_repo.get_entity(neighbor_id)
         except Exception:
             pass
 
@@ -433,7 +436,8 @@ def _build_filtered_result(entity: dict, filtered: list, filtered_count: int,
                            total_relations: int, filters: dict,
                            fields: list = None) -> dict:
     """带属性筛选时：批量获取所有邻居实体，过滤后返回统计结果"""
-    from knowledge_graph.graph_manager import graph_manager
+    from knowledge_graph.entity_repository import entity_repo
+    from knowledge_graph.relationship_repository import rel_repo
 
     entity_id = entity.get("entity_id", entity.get("id", ""))
 
@@ -450,7 +454,7 @@ def _build_filtered_result(entity: dict, filtered: list, filtered_count: int,
         }
 
     # 批量获取实体（单次 Cypher 查询）
-    batch_entities = graph_manager.get_entities_batch(neighbor_ids)
+    batch_entities = entity_repo.get_entities_batch(neighbor_ids)
 
     # 组装邻居列表
     all_neighbors = []
@@ -497,7 +501,8 @@ def _build_aggregate_result(entity: dict, filtered: list, filtered_count: int,
                             total_relations: int, aggregate: dict,
                             filters: dict = None) -> dict:
     """聚合模式：批量获取邻居实体，对指定属性做 COUNT/SUM/AVG/MIN/MAX 统计"""
-    from knowledge_graph.graph_manager import graph_manager
+    from knowledge_graph.entity_repository import entity_repo
+    from knowledge_graph.relationship_repository import rel_repo
 
     entity_id = entity.get("entity_id", entity.get("id", ""))
     op = aggregate.get("op", "COUNT")
@@ -512,7 +517,7 @@ def _build_aggregate_result(entity: dict, filtered: list, filtered_count: int,
         neighbor_ids.append(neighbor_id)
 
     # 批量获取实体
-    batch_entities = graph_manager.get_entities_batch(neighbor_ids) if neighbor_ids else {}
+    batch_entities = entity_repo.get_entities_batch(neighbor_ids) if neighbor_ids else {}
 
     # 组装并过滤
     all_entities = []
@@ -602,7 +607,8 @@ def _build_aggregate_result(entity: dict, filtered: list, filtered_count: int,
 
 def _execute_explore_subgraph(params: dict) -> dict:
     """多跳遍历（1-5 hops），从起始实体出发遍历子图，返回节点和边"""
-    from knowledge_graph.graph_manager import graph_manager
+    from knowledge_graph.entity_repository import entity_repo
+    from knowledge_graph.relationship_repository import rel_repo
 
     entity_name = params.get("entity_name", "")
     if not entity_name:
@@ -619,7 +625,7 @@ def _execute_explore_subgraph(params: dict) -> dict:
 
     # 1) 找起始实体
     try:
-        found = graph_manager.search_entities(query=entity_name, limit=5)
+        found = entity_repo.search_entities(query=entity_name, limit=5)
     except Exception as e:
         return {"found": False, "error": f"搜索起始实体失败: {e}"}
 
@@ -631,7 +637,7 @@ def _execute_explore_subgraph(params: dict) -> dict:
 
     # 2) 获取子图
     try:
-        subgraph = graph_manager.get_subgraph(entity_id, hops=hops, limit=limit)
+        subgraph = entity_repo.get_subgraph(entity_id, hops=hops, limit=limit)
     except Exception as e:
         return {"found": True, "entity": entity, "error": f"子图查询失败: {e}"}
 

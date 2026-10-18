@@ -7,6 +7,7 @@
 """
 import os
 import sys
+from types import SimpleNamespace
 
 import yaml
 
@@ -104,7 +105,21 @@ class FakeGraph:
 
 
 def use_graph(mp, fake):
-    mp.setattr("knowledge_graph.graph_manager.graph_manager", fake)
+    """FakeGraph 拆分到治理函数实际消费的两个仓库单例（函数级 import 的取值点）"""
+    entity_fake = SimpleNamespace(
+        type_usage=fake.type_usage,
+        isolated_entities=fake.isolated_entities,
+        placeholder_entities=fake.placeholder_entities,
+        count_missing_provenance=lambda: fake._gaps["entities"],
+    )
+    rel_fake = SimpleNamespace(
+        predicate_usage=fake.predicate_usage,
+        raw_predicate_variants=fake.raw_predicate_variants,
+        endpoint_type_pairs=fake.endpoint_type_pairs,
+        count_missing_provenance=lambda: fake._gaps["relationships"],
+    )
+    mp.setattr("knowledge_graph.entity_repository.entity_repo", entity_fake)
+    mp.setattr("knowledge_graph.relationship_repository.rel_repo", rel_fake)
 
 
 class TestPackImportExport:

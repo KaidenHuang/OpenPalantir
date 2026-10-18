@@ -30,7 +30,7 @@ def ask_decision(request: DecisionRequest):
         return response
     except Exception as exc:
         logger.error(f"[decision][api] ask failed: {exc}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.get("/session/{session_id}")

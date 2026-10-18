@@ -49,8 +49,8 @@ logger.info("分析决策系统API服务启动")
 # 启动时回填 byname（非阻塞，后台线程执行）
 def _backfill_byname():
     try:
-        from knowledge_graph.graph_manager import graph_manager
-        count = graph_manager.backfill_byname()
+        from knowledge_graph.entity_repository import entity_repo
+        count = entity_repo.backfill_byname()
         if count > 0:
             logger.info(f"[startup] byname 回填完成: {count} 个实体")
     except Exception as e:

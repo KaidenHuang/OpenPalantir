@@ -1,7 +1,13 @@
 from fastapi import APIRouter, HTTPException, Body, Query
 from pydantic import BaseModel
 from typing import Dict, Any, Optional, List
-from knowledge_graph.graph_manager import graph_manager
+
+from config.neo4j_config import neo4j_conn
+from knowledge_graph import graph_topology
+from knowledge_graph.entity_repository import entity_repo
+from knowledge_graph.graph_performance import graph_performance
+from knowledge_graph.relationship_repository import rel_repo
+from knowledge_graph.viz_snapshot import get_visualization_data
 from system.logger import logger
 
 router = APIRouter()
@@ -24,10 +30,26 @@ class EntitySearchRequest(BaseModel):
 
 def _get_entity_or_404(entity_id: str) -> dict:
     """获取实体，不存在则抛出 404"""
-    entity = graph_manager.get_entity(entity_id)
+    entity = entity_repo.get_entity(entity_id)
     if not entity:
         raise HTTPException(status_code=404, detail="Entity not found")
     return entity
+
+
+def _summarize_params(params: dict) -> str:
+    """摘要打印查询参数，避免长列表撑爆日志"""
+    parts = []
+    for k, v in params.items():
+        if isinstance(v, list):
+            if len(v) > 5:
+                parts.append(f"{k}=[{len(v)} items: {', '.join(str(x)[:60] for x in v[:3])}...]")
+            else:
+                parts.append(f"{k}=[{', '.join(str(x)[:120] for x in v)}]")
+        elif isinstance(v, str) and len(v) > 120:
+            parts.append(f"{k}={v[:120]}...")
+        else:
+            parts.append(f"{k}={v}")
+    return ", ".join(parts)
 
 
 # ═══════════════════════════════════════════
@@ -46,7 +68,7 @@ def list_nodes(
         logger.debug(f"接收获取节点列表请求: page={page}, limit={limit}, entity_type={entity_type}, query={query}")
 
         offset = (page - 1) * limit
-        entities, total_count = graph_manager.list_entities_with_pagination(
+        entities, total_count = entity_repo.list_entities_with_pagination(
             entity_type=entity_type if entity_type else None,
             query=query or None,
             limit=limit,
@@ -95,7 +117,7 @@ def search_nodes(request: EntitySearchRequest):
         logger.info(f"接收搜索节点请求: query={request.query}, page={request.page}, limit={request.limit}, entity_type={request.entity_type}")
 
         offset = (request.page - 1) * request.limit
-        entities, total_count = graph_manager.list_entities_with_pagination(
+        entities, total_count = entity_repo.list_entities_with_pagination(
             entity_type=request.entity_type,
             query=request.query,
             limit=request.limit,
@@ -128,7 +150,7 @@ def add_node(entity: dict = Body(...)):
         entity_name = entity.get("name", "unknown")
         logger.debug(f"接收添加节点请求: name={entity_name}")
 
-        result = graph_manager.add_entity(entity)
+        result = entity_repo.add_entity(entity)
         logger.info(f"添加节点成功: {entity_name}")
         return result
     except Exception as e:
@@ -142,7 +164,7 @@ def batch_add_nodes(entities: list = Body(...)):
     try:
         logger.debug(f"接收批量添加节点请求: count={len(entities)}")
 
-        result = graph_manager.add_entities(entities)
+        result = entity_repo.add_entities(entities)
         logger.info(f"批量添加节点成功: count={len(entities)}")
         return result
     except Exception as e:
@@ -162,7 +184,7 @@ def update_node(entity_id: str, request: EntityUpdateRequest):
         if not update_data:
             raise HTTPException(status_code=400, detail="No data provided for update")
 
-        success = graph_manager.update_entity(entity_id, update_data)
+        success = entity_repo.update_entity(entity_id, update_data)
         if success:
             logger.info(f"更新节点成功: {entity_id}")
             return {"status": "success", "message": "Entity updated successfully"}
@@ -181,7 +203,7 @@ def delete_node(entity_id: str):
         logger.info(f"接收删除节点请求: entity_id={entity_id}")
 
         _get_entity_or_404(entity_id)
-        success = graph_manager.delete_entity(entity_id)
+        success = entity_repo.delete_entity(entity_id)
         if success:
             logger.info(f"删除节点成功: {entity_id}")
             return {"status": "success", "message": "Entity deleted successfully"}
@@ -200,7 +222,7 @@ def get_node_relationships(entity_id: str):
         logger.debug(f"接收获取节点关系请求: entity_id={entity_id}")
 
         _get_entity_or_404(entity_id)
-        relationships = graph_manager.get_entity_relationships(entity_id)
+        relationships = rel_repo.get_entity_relationships(entity_id)
         logger.info(f"获取节点关系成功: {entity_id}, 共 {len(relationships)} 个关系")
         return {
             "status": "success",
@@ -224,7 +246,7 @@ def get_node_subgraph(
         logger.debug(f"接收获取子图请求: entity_id={entity_id}, hops={hops}, limit={limit}")
 
         _get_entity_or_404(entity_id)
-        result = graph_manager.get_subgraph(entity_id, hops=hops, limit=limit)
+        result = entity_repo.get_subgraph(entity_id, hops=hops, limit=limit)
         logger.info(f"获取子图成功: {entity_id}, nodes={len(result['nodes'])}, edges={len(result['edges'])}")
         return {"status": "success", "data": result}
     except HTTPException:
@@ -243,8 +265,8 @@ def get_edges(limit: int = Query(50000, ge=1, le=50000, description="返回边�
     """获取图谱边（支持 limit 限制，默认 50000=全量，最大 50000）"""
     try:
         logger.debug(f"接收获取图谱边请求, limit={limit}")
-        edges = graph_manager.get_edges(limit=limit)
-        total_count = graph_manager.get_edge_count()
+        edges = rel_repo.get_edges(limit=limit)
+        total_count = rel_repo.get_edge_count()
         logger.info(f"获取图谱边成功: 返回 {len(edges)} 条, 总计 {total_count} 条")
         return {"edges": edges, "total_count": total_count}
     except Exception as e:
@@ -264,7 +286,7 @@ def get_graph_visualization_data(
         if entity_types:
             types_list = [t.strip() for t in entity_types.split(',') if t.strip()]
 
-        result = graph_manager.get_graph_visualization_data(
+        result = get_visualization_data(
             entity_types=types_list,
             min_edges=min_edges,
             max_nodes=max_nodes,
@@ -292,7 +314,7 @@ def add_relationship(relationship: dict = Body(...)):
         predicate = relationship.get("predicate", "unknown")
         logger.debug(f"接收添加关系请求: source={source}, target={target}, predicate={predicate}")
 
-        result = graph_manager.add_relationship(relationship)
+        result = rel_repo.add_relationship(relationship)
         logger.info(f"添加关系成功: {source} -{predicate}-> {target}")
         return result
     except Exception as e:
@@ -311,7 +333,7 @@ def batch_add_relationships(relationships: list = Body(...), use_create: bool = 
     try:
         logger.debug(f"接收批量添加关系请求: count={len(relationships)}, use_create={use_create}")
 
-        result = graph_manager.add_relationships(relationships, use_create=use_create)
+        result = rel_repo.add_relationships(relationships, use_create=use_create)
         logger.info(f"批量添加关系成功: count={len(relationships)}")
         return result
     except Exception as e:
@@ -324,7 +346,7 @@ def update_relationship(relationship_id: str, props: dict = Body(...)):
     """更新关系属性（predicate/confidence/description 等）"""
     try:
         logger.debug(f"接收更新关系请求: id={relationship_id}, props={props}")
-        success = graph_manager.update_relationship(relationship_id, props)
+        success = rel_repo.update_relationship(relationship_id, props)
         if not success:
             raise HTTPException(status_code=404, detail=f"关系 {relationship_id} 不存在")
         return {"status": "success", "relationship_id": relationship_id}
@@ -340,7 +362,7 @@ def delete_relationship(relationship_id: str):
     """删除单条关系"""
     try:
         logger.debug(f"接收删除关系请求: id={relationship_id}")
-        success = graph_manager.delete_relationship(relationship_id)
+        success = rel_repo.delete_relationship(relationship_id)
         if not success:
             raise HTTPException(status_code=404, detail=f"关系 {relationship_id} 不存在或已删除")
         return {"status": "success", "relationship_id": relationship_id}
@@ -361,11 +383,18 @@ def query_graph(query: str = Body(..., description="Cypher 查询语句")):
     try:
         logger.debug(f"接收查询图谱请求: query={query}")
 
-        results = graph_manager.query_graph(query)
+        result = neo4j_conn.execute_read_query(query)
+        results = []
+        for record in result:
+            record_dict = {}
+            for key in record.keys():
+                record_dict[key] = record[key]
+            results.append(record_dict)
+
         logger.info(f"查询图谱成功: 结果数: {len(results)}")
         return {"query": query, "results": results}
     except Exception as e:
-        logger.error(f"查询图谱失败: {str(e)}")
+        logger.error(f"查询图谱失败: {query}  error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -375,8 +404,8 @@ def export_graph(format: str = Body("json", description="导出格式")):
     try:
         logger.debug(f"接收导出图谱请求: format={format}")
 
-        nodes = graph_manager.get_nodes()
-        edges = graph_manager.get_edges()
+        nodes = entity_repo.get_nodes()
+        edges = rel_repo.get_edges()
 
         if format == "json":
             logger.info(f"导出图谱成功: 节点数: {len(nodes)}, 边数: {len(edges)}")
@@ -402,7 +431,7 @@ def partition_graph(method: str = Body("louvain", description="分区方法")):
     try:
         logger.debug(f"接收分区图谱请求: method={method}")
 
-        result = graph_manager.partition_graph(method)
+        result = graph_topology.partition_graph(method)
         logger.info(f"分区图谱成功: method={method}")
         return result
     except Exception as e:
@@ -416,7 +445,7 @@ def compress_graph(compression_ratio: float = Body(0.5, description="压缩比�
     try:
         logger.debug(f"接收压缩图谱请求: compression_ratio={compression_ratio}")
 
-        result = graph_manager.compress_graph(compression_ratio)
+        result = graph_topology.compress_graph(compression_ratio)
         logger.info(f"压缩图谱成功: compression_ratio={compression_ratio}")
         return result
     except Exception as e:
@@ -430,7 +459,7 @@ def get_meta_graph():
     try:
         logger.debug("接收创建元图谱请求")
 
-        result = graph_manager.create_meta_graph()
+        result = graph_topology.create_meta_graph()
         logger.info("创建元图谱成功")
         return result
     except Exception as e:
@@ -444,7 +473,7 @@ def get_entity_partition(entity_name: str):
     try:
         logger.debug(f"接收获取实体分区请求: entity_name={entity_name}")
 
-        result = graph_manager.get_partition(entity_name)
+        result = graph_topology.get_partition(entity_name)
         logger.info(f"获取实体分区成功: entity_name={entity_name}")
         return result
     except Exception as e:
@@ -462,7 +491,7 @@ def optimize_schema():
     try:
         logger.debug("接收优化 schema 请求")
 
-        result = graph_manager.optimize_schema()
+        result = graph_performance.create_indexes()
         logger.info("优化 schema 成功")
         return result
     except Exception as e:
@@ -476,7 +505,7 @@ def clear_cache():
     try:
         logger.debug("接收清除缓存请求")
 
-        result = graph_manager.clear_cache()
+        result = graph_performance.clear_cache("graph:*")
         logger.info("清除缓存成功")
         return result
     except Exception as e:
@@ -490,7 +519,7 @@ def get_query_performance(query: str = Body(..., description="Cypher 查询语�
     try:
         logger.debug(f"接收获取查询性能信息请求: query={query}")
 
-        result = graph_manager.get_query_performance(query)
+        result = graph_performance.get_query_performance(query)
         logger.info(f"获取查询性能信息成功: query={query}")
         return result
     except Exception as e:

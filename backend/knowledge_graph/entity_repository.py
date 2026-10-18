@@ -15,6 +15,31 @@ from system.logger import logger
 from models.ids import compute_entity_id
 
 
+def allocate_type_quota(type_counts: Dict[str, int], budget: int) -> Dict[str, int]:
+    """分层抽样配额公式（唯一应用点，viz 快照与实体分页共用）
+
+    每类型先保底 min_per_type = max(1, budget // (类型数 × 5))，保证长尾类型可见；
+    剩余预算按类型样本占比追加。返回 {type: 建议抽取数}，调用方自行 min 截断到存量。
+    """
+    if budget <= 0 or not type_counts:
+        return {}
+    total = sum(count for count in type_counts.values() if count > 0)
+    if total <= 0:
+        return {}
+    type_names = sorted(type_counts.keys(), key=lambda t: type_counts[t], reverse=True)
+    min_per_type = max(1, budget // (len(type_names) * 5))
+    reserved = min_per_type * len(type_names)
+    remaining_budget = max(0, budget - reserved)
+
+    quotas: Dict[str, int] = {}
+    for t in type_names:
+        share = min_per_type
+        if remaining_budget > 0:
+            share += int(remaining_budget * type_counts[t] / total)
+        quotas[t] = share
+    return quotas
+
+
 def _deserialize_attributes(node: dict) -> dict:
     """反序列化节点的 attributes JSON 字符串为 dict"""
     attrs = node.get("attributes")
@@ -331,6 +356,43 @@ class EntityRepository:
             logger.error(f"分页搜索实体失败: {e}")
             return [], 0
 
+    def get_nodes(self, limit: int = 5000) -> List[Dict[str, Any]]:
+        """获取图谱节点（轻量字段全量读；limit=5000 时走 Redis 快照缓存）"""
+        safe_limit = min(max(1, limit), 50000)
+        try:
+            logger.info(f"[get_nodes] 开始获取图谱节点, limit={safe_limit}")
+
+            if safe_limit == 5000:
+                cached_nodes = graph_performance.get_cached_graph_data("nodes:all")
+                if cached_nodes:
+                    logger.info(f"[get_nodes] 从缓存获取节点: {len(cached_nodes)} 个")
+                    return cached_nodes
+
+            query = """
+            MATCH (n)
+            RETURN n.id as id, n.name as name, coalesce(n.type, labels(n)[0]) as type,
+                   n.count as count, n.confidence as confidence, n.byname as byname
+            LIMIT $limit
+            """
+            result = neo4j_conn.execute_query(query, {"limit": safe_limit})
+            nodes = [{
+                'id': record['id'],
+                'name': record['name'],
+                'type': record['type'],
+                'count': record.get('count'),
+                'confidence': record.get('confidence'),
+                'byname': record.get('byname'),
+            } for record in result]
+
+            if safe_limit == 5000:
+                graph_performance.cache_graph_data("nodes:all", nodes)
+
+            logger.info(f"[get_nodes] 获取节点成功: {len(nodes)} 个")
+            return nodes
+        except Exception as e:
+            logger.error(f"[get_nodes] 获取节点失败: {str(e)}")
+            raise
+
     def list_entities(self, entity_type: str = None, limit: int = 100) -> List[Dict[str, Any]]:
         """列出实体，可按类型过滤"""
         try:
@@ -368,17 +430,11 @@ class EntityRepository:
                     )
                     type_counts = {r['t']: r['c'] for r in type_dist}
                     type_names = list(type_counts.keys())
-
-                    min_per_type = max(1, limit // (len(type_names) * 5))
-                    reserved = min_per_type * len(type_names)
-                    remaining_budget = max(0, limit - reserved)
+                    quotas = allocate_type_quota(type_counts, limit)
 
                     entities = []
                     for t in type_names:
-                        type_share = min_per_type
-                        if remaining_budget > 0:
-                            extra = int(remaining_budget * type_counts[t] / total)
-                            type_share += extra
+                        type_share = min(quotas.get(t, 0), type_counts[t])
 
                         skip = max(0, offset - sum(
                             type_counts[tt] for tt in type_names

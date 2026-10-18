@@ -1,7 +1,8 @@
-from knowledge_graph.graph_manager import graph_manager
+from knowledge_graph.entity_repository import entity_repo
+from knowledge_graph.relationship_repository import rel_repo
+from knowledge_graph.graph_partition import graph_partition
 import networkx as nx
 import matplotlib.pyplot as plt
-import community as community_louvain
 from typing import List, Dict, Tuple
 
 class Analyzer:
@@ -114,16 +115,10 @@ class Analyzer:
             
             # 将有向图转换为无向图（Louvain算法只支持无向图）
             G = G.to_undirected()
-            
-            # 使用Louvain算法检测社区
-            partition = community_louvain.best_partition(G)
-            
-            # 整理社区结果
-            communities = {}
-            for node, community_id in partition.items():
-                if community_id not in communities:
-                    communities[community_id] = []
-                communities[community_id].append(node)
+
+            # 使用 Louvain 检测社区 —— 与分区功能同一内部实现（graph_partition）
+            # 返回 {community_id: [node, ...]}
+            communities = graph_partition.partition_graph(G, "louvain")
             
             # 转换为列表格式并计算社区特征
             community_list = []
@@ -331,9 +326,8 @@ class Analyzer:
             if 'community_count' in metrics:
                 G = self._build_graph()
                 try:
-                    from community import community_louvain
-                    partition = community_louvain.best_partition(G.to_undirected())
-                    current_count = len(set(partition.values()))
+                    partition = graph_partition.partition_graph(G.to_undirected(), "louvain")
+                    current_count = len(partition)
                 except Exception:
                     current_count = 0
                 trends.append({
@@ -528,9 +522,8 @@ class Analyzer:
         Args:
             max_nodes: 节点数上限，默认 5000
         """
-        # 获取节点和边
-        nodes = graph_manager.get_nodes(limit=max_nodes)
-        edges = graph_manager.get_edges(limit=max_nodes * 2)
+        nodes = entity_repo.get_nodes(limit=max_nodes)
+        edges = rel_repo.get_edges(limit=max_nodes * 2)
         
         # 创建NetworkX图
         G = nx.DiGraph()

@@ -414,8 +414,8 @@ class TestOrphanPruning:
         env = wiki_env
         self._save(env.service, "entity", "ENT://id_zs/张三", "张三")
         self._save(env.service, "entity", "ENT://id_pf/研发平台", "研发平台")
-        graph = SimpleNamespace(get_entities_batch=lambda ids: {i: {} for i in ids if i != "id_zs"})
-        monkeypatch.setattr("knowledge_graph.graph_manager.graph_manager", graph)
+        repo = SimpleNamespace(get_entities_batch=lambda ids: {i: {} for i in ids if i != "id_zs"})
+        monkeypatch.setattr("knowledge_graph.entity_repository.entity_repo", repo)
 
         assert env.service.prune_orphans() == 1
         assert [p["title"] for p in env.service.list_pages(kind="entity")] == ["研发平台"]
@@ -424,8 +424,8 @@ class TestOrphanPruning:
         env = wiki_env
         self._save(env.service, "topic", "", "绩效")
         self._save(env.service, "answer", "", "问答沉淀")
-        graph = SimpleNamespace(get_entities_batch=lambda ids: {})
-        monkeypatch.setattr("knowledge_graph.graph_manager.graph_manager", graph)
+        repo = SimpleNamespace(get_entities_batch=lambda ids: {})
+        monkeypatch.setattr("knowledge_graph.entity_repository.entity_repo", repo)
 
         assert env.service.prune_orphans() == 0
         assert len(env.service.list_pages()) == 2

@@ -41,7 +41,7 @@ class EntityData(BaseModel):
         )
 
     def to_neo4j_dict(self) -> dict:
-        """转为 Neo4j 写入格式（与 graph_manager 兼容）"""
+        """转为 Neo4j 写入格式（仓储层可直接消费）"""
         return {
             "name": self.name,
             "type": self.type,

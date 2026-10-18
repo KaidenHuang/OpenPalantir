@@ -373,14 +373,15 @@ def extract_from_summary(source_id: str, data: dict = Body(...), db: Session = D
 @router.get("/sources/{source_id}/entities")
 def get_source_entities(source_id: str, file: str, db: Session = Depends(get_db)):
     """从知识库和图谱中获取已提取的实体和关系"""
-    from knowledge_graph.graph_manager import graph_manager
+    from knowledge_graph.entity_repository import entity_repo
+    from knowledge_graph.relationship_repository import rel_repo
 
     try:
         datasource = summary_generator.datasource_for(source_id, file)
-        entities = graph_manager.get_entities_by_datasource(datasource)
+        entities = entity_repo.get_entities_by_datasource(datasource)
 
         entity_ids = {e.get("entity_id") for e in entities if e.get("entity_id")}
-        all_rels = graph_manager.list_relationships(limit=1000)
+        all_rels = rel_repo.list_relationships(limit=1000)
         relationships = [
             r for r in all_rels
             if r.get("subject_id") in entity_ids or r.get("object_id") in entity_ids

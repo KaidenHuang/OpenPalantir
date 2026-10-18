@@ -70,9 +70,11 @@ main.py (FastAPI 应用入口)
   │   ├─ ontology.py                  ← 本体包查询/导入导出 + 治理报告
   │   └─ api/task.py                  ← 异步任务管理
   ├─ knowledge_graph/                 ← 图谱管理层
-  │   ├─ graph_manager.py             ← Neo4j 图操作（CRUD、搜索、批量优化）
-  │   ├─ entity_repository.py         ← 实体节点读写（含回收、治理聚合查询）
-  │   ├─ relationship_repository.py   ← 关系边读写（谓词归一化 → 类型化边）
+  │   ├─ entity_repository.py         ← 实体节点读写（含回收、治理聚合、get_nodes、抽样配额）
+  │   ├─ relationship_repository.py   ← 关系边读写（「语义行→受控写入」唯一归一化缝）
+  │   ├─ viz_snapshot.py              ← 可视化快照（图数据五步读路径）
+  │   ├─ graph_topology.py            ← 图级拓扑（分区/压缩/元图）
+  │   ├─ recycle.py                   ← 来源回收组合入口（先边后实体）
   │   ├─ source_scope.py              ← 两级来源的 Cypher 片段（归属/回收唯一出口）
   │   ├─ alias_cache.py               ← 实体别名缓存
   │   ├─ graph_partition.py           ← 图谱分区
@@ -327,7 +329,7 @@ App.tsx (标签导航)
 | `datasource` | 主来源（首次写入的来源 URI） | 展示、全文检索过滤 |
 | `datasources` | 全部佐证来源列表 | **归属判定与回收的唯一依据** |
 
-同一实体/关系可由多个来源佐证（`entity_id`=MD5(name)、`relationship_id`=MD5(s_p_o) 都与来源无关），因此按来源过滤或回收必须走 `knowledge_graph/source_scope.py` 的 Cypher 片段（`match_prefix` / `match_any_prefix` / `union_sources` / `strip_prefix`），否则重跑一个来源会连带删掉其他来源的佐证。回收入口是 `graph_manager.recycle_datasource(prefix)`：先摘边佐证、再摘实体佐证，**佐证列表清空才删除**。
+同一实体/关系可由多个来源佐证（`entity_id`=MD5(name)、`relationship_id`=MD5(s_p_o) 都与来源无关），因此按来源过滤或回收必须走 `knowledge_graph/source_scope.py` 的 Cypher 片段（`match_prefix` / `match_any_prefix` / `union_sources` / `strip_prefix`），否则重跑一个来源会连带删掉其他来源的佐证。回收入口是 `knowledge_graph/recycle.py 的 recycle_datasource(prefix)`：先摘边佐证、再摘实体佐证，**佐证列表清空才删除**。
 
 文档侧的失效判定不建状态表：摘要 JSON 内的 `content_hash` 就是生成当时源文件的 MD5，`source_management/refresh_service.py` 比对它即可得出 `changed` / `removed` / 未变更；下游 Wiki 页各自的 `source_hash` 幂等，上游一变下游自动重算。
 

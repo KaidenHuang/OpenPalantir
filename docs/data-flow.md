@@ -223,7 +223,7 @@ CDC 只覆盖数据库行级变更，文档侧的「改了 / 删了」由内容�
   │ source_management/refresh_service.refresh_document()          │
   │  ① 重新生成摘要并落盘                                          │
   │     LLM 失败即抛出 —— 旧摘要、旧图谱、旧 Wiki 页保持完整          │
-  │  ② graph_manager.recycle_datasource("DOC://{sid}/{文件}")      │
+  │  ② recycle.recycle_datasource("DOC://{sid}/{文件}")             │
   │     先摘边佐证再摘实体佐证，datasources 清空才 DETACH DELETE      │
   │     → 被其他文档佐证的实体/关系不受影响                          │
   │  ③ 按可用模型重新抽取实体关系入库                                │

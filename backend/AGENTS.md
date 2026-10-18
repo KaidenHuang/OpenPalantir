@@ -140,12 +140,14 @@ backend/
 │   └── config.py                  # 引擎配置
 │
 ├── knowledge_graph/               # 知识图谱操作
-│   ├── graph_manager.py           # 图谱 CRUD 主入口
-│   ├── entity_repository.py       # 实体存储（两级来源、回收、治理聚合）
-│   ├── relationship_repository.py # 关系存储（受控边类型写入）
+│   ├── entity_repository.py       # 实体存储（两级来源、回收、get_nodes、抽样配额公式）
+│   ├── relationship_repository.py # 关系存储（受控边类型写入；「语义行→受控写入」唯一缝）
+│   ├── viz_snapshot.py            # 可视化快照（/api/graph/graph-data 五步读路径）
+│   ├── graph_topology.py          # 图级拓扑操作（分区/压缩/元图，共享构图 helper）
+│   ├── recycle.py                 # 来源回收组合入口（先边佐证后实体佐证）
 │   ├── source_scope.py            # 来源归属/回收的 Cypher 片段唯一出口
-│   ├── graph_partition.py         # 图谱分区
-│   ├── graph_performance.py       # 性能优化
+│   ├── graph_partition.py         # 图谱分区算法（Louvain 等，分析引擎共用）
+│   ├── graph_performance.py       # 性能优化（索引/Redis 快照缓存）
 │   └── alias_cache.py             # 别名缓存
 │
 ├── analysis_engine/               # 图谱分析引擎

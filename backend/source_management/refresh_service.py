@@ -42,8 +42,8 @@ def stale_reason(source_id: str, file_path: str, full_path: str) -> str:
 
 def recycle_document(datasource: str) -> Dict[str, int]:
     """回收某文档在图谱中的全部产出（边 + 无其他佐证的实体）"""
-    from knowledge_graph.graph_manager import graph_manager
-    recycled = graph_manager.recycle_datasource(datasource)
+    from knowledge_graph.recycle import recycle_datasource
+    recycled = recycle_datasource(datasource)
     logger.info(f"[refresh] 图谱回收 {datasource}: {recycled}")
     return recycled
 

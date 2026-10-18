@@ -43,9 +43,9 @@ def object_type_keys() -> List[str]:
 
 def vocabulary_usage() -> Dict[str, Any]:
     """谓词使用统计：分布、兜底占比、从未使用的词表项"""
-    from knowledge_graph.graph_manager import graph_manager
+    from knowledge_graph.relationship_repository import rel_repo
 
-    usage = graph_manager.predicate_usage()
+    usage = rel_repo.predicate_usage()
     total = sum(usage.values())
     declared = ontology_registry.all_link_keys()
     fallback = usage.get(FALLBACK_PREDICATE, 0)
@@ -63,18 +63,18 @@ def vocabulary_usage() -> Dict[str, Any]:
 
 def alias_candidates(limit: int = 20) -> List[Dict[str, Any]]:
     """被归一使用过的原始谓词排行 —— 词表别名的补充依据"""
-    from knowledge_graph.graph_manager import graph_manager
+    from knowledge_graph.relationship_repository import rel_repo
 
     return [{"predicate": v["predicate"], "raw_predicate": v["raw_predicate"],
-             "count": v["count"]} for v in graph_manager.raw_predicate_variants(limit)]
+             "count": v["count"]} for v in rel_repo.raw_predicate_variants(limit)]
 
 
 def type_usage_report() -> Dict[str, Any]:
     """实体类型分布与词表对照"""
-    from knowledge_graph.graph_manager import graph_manager
+    from knowledge_graph.entity_repository import entity_repo
 
     declared = object_type_keys()
-    usage = graph_manager.type_usage()
+    usage = entity_repo.type_usage()
     total = sum(usage.values())
     return {
         "total_entities": total,
@@ -87,11 +87,11 @@ def type_usage_report() -> Dict[str, Any]:
 
 def domain_range_violations(limit: int = 50) -> List[Dict[str, Any]]:
     """定义域/值域越界的边（按 谓词+类型组合 聚合计数）"""
-    from knowledge_graph.graph_manager import graph_manager
+    from knowledge_graph.relationship_repository import rel_repo
 
     constraints = link_constraints()
     violations: List[Dict[str, Any]] = []
-    for row in graph_manager.endpoint_type_pairs():
+    for row in rel_repo.endpoint_type_pairs():
         entry = constraints.get(row["predicate"])
         if entry is None:
             continue
@@ -115,14 +115,14 @@ def domain_range_violations(limit: int = 50) -> List[Dict[str, Any]]:
 
 def structure_issues(limit: int = 50) -> Dict[str, Any]:
     """图谱结构性问题：游离实体、未回填占位实体、来源缺失"""
-    from knowledge_graph.graph_manager import graph_manager
+    from knowledge_graph.entity_repository import entity_repo
+    from knowledge_graph.relationship_repository import rel_repo
 
-    gaps = graph_manager.provenance_gaps()
     return {
-        "isolated_entities": graph_manager.isolated_entities(limit),
-        "placeholder_entities": graph_manager.placeholder_entities(limit),
-        "entities_without_source": gaps["entities"],
-        "edges_without_source": gaps["relationships"],
+        "isolated_entities": entity_repo.isolated_entities(limit),
+        "placeholder_entities": entity_repo.placeholder_entities(limit),
+        "entities_without_source": entity_repo.count_missing_provenance(),
+        "edges_without_source": rel_repo.count_missing_provenance(),
     }
 
 

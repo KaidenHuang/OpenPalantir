@@ -165,7 +165,7 @@ class WikiService:
         文档页：摘要文件已被删除则页面失去依据；
         实体页：图谱中该实体已被回收则页面失去依据。
         """
-        from knowledge_graph.graph_manager import graph_manager
+        from knowledge_graph.entity_repository import entity_repo
 
         db = SessionLocal()
         try:
@@ -180,7 +180,7 @@ class WikiService:
             if entity_pages:
                 ids = [entity_generator.parse_entity_datasource(p.datasource)
                        for p in entity_pages]
-                alive = set(graph_manager.get_entities_batch([i for i in ids if i]))
+                alive = set(entity_repo.get_entities_batch([i for i in ids if i]))
                 stale += [p for p, eid in zip(entity_pages, ids) if eid not in alive]
 
             for page in stale:
