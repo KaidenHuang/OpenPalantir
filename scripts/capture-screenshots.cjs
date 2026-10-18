@@ -5,9 +5,17 @@ const { mkdirSync } = require('fs');
 const docsDir = join(__dirname, '..', 'docs');
 const baseUrl = 'http://127.0.0.1:5175';
 
+// 只拍指定页面名，避免在空库上覆盖已有截图：node scripts/capture-screenshots.cjs 知识Wiki页面
+const only = process.argv.slice(2).filter((a) => !a.startsWith('-'));
+const wanted = (name) => only.length === 0 || only.includes(name);
+
 mkdirSync(docsDir, { recursive: true });
 
 async function screenshot(page, name, action) {
+  if (!wanted(name)) {
+    console.log(`跳过: ${name}`);
+    return;
+  }
   console.log(`截取: ${name}`);
   await action(page);
   await page.waitForTimeout(1500);
@@ -92,6 +100,41 @@ async function screenshot(page, name, action) {
     // 11. 智能决策
     await screenshot(page, '智能决策页面', async (p) => {
       await p.click('button:has-text("智能决策")');
+      await p.waitForTimeout(2000);
+    });
+
+    // 12. 知识Wiki
+    await screenshot(page, '知识Wiki页面', async (p) => {
+      await p.click('button:has-text("知识Wiki")');
+      await p.waitForTimeout(2000);
+    });
+
+    // 13. 智能决策 - 本体域下拉
+    await screenshot(page, '智能决策页面-本体域', async (p) => {
+      await p.click('button:has-text("智能决策")');
+      await p.waitForTimeout(2500);
+    });
+
+    // 14. 文档管理 - 本体域下拉（需先选中文件才出现操作条）
+    await screenshot(page, '文档管理页面-本体域', async (p) => {
+      await p.click('button:has-text("文档管理")');
+      await p.waitForTimeout(1500);
+      if ((await p.locator('.dv-source-item').count()) === 0) {
+        await p.click('button:has-text("添加源")');
+        await p.waitForTimeout(800);
+        const modal = p.locator('.ant-modal-content');
+        await modal.locator('input').nth(0).fill('示例文档');
+        await modal.locator('input').nth(1).fill(join(__dirname, '..', 'examples', 'docs'));
+        await modal.locator('button:has-text("添加")').click();
+        await p.waitForTimeout(2500);
+      }
+      await p.locator('.dv-source-item').first().click();
+      await p.waitForTimeout(1500);
+      await p
+        .locator('.dv-file-tree .ant-tree-title')
+        .filter({ hasText: /\.(md|txt|pdf|docx)$/i })
+        .first()
+        .click();
       await p.waitForTimeout(2000);
     });
 

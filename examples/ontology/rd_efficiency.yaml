@@ -1,0 +1,66 @@
+# 示例社区本体包：研发效能域
+#
+# 演示社区贡献路径：extends 挂在内置 workforce 域包之上，只声明自己的增量
+# （system_component / review 两个类型 + 维护/上报/评审通过三个谓词），
+# 任职于/管理 等 workforce 词表照旧可用。
+#
+# 用法（任选其一）：
+#   python scripts/demo/run_demo.py                 # 一键跑通，默认域即 rd_efficiency
+#   复制本文件到 backend/data/ontology_packs/ 后 curl -X POST /api/ontology/reload
+#   或用 jq 把 YAML 包成 JSON body 提交：
+#     jq -Rs '{yaml: ., persist: true}' examples/ontology/rd_efficiency.yaml | \
+#       curl -X POST http://localhost:8000/api/ontology/packs \
+#            -H 'Content-Type: application/json' -d @-
+
+name: rd_efficiency
+description: 研发效能领域本体（示例包，与 examples/docs 的样例文档配套）
+extends: workforce
+
+object_types:
+  - key: system_component
+    display_name: 系统组件
+    parent: concept
+    description: 可被维护与发布的技术组件、服务、工具
+    color: "#16A085"
+    sort_order: 40
+    properties:
+      - key: owner_team
+        data_type: string
+        description: 负责团队
+      - key: stability
+        data_type: number
+        description: 稳定性指标（0-100）
+  - key: review
+    display_name: 评审
+    parent: event
+    description: 方案评审、职级评审等会议事件
+    color: "#D35400"
+    sort_order: 41
+
+link_types:
+  - key: 维护
+    display_name: 维护
+    description: 人或团队负责某系统组件的日常维护
+    domain: [person, organization]
+    range: [system_component]
+    inverse: 维护者
+    aliases: [负责维护, 运维, upkeep]
+  - key: 维护者
+    display_name: 维护者
+    description: 系统组件的维护方（维护的逆）
+    domain: [system_component]
+    range: [person, organization]
+    inverse: 维护
+    aliases: [由…维护]
+  - key: 上报
+    display_name: 上报
+    description: 组件向另一组件或指标上报数据
+    domain: [system_component]
+    range: [system_component, concept]
+    aliases: [汇报至, 打点到]
+  - key: 评审通过
+    display_name: 评审通过
+    description: 评审事件对某人或某方案给出结论
+    domain: [review]
+    range: [person, concept]
+    aliases: [通过评审, 评审结论]

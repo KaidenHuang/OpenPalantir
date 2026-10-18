@@ -13,9 +13,7 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'backend'))
 
-from decision_engine.memory.memory_manager import (
-    MemoryManager, SHORT_TERM_TTL_DAYS, MAX_LONG_TERM_ITEMS, MAX_LONG_TERM_CHARS,
-)
+from decision_engine.memory.memory_manager import MemoryManager
 
 # 获取模块引用，用于替换路径常量
 import sys as _sys

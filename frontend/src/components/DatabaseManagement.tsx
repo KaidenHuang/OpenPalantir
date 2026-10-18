@@ -289,9 +289,10 @@ function DatabaseManagement() {
     }
     try {
       const signal = getComponentSignal();
+      // 非 sqlite 不预绑库：具体库在「分析 Schema」时按服务器枚举选择
       const payload = newConnection.type === 'sqlite'
         ? { ...newConnection }
-        : (() => { const { database: _db, ...rest } = newConnection; return rest; })();
+        : { ...newConnection, database: undefined };
       await storeCreateConnection(payload as Record<string, unknown>, signal);
       await loadConnections(signal);
       setShowCreateModal(false);

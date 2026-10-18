@@ -1,0 +1,55 @@
+# 人力资源领域本体包（在 general 之上扩展）
+name: workforce
+description: 人力资源领域实体与关系
+
+object_types:
+  - key: employee
+    display_name: 员工
+    parent: person
+    description: 企业员工/候选人
+    color: "#5DADE2"
+    sort_order: 10
+  - key: department
+    display_name: 部门
+    parent: organization
+    description: 公司内部部门/团队
+    color: "#EC7063"
+    sort_order: 20
+  - key: position
+    display_name: 岗位
+    parent: concept
+    description: 岗位/职级/职务
+    color: "#AF7AC5"
+    sort_order: 30
+
+link_types:
+  - key: 任职于
+    display_name: 任职于
+    description: 员工在某个组织/部门任职
+    domain: [employee, person]
+    range: [organization, department]
+    aliases: [就职于, 入职于, 工作于, 服务于]
+  - key: 担任
+    display_name: 担任
+    description: 员工担任某岗位
+    domain: [employee, person]
+    range: [position]
+    aliases: [任, 就任, 担任职位]
+  - key: 管理
+    display_name: 管理
+    description: 人或组织管理另一人或组织
+    domain: [person, employee, organization, department]
+    range: [person, employee, organization, department, concept]
+    inverse: 受管理于
+    aliases: [负责, 主管, 分管]
+  - key: 受管理于
+    display_name: 受管理于
+    description: 被某人/组织管理（管理的逆）
+    inverse: 管理
+    aliases: [汇报于, 上级是, 直属上级]
+  - key: 参与
+    display_name: 参与
+    description: 人员参与活动/事件/项目
+    domain: [person, employee, organization]
+    range: [event]
+    aliases: [参加, 出席, 介入]

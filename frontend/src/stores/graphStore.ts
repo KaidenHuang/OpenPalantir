@@ -9,7 +9,7 @@ import axios from 'axios';
 import { httpGet } from '../services/httpClient';
 import { API_CONFIG } from '../config/apiConfig';
 import { entityService } from '../services/entityService';
-import type { GraphLink, GraphNode } from './types';
+import type { GraphDataPayload, GraphLink, GraphNode } from './types';
 
 // 实体类型颜色映射
 const entityTypeColors: Record<string, string> = {
@@ -89,7 +89,7 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
       const result = await httpGet(
         `${API_CONFIG.endpoints.graph.graphData}?${params.toString()}`,
         { signal }
-      ).then(r => r.data as { status: string; data: Record<string, any> });
+      ).then(r => r.data as { status: string; data: GraphDataPayload });
 
       if (result.status !== 'success' || !result.data) {
         throw new Error('API 返回数据异常');

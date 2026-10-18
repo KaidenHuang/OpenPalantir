@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "description": "实体/关系抽取评测集：examples/docs 三篇示例文档的人工标注。entities 为必须召回的金标（t 为可接受的 ObjectType key，命中任一算类型正确）；optional 为文档中确实存在、允许模型额外抽取但不要求召回的名称，用于把名称覆盖率算成 precision 侧指标。relations 的结构召回只看实体对（方向无关），p 列用于统计归一化后的谓词正确率。",
+  "docs": [
+    {
+      "file": "examples/docs/组织架构说明.md",
+      "domain": "workforce",
+      "entities": [
+        {"n": "平台工程部", "t": ["department", "organization"]},
+        {"n": "数据平台组", "t": ["department", "organization"]},
+        {"n": "工程效能组", "t": ["department", "organization"]},
+        {"n": "王涛", "t": ["employee", "person"]},
+        {"n": "张明", "t": ["employee", "person"]},
+        {"n": "李芳", "t": ["employee", "person"]},
+        {"n": "陈立", "t": ["employee", "person"]},
+        {"n": "周雨", "t": ["employee", "person"]},
+        {"n": "技术总监", "t": ["position", "concept"]}
+      ],
+      "optional": [
+        "公司", "数据平台", "内部工具", "正式员工", "指标口径", "数据服务",
+        "CI流水线", "发布工具", "调度系统", "作业稳定性", "研发度量",
+        "职级评审", "人事系统", "技术序列", "评审结论", "职级", "组长",
+        "L1", "L2", "L3", "L5"
+      ],
+      "relations": [
+        {"s": "张明", "o": "数据平台组", "p": ["任职于", "属于"]},
+        {"s": "李芳", "o": "工程效能组", "p": ["任职于", "属于"]},
+        {"s": "陈立", "o": "数据平台组", "p": ["任职于", "属于"]},
+        {"s": "周雨", "o": "工程效能组", "p": ["任职于", "属于"]},
+        {"s": "数据平台组", "o": "平台工程部", "p": ["属于"]},
+        {"s": "工程效能组", "o": "平台工程部", "p": ["属于"]},
+        {"s": "张明", "o": "王涛", "p": ["受管理于", "管理"]},
+        {"s": "周雨", "o": "王涛", "p": ["受管理于", "管理"]},
+        {"s": "李芳", "o": "周雨", "p": ["受管理于", "管理"]},
+        {"s": "陈立", "o": "张明", "p": ["受管理于", "管理"]}
+      ]
+    },
+    {
+      "file": "examples/docs/季度评审记录.md",
+      "domain": "workforce",
+      "entities": [
+        {"n": "王涛", "t": ["employee", "person"]},
+        {"n": "张明", "t": ["employee", "person"]},
+        {"n": "李芳", "t": ["employee", "person"]},
+        {"n": "陈立", "t": ["employee", "person"]},
+        {"n": "周雨", "t": ["employee", "person"]},
+        {"n": "数据平台组", "t": ["department", "organization"]},
+        {"n": "工程效能组", "t": ["department", "organization"]},
+        {"n": "平台工程部", "t": ["department", "organization"]},
+        {"n": "指标服务", "t": ["concept", "organization", "other"]},
+        {"n": "调度系统", "t": ["concept", "organization", "other"]},
+        {"n": "CI流水线", "t": ["concept", "organization", "other"]},
+        {"n": "发布工具", "t": ["concept", "organization", "other"]}
+      ],
+      "optional": [
+        "技术总监", "季度评审", "指标口径", "作业稳定性", "业务库",
+        "夜间批处理任务", "备份窗口", "研发度量看板", "风控域", "职级评审",
+        "人事系统", "跨部门排期对齐", "组长", "部门", "L2", "L3"
+      ],
+      "relations": [
+        {"s": "张明", "o": "数据平台组", "p": ["任职于", "属于", "管理"]},
+        {"s": "周雨", "o": "工程效能组", "p": ["任职于", "属于", "管理"]},
+        {"s": "张明", "o": "指标服务", "p": ["管理"]},
+        {"s": "陈立", "o": "调度系统", "p": ["管理"]},
+        {"s": "李芳", "o": "CI流水线", "p": ["管理"]},
+        {"s": "李芳", "o": "发布工具", "p": ["管理"]}
+      ]
+    },
+    {
+      "file": "examples/docs/发布与CI手册.md",
+      "domain": "workforce",
+      "entities": [
+        {"n": "李芳", "t": ["employee", "person"]},
+        {"n": "周雨", "t": ["employee", "person"]},
+        {"n": "陈立", "t": ["employee", "person"]},
+        {"n": "张明", "t": ["employee", "person"]},
+        {"n": "平台工程部", "t": ["department", "organization"]},
+        {"n": "工程效能组", "t": ["department", "organization"]},
+        {"n": "数据平台组", "t": ["department", "organization"]},
+        {"n": "发布工具", "t": ["concept", "organization", "other"]},
+        {"n": "CI流水线", "t": ["concept", "organization", "other"]},
+        {"n": "指标服务", "t": ["concept", "organization", "other"]},
+        {"n": "制品库", "t": ["concept", "organization", "other"]},
+        {"n": "度量看板", "t": ["concept", "organization", "other"]}
+      ],
+      "optional": [
+        "预发环境", "构建产物", "合并请求", "单元测试", "依赖缓存",
+        "流水线缓存", "发布窗口", "调度任务", "夜间批处理任务",
+        "跨部门推广计划", "季度评审记录", "部门", "L2", "L3", "工程效能组组长"
+      ],
+      "relations": [
+        {"s": "李芳", "o": "发布工具", "p": ["管理"]},
+        {"s": "周雨", "o": "CI流水线", "p": ["管理"]},
+        {"s": "数据平台组", "o": "指标服务", "p": ["管理"]},
+        {"s": "发布工具", "o": "指标服务", "p": ["依赖"]},
+        {"s": "CI流水线", "o": "制品库", "p": ["依赖"]},
+        {"s": "张明", "o": "度量看板", "p": ["管理"]}
+      ]
+    }
+  ]
+}

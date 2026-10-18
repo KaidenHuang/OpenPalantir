@@ -1,0 +1,76 @@
+# 通用本体包（基底）：所有领域包在此之上扩展
+name: general
+description: 通用实体与受控关系词表
+
+object_types:
+  - key: person
+    display_name: 人物
+    description: 个人、角色或具名个体
+    color: "#3498db"
+    sort_order: 1
+  - key: organization
+    display_name: 组织
+    description: 公司、部门、团队等机构
+    color: "#e74c3c"
+    sort_order: 2
+  - key: location
+    display_name: 地点
+    description: 地理位置、场所、区域
+    color: "#27ae60"
+    sort_order: 3
+  - key: event
+    display_name: 事件
+    description: 发生的事、活动、交易、变更
+    color: "#f39c12"
+    sort_order: 4
+  - key: concept
+    display_name: 概念
+    description: 抽象概念、制度、方法、指标
+    color: "#9b59b6"
+    sort_order: 5
+  - key: other
+    display_name: 其他
+    description: 无法归类到以上类型的实体
+    color: "#95A5A6"
+    sort_order: 99
+
+link_types:
+  - key: 包含
+    display_name: 包含
+    description: 整体与部分的关系
+    inverse: 属于
+    aliases: [包括, 由…组成, 由...组成, 内含, contains]
+  - key: 属于
+    display_name: 属于
+    description: 部分与整体的关系（包含的逆）
+    inverse: 包含
+    aliases: [隶属, 归属, 是…的一部分, is part of]
+  - key: 引用
+    display_name: 引用
+    description: 一方引用/指向另一方
+    aliases: [参考, 指向, 参见, references]
+  - key: 关联
+    display_name: 关联
+    description: 泛化的无向关联
+    symmetric: true
+    aliases: [相关, 联系, 有关, related to]
+  - key: 亲属
+    display_name: 亲属
+    description: 亲属/家庭关系（父母、子女、配偶等），具体关系写入关系描述
+    symmetric: true
+    aliases: [父子, 母子, 父女, 母女, 配偶, 夫妻, 兄弟, 姐妹, 家人]
+  - key: 依赖
+    display_name: 依赖
+    description: 一方依赖另一方（数据库外键即此关系）
+    inverse: 被依赖
+    aliases: [依靠, 基于, depends on, foreign key, fk, 外键]
+  - key: 被依赖
+    display_name: 被依赖
+    description: 依赖的逆
+    inverse: 依赖
+    aliases: []
+  - key: 其他
+    display_name: 其他
+    description: 无法归入受控词表的关系（兜底）
+    symmetric: true
+    aliases: []

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { message } from 'antd';
 import API_CONFIG from '../config/apiConfig';
 import { useAbortController } from '../hooks/useAbortController';
 
@@ -39,6 +40,8 @@ interface EvidenceCitation {
   citation: string;
   source_type: string;
   source_id: string;
+  datasource?: string;
+  node_id?: string;
 }
 
 interface EvidenceItem {
@@ -91,6 +94,16 @@ interface ChatMessage {
 }
 
 const STORAGE_KEY = 'decision_session_id';
+const SCOPE_KEY = 'decision_pending_scope';
+const DOMAIN_KEY = 'decision_domain';
+const DEFAULT_DOMAIN = 'workforce';
+
+interface OntologyDomain {
+  name: string;
+  description: string;
+  object_type_count: number;
+  link_type_count: number;
+}
 
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
@@ -126,6 +139,20 @@ function DecisionAssistant() {
     return localStorage.getItem(STORAGE_KEY) || '';
   });
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+  const [domains, setDomains] = useState<OntologyDomain[]>([]);
+  const [domain, setDomain] = useState<string>(() => {
+    return localStorage.getItem(DOMAIN_KEY) || DEFAULT_DOMAIN;
+  });
+  const [scope, setScope] = useState<Record<string, string> | null>(() => {
+    try {
+      const raw = sessionStorage.getItem(SCOPE_KEY);
+      if (raw) {
+        sessionStorage.removeItem(SCOPE_KEY);
+        return JSON.parse(raw);
+      }
+    } catch { /* ignore */ }
+    return null;
+  });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { getLatestSignal } = useAbortController();
 
@@ -153,6 +180,28 @@ function DecisionAssistant() {
       setMessages([WELCOME_MESSAGE]);
     }
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 本体域列表：社区包导入后无需刷新页面即可选到
+  useEffect(() => {
+    const loadDomains = async () => {
+      try {
+        const signal = getLatestSignal('ontology-domains');
+        const res = await fetch(API_CONFIG.endpoints.ontology.domains, { signal });
+        if (!res.ok) return;
+        const data = await res.json();
+        const list: OntologyDomain[] = data.domains || [];
+        if (list.length === 0) return;
+        setDomains(list);
+        setDomain(prev => {
+          if (list.some(d => d.name === prev)) return prev;
+          const fallback = list.some(d => d.name === DEFAULT_DOMAIN) ? DEFAULT_DOMAIN : list[0].name;
+          localStorage.setItem(DOMAIN_KEY, fallback);
+          return fallback;
+        });
+      } catch { /* 后端不可用时保持当前选择 */ }
+    };
+    loadDomains();
+  }, [getLatestSignal]);
 
   const fetchSession = async (sid: string) => {
     try {
@@ -226,7 +275,12 @@ function DecisionAssistant() {
       const response = await fetch(API_CONFIG.endpoints.decision.ask, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: q, domain: 'workforce', session_id: sessionId }),
+        body: JSON.stringify({
+          question: q,
+          domain,
+          session_id: sessionId,
+          ...(scope ? { scope } : {}),
+        }),
         signal,
       });
 
@@ -274,14 +328,79 @@ function DecisionAssistant() {
     }
   };
 
+  const publishToWiki = async (q: string, r: DecisionResponse) => {
+    try {
+      const res = await fetch(API_CONFIG.endpoints.wiki.publishAnswer, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: q,
+          answer: r.answer?.situation_analysis || r.answer?.summary || '',
+          citations: (r.evidence_citations || []).map(c => ({
+            datasource: c.datasource || '',
+            node_id: c.node_id || '',
+            title: c.source_id,
+          })),
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || '发布失败');
+      }
+      message.success('已发布为 Wiki 页面，可在「知识Wiki」标签查看');
+    } catch (err: unknown) {
+      message.error(err instanceof Error ? err.message : '发布失败');
+    }
+  };
+
   return (
     <div className="decision-assistant">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2>智能问答决策</h2>
-        <button className="btn btn-secondary" onClick={startNewSession} style={{ fontSize: 12, padding: '4px 12px' }}>
-          新建会话
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <label style={{ fontSize: 12, color: '#7f8c8d' }} htmlFor="decision-domain">
+            本体域
+          </label>
+          <select
+            id="decision-domain"
+            value={domain}
+            onChange={(e) => {
+              setDomain(e.target.value);
+              localStorage.setItem(DOMAIN_KEY, e.target.value);
+            }}
+            style={{ fontSize: 12, padding: '4px 8px', borderRadius: 4 }}
+          >
+            {(domains.length > 0 ? domains : [{ name: domain, description: '', object_type_count: 0, link_type_count: 0 }])
+              .map(d => (
+                <option key={d.name} value={d.name} title={d.description}>
+                  {d.name}{d.link_type_count ? ` (${d.link_type_count})` : ''}
+                </option>
+              ))}
+          </select>
+          <button className="btn btn-secondary" onClick={startNewSession} style={{ fontSize: 12, padding: '4px 12px' }}>
+            新建会话
+          </button>
+        </div>
       </div>
+
+      {scope && (
+        <div style={{
+          marginBottom: 8, padding: '4px 10px', background: '#e6f4ff',
+          borderRadius: 6, fontSize: 12, display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <span>
+            当前提问作用域：{scope.title || scope.datasource}
+            {scope.node_id ? ` #${scope.node_id}` : ''}
+          </span>
+          <button
+            className="btn btn-secondary"
+            style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 8px' }}
+            onClick={() => setScope(null)}
+          >
+            清除
+          </button>
+        </div>
+      )}
 
       <div className="chat-container">
         <div className="chat-messages">
@@ -423,11 +542,27 @@ function DecisionAssistant() {
                                 {expandedSections[`citations-${msg.id}`] && (
                                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
                                     {r.evidence_citations.map((cit, idx) => (
-                                      <span key={idx} style={{
-                                        fontSize: 11, padding: '2px 8px', background: '#eef',
-                                        borderRadius: 12, color: '#446',
-                                      }}>
+                                      <span
+                                        key={idx}
+                                        title={cit.datasource
+                                          ? `就该来源提问：${cit.datasource}${cit.node_id ? ` #${cit.node_id}` : ''}`
+                                          : cit.citation}
+                                        onClick={cit.datasource
+                                          ? () => setScope({
+                                              datasource: cit.datasource || '',
+                                              node_id: cit.node_id || '',
+                                              title: cit.source_id,
+                                            })
+                                          : undefined}
+                                        style={{
+                                          fontSize: 11, padding: '2px 8px',
+                                          background: cit.datasource ? '#dbeafe' : '#eef',
+                                          borderRadius: 12, color: '#446',
+                                          cursor: cit.datasource ? 'pointer' : 'default',
+                                        }}
+                                      >
                                         {cit.citation}
+                                        {cit.datasource && ' 🎯'}
                                       </span>
                                     ))}
                                   </div>
@@ -513,6 +648,21 @@ function DecisionAssistant() {
                                 ))}
                               </div>
                             )}
+                          </div>
+                        )}
+                        {r.response_type !== 'simple' && r.response_type !== 'no_data' && (
+                          <div style={{ marginTop: 10 }}>
+                            <button
+                              className="btn btn-secondary"
+                              style={{ fontSize: 12, padding: '4px 12px' }}
+                              onClick={() => {
+                                const idx = messages.findIndex(m => m.id === msg.id);
+                                const q = idx > 0 ? messages[idx - 1]?.content : '';
+                                publishToWiki(q || '问答沉淀', r);
+                              }}
+                            >
+                              发布为 Wiki 页
+                            </button>
                           </div>
                         )}
                       </div>

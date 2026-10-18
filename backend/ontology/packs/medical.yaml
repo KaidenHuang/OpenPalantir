@@ -1,0 +1,62 @@
+# 医疗知识领域本体包（在 general 之上扩展）
+name: medical
+description: 医疗知识实体与关系
+
+object_types:
+  - key: disease
+    display_name: 疾病
+    description: 病症/综合征
+    color: "#C0392B"
+    sort_order: 10
+  - key: symptom
+    display_name: 症状
+    parent: concept
+    description: 临床表现/体征
+    color: "#D2B4DE"
+    sort_order: 20
+  - key: drug
+    display_name: 药物
+    parent: concept
+    description: 药品/处方药
+    color: "#76D7C4"
+    sort_order: 30
+  - key: department
+    display_name: 科室
+    parent: organization
+    description: 医院科室/专科
+    color: "#F9E79F"
+    sort_order: 40
+
+link_types:
+  - key: 治疗
+    display_name: 治疗
+    description: 药物/疗法治疗疾病
+    domain: [drug, concept]
+    range: [disease]
+    inverse: 治疗药物
+    aliases: [用于治, 主治, 医治]
+  - key: 治疗药物
+    display_name: 治疗药物
+    description: 疾病的治疗药物（治疗的逆）
+    domain: [disease]
+    range: [drug, concept]
+    inverse: 治疗
+    aliases: [用药, 处方]
+  - key: 表现为
+    display_name: 表现为
+    description: 疾病表现为某症状
+    domain: [disease]
+    range: [symptom]
+    aliases: [症状包括, 临床表现为, 出现]
+  - key: 伴随
+    display_name: 伴随
+    description: 症状/疾病伴随出现（无向）
+    symmetric: true
+    range: [symptom, disease]
+    aliases: [并发, 伴有]
+  - key: 就诊于
+    display_name: 就诊于
+    description: 患者就诊于科室
+    domain: [person]
+    range: [department]
+    aliases: [挂号, 看病于, 转诊至]

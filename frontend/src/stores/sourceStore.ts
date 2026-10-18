@@ -35,7 +35,6 @@ interface SourceState {
   deleteSource: (sourceId: string, signal?: AbortSignal) => Promise<void>;
   restoreSource: (sourceId: string, signal?: AbortSignal) => Promise<void>;
   summarize: (sourceId: string, filePath: string, signal?: AbortSignal) => Promise<string>;
-  extractEntities: (sourceId: string, filePath: string, signal?: AbortSignal) => Promise<void>;
   setTaskId: (id: string | null) => void;
   setSummary: (data: SummaryData | null) => void;
   setEntities: (data: Entity[]) => void;
@@ -116,14 +115,6 @@ export const useSourceStore = create<SourceState>()((set, get) => ({
       { signal }
     );
     return response.data.task_id as string;
-  },
-
-  extractEntities: async (sourceId, filePath, signal?: AbortSignal) => {
-    await httpPost(
-      API_CONFIG.endpoints.source.extract(sourceId),
-      { file: filePath },
-      { signal }
-    );
   },
 
   setTaskId: (id) => set({ taskId: id }),

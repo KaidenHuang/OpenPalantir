@@ -2,6 +2,7 @@ import React, { useEffect, useCallback, useRef, useState, useMemo } from 'react'
 import { Button } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import ForceGraph3D from 'react-force-graph-3d';
+import { useNavigate } from 'react-router-dom';
 import { useGraphStore } from '../stores/graphStore';
 import { useAbortController } from '../hooks/useAbortController';
 import type { GraphNode } from '../stores/types';
@@ -30,6 +31,7 @@ const GraphVisualization: React.FC = () => {
   } = useGraphStore();
 
   const { getLatestSignal } = useAbortController();
+  const navigate = useNavigate();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string; nodeName: string } | null>(null);
 
@@ -68,6 +70,13 @@ const GraphVisualization: React.FC = () => {
     await expandNeighbors(nodeId, hops);
   }, [expandNeighbors]);
 
+  const handleOpenWikiPage = useCallback((nodeId: string, nodeName: string) => {
+    setContextMenu(null);
+    sessionStorage.setItem('wiki_pending_entity',
+      JSON.stringify({ entity_id: nodeId, title: nodeName }));
+    navigate('/wiki');
+  }, [navigate]);
+
   // 点击空白处关闭右键菜单
   useEffect(() => {
     const closeMenu = () => setContextMenu(null);
@@ -83,23 +92,25 @@ const GraphVisualization: React.FC = () => {
     fetchGraphData(selectedEntityTypes, minEdgeCount, signal);
   };
 
+  const graphLinks = graphData.links;
+
   // LOD: 按连接度计算节点大小，高度连接的节点更大
   const nodeDegreeMap = useMemo(() => {
     const deg = new Map<string, number>();
-    for (const link of graphData.links) {
+    for (const link of graphLinks) {
       const s = String(typeof link.source === 'object' ? (link.source as Record<string, unknown>).id : link.source);
       const t = String(typeof link.target === 'object' ? (link.target as Record<string, unknown>).id : link.target);
       deg.set(s, (deg.get(s) || 0) + 1);
       deg.set(t, (deg.get(t) || 0) + 1);
     }
     return deg;
-  }, [graphData.links]);
+  }, [graphLinks]);
 
   // 边聚合：同一对节点间的多条边合并为一条粗边
   const aggregatedLinks = useMemo(() => {
-    if (graphData.links.length < 500) return null; // 少于 500 条边不聚合
-    const map = new Map<string, typeof graphData.links[0] & { _count?: number }>();
-    for (const link of graphData.links) {
+    if (graphLinks.length < 500) return null; // 少于 500 条边不聚合
+    const map = new Map<string, (typeof graphLinks)[0] & { _count?: number }>();
+    for (const link of graphLinks) {
       const s = String(typeof link.source === 'object' ? (link.source as Record<string, unknown>).id : link.source);
       const t = String(typeof link.target === 'object' ? (link.target as Record<string, unknown>).id : link.target);
       const key = s < t ? `${s}|${t}` : `${t}|${s}`;
@@ -112,7 +123,7 @@ const GraphVisualization: React.FC = () => {
       }
     }
     return Array.from(map.values());
-  }, [graphData.links]);
+  }, [graphLinks]);
 
   const displayLinks = aggregatedLinks || graphData.links;
 
@@ -320,6 +331,14 @@ const GraphVisualization: React.FC = () => {
               展开 {hops} 跳邻居
             </div>
           ))}
+          <div
+            style={{ padding: '6px 12px', fontSize: 13, cursor: 'pointer', borderTop: '1px solid #f0f0f0' }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = '#f5f5f5')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            onClick={() => handleOpenWikiPage(contextMenu.nodeId, contextMenu.nodeName)}
+          >
+            查看实体页
+          </div>
         </div>
       )}
     </div>

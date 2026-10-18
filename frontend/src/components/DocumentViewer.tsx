@@ -41,6 +41,15 @@ interface SummaryNode {
 
 type AxiosErrorLike = { response?: { data?: { detail?: string } }; message?: string };
 
+interface OntologyDomain {
+  name: string;
+  description: string;
+  object_type_count: number;
+  link_type_count: number;
+}
+
+const EXTRACT_DOMAIN_KEY = 'extract_domain';
+
 const DocumentViewer: React.FC = () => {
   const {
     sources, selectedSourceId, fetchSources, createSource, browseFiles: storeBrowseFiles,
@@ -80,6 +89,32 @@ const DocumentViewer: React.FC = () => {
 
   // Entity extraction state
   const [extracting, setExtracting] = useState(false);
+  const [ontologyDomains, setOntologyDomains] = useState<OntologyDomain[]>([]);
+  const [extractDomain, setExtractDomain] = useState<string>(() => {
+    return localStorage.getItem(EXTRACT_DOMAIN_KEY) || 'general';
+  });
+
+  useEffect(() => {
+    const loadDomains = async () => {
+      try {
+        const signal = getLatestSignal('ontology-domains');
+        const res = await httpGet<{ domains?: OntologyDomain[] }>(
+          API_CONFIG.endpoints.ontology.domains, { signal });
+        const list = res.data.domains || [];
+        if (list.length === 0) return;
+        setOntologyDomains(list);
+        setExtractDomain(prev => {
+          if (list.some(d => d.name === prev)) return prev;
+          const fallback = list.some(d => d.name === 'general') ? 'general' : list[0].name;
+          localStorage.setItem(EXTRACT_DOMAIN_KEY, fallback);
+          return fallback;
+        });
+      } catch (err) {
+        logger.warning('DocumentViewer', '获取本体域列表失败', err);
+      }
+    };
+    loadDomains();
+  }, [getLatestSignal]);
 
   const filteredSources = (sources as Source[]).filter(s =>
     s.name.toLowerCase().includes(sourceSearchText.toLowerCase()) ||
@@ -157,66 +192,9 @@ const DocumentViewer: React.FC = () => {
     }
   };
 
-  // ── Source selection / file browsing ──────────────────────────
+  // ── Summary / entities loading ─────────────────────────────────
 
-  const handleSourceChange = async (sourceId: string | null) => {
-    setSelectedSourceId(sourceId);
-    setSelectedFile(null);
-    setSummary(null);
-    setEntities([]);
-
-    if (!sourceId) {
-      // 清空 store 的文件列表
-      useSourceStore.setState({ files: [], currentPath: '' });
-      return;
-    }
-
-    await browseFiles(sourceId, '');
-  };
-
-  const browseFiles = async (sourceId: string, prefix: string, signal?: AbortSignal) => {
-    setFilesLoading(true);
-    try {
-      await storeBrowseFiles(sourceId, prefix, signal);
-    } catch (err: unknown) {
-      const e = err as AxiosErrorLike;
-      message.error(`浏览失败: ${e.response?.data?.detail || e.message}`);
-    } finally {
-      setFilesLoading(false);
-    }
-  };
-
-  const handleDirClick = (entry: FileEntry) => {
-    if (!selectedSourceId) return;
-    browseFiles(selectedSourceId, entry.path);
-  };
-
-  const handleFileClick = async (entry: FileEntry) => {
-    if (!selectedSourceId) return;
-    setSelectedFile(entry.path);
-    setSummary(null);
-    setEntities([]);
-    setTaskId(null);
-    setSummarizing(false);
-
-    const signal = getLatestSignal('file');
-    await Promise.all([
-      loadSummary(selectedSourceId, entry.path, signal),
-      loadEntities(selectedSourceId, entry.path, signal),
-    ]);
-  };
-
-  const handlePathUp = () => {
-    if (!selectedSourceId || !currentPath) return;
-    const parts = currentPath.split('/');
-    parts.pop();
-    const parent = parts.join('/');
-    browseFiles(selectedSourceId, parent);
-  };
-
-  // ── Summary ────────────────────────────────────────────────────
-
-  const loadSummary = async (sourceId: string, file: string, signal?: AbortSignal) => {
+  const loadSummary = useCallback(async (sourceId: string, file: string, signal?: AbortSignal) => {
     setSummaryLoading(true);
     try {
       const res = await httpGet(API_CONFIG.endpoints.source.summary(sourceId), {
@@ -230,9 +208,9 @@ const DocumentViewer: React.FC = () => {
     } finally {
       setSummaryLoading(false);
     }
-  };
+  }, [setSummary]);
 
-  const loadEntities = async (sourceId: string, file: string, signal?: AbortSignal) => {
+  const loadEntities = useCallback(async (sourceId: string, file: string, signal?: AbortSignal) => {
     try {
       const res = await httpGet(API_CONFIG.endpoints.source.entities(sourceId), {
         params: { file },
@@ -245,7 +223,95 @@ const DocumentViewer: React.FC = () => {
     } catch {
       // Entities don't exist yet — that's fine
     }
+  }, [setEntities]);
+
+  // ── Source selection / file browsing ──────────────────────────
+
+  const browseFiles = useCallback(async (sourceId: string, prefix: string, signal?: AbortSignal) => {
+    setFilesLoading(true);
+    try {
+      await storeBrowseFiles(sourceId, prefix, signal);
+    } catch (err: unknown) {
+      const e = err as AxiosErrorLike;
+      message.error(`浏览失败: ${e.response?.data?.detail || e.message}`);
+    } finally {
+      setFilesLoading(false);
+    }
+  }, [storeBrowseFiles]);
+
+  const handleSourceChange = useCallback(async (sourceId: string | null) => {
+    setSelectedSourceId(sourceId);
+    setSelectedFile(null);
+    setSummary(null);
+    setEntities([]);
+
+    if (!sourceId) {
+      // 清空 store 的文件列表
+      useSourceStore.setState({ files: [], currentPath: '' });
+      return;
+    }
+
+    await browseFiles(sourceId, '');
+  }, [setSelectedSourceId, setSelectedFile, setSummary, setEntities, browseFiles]);
+
+  const handleDirClick = (entry: FileEntry) => {
+    if (!selectedSourceId) return;
+    browseFiles(selectedSourceId, entry.path);
   };
+
+  const handleFileClick = useCallback(async (entry: FileEntry) => {
+    // 从 store 取当前源：异步链路里闭包值可能是切换源之前的旧值
+    const sourceId = useSourceStore.getState().selectedSourceId;
+    if (!sourceId) return;
+    setSelectedFile(entry.path);
+    setSummary(null);
+    setEntities([]);
+    setTaskId(null);
+    setSummarizing(false);
+
+    const signal = getLatestSignal('file');
+    await Promise.all([
+      loadSummary(sourceId, entry.path, signal),
+      loadEntities(sourceId, entry.path, signal),
+    ]);
+  }, [setSelectedFile, setSummary, setEntities, getLatestSignal, loadSummary, loadEntities]);
+
+  const handlePathUp = () => {
+    if (!selectedSourceId || !currentPath) return;
+    const parts = currentPath.split('/');
+    parts.pop();
+    const parent = parts.join('/');
+    browseFiles(selectedSourceId, parent);
+  };
+
+  // ── Wiki 引用锚点跳转：定位并打开被引用的文件 ──────────────────
+
+  const applyPendingCitation = useCallback(async () => {
+    const raw = sessionStorage.getItem('wiki_pending_doc');
+    if (!raw) return;
+    sessionStorage.removeItem('wiki_pending_doc');
+
+    let target: { source_id?: string; file?: string };
+    try {
+      target = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (!target.source_id || !target.file) return;
+
+    await handleSourceChange(target.source_id);
+    const entry = (useSourceStore.getState().files as unknown as FileEntry[])
+      .find(f => f.path === target.file);
+    if (!entry) {
+      message.warning(`引用文件已不存在：${target.file}`);
+      return;
+    }
+    await handleFileClick(entry);
+  }, [handleSourceChange, handleFileClick]);
+
+  useEffect(() => {
+    void applyPendingCitation();
+  }, [applyPendingCitation]);
 
   const handleBuildSummary = async () => {
     if (!selectedSourceId || !selectedFile) return;
@@ -292,7 +358,7 @@ const DocumentViewer: React.FC = () => {
       const signal = getComponentSignal();
       const res = await httpPost(
         API_CONFIG.endpoints.source.extract(selectedSourceId),
-        { file: selectedFile },
+        { file: selectedFile, domain: extractDomain },
         { signal }
       );
       setEntities(res.data.entities || []);
@@ -471,6 +537,23 @@ const DocumentViewer: React.FC = () => {
               <div className="dv-file-info">
                 <span className="dv-selected-file">{selectedFile}</span>
                 <div className="dv-actions">
+                  <Select
+                    value={extractDomain}
+                    onChange={(value: string) => {
+                      setExtractDomain(value);
+                      localStorage.setItem(EXTRACT_DOMAIN_KEY, value);
+                    }}
+                    style={{ width: 160 }}
+                    placeholder="本体域"
+                    options={(ontologyDomains.length > 0
+                      ? ontologyDomains
+                      : [{ name: extractDomain, description: '', object_type_count: 0, link_type_count: 0 }]
+                    ).map(d => ({
+                      value: d.name,
+                      label: d.name,
+                      title: `${d.description}（${d.object_type_count} 类型 / ${d.link_type_count} 谓词）`,
+                    }))}
+                  />
                   <Button
                     type="primary"
                     icon={<NodeIndexOutlined />}

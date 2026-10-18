@@ -29,6 +29,16 @@ export interface GraphLink {
   description?: string;
 }
 
+/** GET /api/graph/data 的原始响应体，字段由后端动态拼装 */
+export interface GraphDataPayload {
+  nodes?: Record<string, unknown>[];
+  edges?: Record<string, unknown>[];
+  available_types?: Record<string, number>;
+  total_node_count?: number;
+  total_edge_count?: number;
+  truncated?: boolean;
+}
+
 // ============================================================
 // 任务相关
 // ============================================================
@@ -86,7 +96,7 @@ export interface Entity {
   byname?: string | string[];
   datasource?: string;
   properties?: Record<string, string>;
-  attributes?: Record<string, any>;
+  attributes?: Record<string, unknown>;
   documents?: string[];
   relationships?: Relationship[];
   document_id?: string;

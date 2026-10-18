@@ -17,12 +17,11 @@ interface ForeignKeyInfo {
 
 function ERDiagram() {
   const schemaResult = useDatabaseStore((s) => s.schemaResult) as SchemaResult | null;
-  const tables: TableInfo[] = (schemaResult?.tables ?? []) as TableInfo[];
-  const foreignKeys: ForeignKeyInfo[] = (schemaResult?.foreign_keys ?? []) as ForeignKeyInfo[];
-  const getTableColumns = (tableName: string): ColumnInfo[] =>
-    ((schemaResult?.columns ?? []) as ColumnInfo[]).filter(
-      (col) => col.table_name === tableName
-    );
+  const tables = useMemo(() => (schemaResult?.tables ?? []) as TableInfo[], [schemaResult]);
+  const foreignKeys = useMemo(
+    () => (schemaResult?.foreign_keys ?? []) as ForeignKeyInfo[],
+    [schemaResult]
+  );
   const cardWidth = 260;
   const cardHeaderHeight = 33;
   const cardPaddingBottom = 8;
@@ -40,8 +39,14 @@ function ERDiagram() {
   const diagramRef = useRef<HTMLDivElement | null>(null);
 
   const tableMeta = useMemo(() => {
+    const columnsByTable = new Map<string, ColumnInfo[]>();
+    for (const col of (schemaResult?.columns ?? []) as ColumnInfo[]) {
+      const bucket = columnsByTable.get(col.table_name);
+      if (bucket) bucket.push(col);
+      else columnsByTable.set(col.table_name, [col]);
+    }
     return tables.map((table) => {
-      const columns = getTableColumns(table.table_name);
+      const columns = columnsByTable.get(table.table_name) ?? [];
       const visibleColumns = columns.slice(0, maxFields);
       const height = cardHeaderHeight + visibleColumns.length * rowHeight + cardPaddingBottom;
       return {
@@ -51,7 +56,7 @@ function ERDiagram() {
         height
       };
     });
-  }, [tables, getTableColumns]);
+  }, [tables, schemaResult]);
 
   const positions = useMemo(() => {
     const tableNames = tableMeta.map(item => item.table.table_name);

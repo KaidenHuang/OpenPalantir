@@ -1,0 +1,62 @@
+# 金融风控领域本体包（在 general 之上扩展）
+name: finance
+description: 金融风控实体与关系
+
+object_types:
+  - key: customer
+    display_name: 客户
+    description: 个人或企业客户
+    color: "#F56BA0"
+    sort_order: 10
+  - key: account
+    display_name: 账户
+    parent: concept
+    description: 银行/信用账户
+    color: "#48C9B0"
+    sort_order: 20
+  - key: transaction
+    display_name: 交易
+    parent: event
+    description: 转账/支付/消费记录
+    color: "#F5B041"
+    sort_order: 30
+  - key: institution
+    display_name: 机构
+    parent: organization
+    description: 银行/支付机构/监管机构
+    color: "#E74C3C"
+    sort_order: 40
+
+link_types:
+  - key: 持有
+    display_name: 持有
+    description: 客户持有账户
+    domain: [customer, person, organization]
+    range: [account]
+    inverse: 持有人
+    aliases: [拥有, 开立]
+  - key: 持有人
+    display_name: 持有人
+    description: 账户的持有人（持有的逆）
+    domain: [account]
+    range: [customer, person, organization]
+    inverse: 持有
+    aliases: [所属客户]
+  - key: 支付给
+    display_name: 支付给
+    description: 交易资金流向
+    domain: [transaction]
+    range: [customer, account, institution]
+    aliases: [转给, 付给, 汇入]
+  - key: 发起
+    display_name: 发起
+    description: 主体发起交易
+    domain: [customer, person, institution]
+    range: [transaction]
+    aliases: [进行, 执行, 触发]
+  - key: 担保
+    display_name: 担保
+    description: 一方为另一方或交易提供担保
+    domain: [customer, person, organization, institution]
+    range: [customer, transaction, account]
+    aliases: [抵押, 保证, 增信]

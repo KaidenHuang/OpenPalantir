@@ -15,12 +15,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 from decision_engine.agentic.engine import (
     AgenticEngine, quick_check_intent, SIMPLE_DEFAULTS,
 )
-from decision_engine.agentic.seed_retriever import SeedRetriever
-from decision_engine.agentic.types import AgenticResult, Observation, SeedResult
+from decision_engine.agentic.seed_retriever import _tokenize_question
+from decision_engine.agentic.types import AgenticResult, Observation
 from decision_engine.contracts import (
     AnalyzedQuery, DecisionAnswer, DecisionRequest, DecisionResponse,
 )
-from decision_engine.decision_kernel import DecisionKernel, inject_memories, load_domain_config
+from decision_engine.decision_kernel import DecisionKernel, _entity_types, inject_memories
 
 
 class TestQuickCheckIntent:
@@ -55,52 +55,49 @@ class TestQuickCheckIntent:
 
 
 class TestTokenize:
-    """SeedRetriever 分词测试"""
+    """种子检索分词工具测试（_tokenize_question）"""
 
     def test_basic_tokenization(self):
-        kw = SeedRetriever._tokenize("张三的能力，怎么样")
+        kw = _tokenize_question("张三的能力，怎么样")
         assert "张三" in kw
         assert "能力" in kw
 
     def test_filter_stop_words(self):
-        kw = SeedRetriever._tokenize("当前有哪几个部门")
+        kw = _tokenize_question("当前有哪几个部门")
         assert "部门" in kw
         assert "当前" not in kw
         assert "几个" not in kw
 
     def test_chinese_punctuation(self):
-        kw = SeedRetriever._tokenize("技术部，人员流失？")
+        kw = _tokenize_question("技术部，人员流失？")
         assert "技术部" in kw
         assert "人员" in kw
         assert "流失" in kw
 
     def test_empty_question(self):
-        kw = SeedRetriever._tokenize("")
+        kw = _tokenize_question("")
         assert kw == []
 
 
-class TestLoadDomainConfig:
-    """领域配置加载测试"""
+class TestEntityTypesFromOntology:
+    """问答的实体类型词表来自本体注册表（domain_config.yaml 已被本体包取代）"""
 
-    def test_load_general(self):
-        config = load_domain_config("general")
-        assert "entity_types" in config
-        assert "skill_domains" in config
+    def test_general_domain(self):
+        names = [e["name"] for e in _entity_types("general")]
+        assert {"person", "organization", "location", "event", "concept", "other"} <= set(names)
 
-    def test_load_workforce(self):
-        config = load_domain_config("workforce")
-        assert config.get("description") == "人力资源领域"
+    def test_domain_view_inherits_base_and_extends(self):
+        types = _entity_types("workforce")
+        names = [e["name"] for e in types]
+        assert "employee" in names and "person" in names
 
-    def test_unknown_domain_fallback(self):
-        """未知领域回退到 general"""
-        config = load_domain_config("nonexistent")
-        assert "entity_types" in config
+    def test_description_falls_back_to_display_name(self):
+        for entry in _entity_types("general"):
+            assert entry["description"]
 
-    def test_caching(self):
-        """配置缓存生效"""
-        c1 = load_domain_config("general")
-        c2 = load_domain_config("general")
-        assert c1 is c2  # 同一对象引用
+    def test_unknown_domain_falls_back_to_base_pack(self):
+        assert [e["name"] for e in _entity_types("不存在的域")] == \
+               [e["name"] for e in _entity_types("general")]
 
 
 class TestAgenticEngineParseFinal:
@@ -109,14 +106,7 @@ class TestAgenticEngineParseFinal:
     @staticmethod
     def _make_engine():
         """创建 mock 的 AgenticEngine（不需要真实 LLM）"""
-        mock_tools = MagicMock()
-        mock_llm = MagicMock()
-        engine = AgenticEngine.__new__(AgenticEngine)
-        engine.tools = mock_tools
-        engine.llm = mock_llm
-        engine.seed_retriever = MagicMock()
-        engine._prompt_template = ""
-        return engine
+        return AgenticEngine(tool_registry=MagicMock(), model_client=MagicMock())
 
     def test_parse_valid_json(self):
         engine = self._make_engine()
@@ -245,44 +235,6 @@ class TestAgenticEngineParseFinal:
         assert answer.work_orders[0].priority == "P0"
 
 
-class TestSeedResult:
-    """SeedResult 测试"""
-
-    def test_empty(self):
-        seed = SeedResult()
-        assert seed.is_empty
-        assert seed.format_for_prompt() == ""
-
-    def test_format_with_docs(self):
-        from decision_engine.contracts import RawEvidence
-        seed = SeedResult(
-            doc_summaries=[
-                RawEvidence(
-                    source_type="document_summary",
-                    source_id="报告.md",
-                    content={"summary": "测试报告摘要"},
-                    relevance_score=0.8,
-                    metadata={"datasource": "DOC://uuid/report"},
-                )
-            ],
-        )
-        assert not seed.is_empty
-        text = seed.format_for_prompt()
-        assert "报告.md" in text
-        assert "测试报告摘要" in text
-
-    def test_format_with_entities(self):
-        seed = SeedResult(
-            related_entities=[
-                {"name": "张三", "type": "person"},
-                {"name": "技术部", "type": "organization"},
-            ],
-        )
-        text = seed.format_for_prompt()
-        assert "张三" in text
-        assert "技术部" in text
-
-
 class TestAgenticContext:
     """AgenticContext 测试"""
 
@@ -291,7 +243,8 @@ class TestAgenticContext:
         ctx = AgenticContext(question="测试", domain="general")
 
         # 添加 7 条观察（超过 MAX_OBSERVATIONS_IN_CONTEXT=6）
-        for i in range(7):
+        n_obs = ctx.max_observations + 1
+        for i in range(n_obs):
             ctx.add_observation(Observation(
                 tool_name=f"tool_{i}",
                 params={},
@@ -314,11 +267,11 @@ class TestAgenticContext:
         ]
         compressed = ctx.compress(messages)
 
-        # 压缩后：最早的 3 条被移入 running_summary
-        assert len(ctx.observations) == 4
+        # 压缩后：最早 compress_batch 条被移入 running_summary
+        assert len(ctx.observations) == n_obs - ctx.compress_batch
         assert "tool_0" in ctx.running_summary
-        assert "tool_1" in ctx.running_summary
-        assert "tool_2" in ctx.running_summary
+        assert "tool_%d" % (ctx.compress_batch - 1) in ctx.running_summary
+        assert "tool_%d" % ctx.compress_batch not in ctx.running_summary
 
     def test_no_compress_below_threshold(self):
         from decision_engine.agentic.context import AgenticContext
@@ -387,9 +340,14 @@ class TestToolRegistry:
             {"type": "function", "function": {"name": "server1__tool1"}},
         ]
 
+        from decision_engine.agentic.tools import _BUILTIN_TOOLS
         registry = ToolRegistry(mock_skill, mock_mcp)
         tools = registry.get_definitions("general")
-        assert len(tools) == 2
+        names = [t["function"]["name"] for t in tools]
+        # Skill 与内置重名的 search_entities 被去重，MCP 工具保留
+        assert len(tools) == len(_BUILTIN_TOOLS) + 1
+        assert names.count("search_entities") == 1
+        assert "server1__tool1" in names
 
     def test_execute_skill_tool(self):
         from decision_engine.agentic.tools import ToolRegistry
@@ -600,8 +558,6 @@ class TestEmptyToolsFastFail:
         engine = AgenticEngine.__new__(AgenticEngine)
         engine.tools = mock_tools
         engine.llm = mock_llm
-        engine.seed_retriever = MagicMock()
-        engine.seed_retriever.retrieve.return_value = SeedResult()
         engine._prompt_template = ""
 
         result = engine.run("有哪些部门", "workforce")
@@ -666,7 +622,7 @@ class TestDecisionKernelInit:
         kernel._ensure_initialized()
         assert mock_sr.load_all.call_count == 1
 
-    @patch("decision_engine.decision_kernel.AgenticEngine")
+    @patch("decision_engine.decision_kernel.MultiAgentEngine")
     @patch("decision_engine.decision_kernel.skill_registry")
     def test_init_creates_agentic_engine(self, mock_sr, mock_ae_cls):
         """初始化后 _agentic 不为 None"""
@@ -850,13 +806,8 @@ class TestAgenticEngineRun:
 
     @staticmethod
     def _make_engine(mock_llm=None, mock_tools=None):
-        engine = AgenticEngine.__new__(AgenticEngine)
-        engine.tools = mock_tools or MagicMock()
-        engine.llm = mock_llm or MagicMock()
-        engine.seed_retriever = MagicMock()
-        engine.seed_retriever.retrieve.return_value = SeedResult()
-        engine._prompt_template = ""
-        return engine
+        return AgenticEngine(tool_registry=mock_tools or MagicMock(),
+                             model_client=mock_llm or MagicMock())
 
     def test_single_turn_answer(self):
         """LLM 首轮无 tool_calls → 直接返回答案"""
@@ -912,48 +863,44 @@ class TestAgenticEngineRun:
 
     def test_max_turns_force_synthesis(self):
         """MAX_TURNS 耗尽 → 强制综合，confidence ≤ 0.5"""
-        old_max = AgenticEngine.MAX_TURNS
-        AgenticEngine.MAX_TURNS = 2
-        try:
-            mock_llm = MagicMock()
-            mock_tools = MagicMock()
-            mock_tools.get_definitions.return_value = [
-                {"type": "function", "function": {"name": "search"}},
-            ]
-            mock_tools.execute.return_value = Observation(
-                tool_name="search", params={},
-                summary="结果", full_result={},
-                tool_call_id="tc_1", execution_time_ms=10, success=True,
-            )
-            mock_llm.call_with_tools.side_effect = [
-                {
-                    "content": "",
-                    "tool_calls": [{
-                        "id": "tc_1",
-                        "function": {"name": "search", "arguments": "{}"},
-                    }],
-                },
-                {
-                    "content": "",
-                    "tool_calls": [{
-                        "id": "tc_2",
-                        "function": {"name": "search", "arguments": "{}"},
-                    }],
-                },
-                {
-                    "content": json.dumps({
-                        "summary": "强制综合回答", "confidence": 0.5, "confidence_reason": "ok",
-                    }),
-                    "tool_calls": [],
-                },
-            ]
-            engine = self._make_engine(mock_llm, mock_tools)
-            result = engine.run("复杂问题", "general")
-            assert result.total_turns == 2
-            assert result.total_tool_calls == 2
-            assert result.confidence <= 0.5
-        finally:
-            AgenticEngine.MAX_TURNS = old_max
+        mock_llm = MagicMock()
+        mock_tools = MagicMock()
+        mock_tools.get_definitions.return_value = [
+            {"type": "function", "function": {"name": "search"}},
+        ]
+        mock_tools.execute.return_value = Observation(
+            tool_name="search", params={},
+            summary="结果", full_result={},
+            tool_call_id="tc_1", execution_time_ms=10, success=True,
+        )
+        mock_llm.call_with_tools.side_effect = [
+            {
+                "content": "",
+                "tool_calls": [{
+                    "id": "tc_1",
+                    "function": {"name": "search", "arguments": "{}"},
+                }],
+            },
+            {
+                "content": "",
+                "tool_calls": [{
+                    "id": "tc_2",
+                    "function": {"name": "search", "arguments": "{}"},
+                }],
+            },
+            {
+                "content": json.dumps({
+                    "summary": "强制综合回答", "confidence": 0.5, "confidence_reason": "ok",
+                }),
+                "tool_calls": [],
+            },
+        ]
+        engine = self._make_engine(mock_llm, mock_tools)
+        engine.max_turns = 2
+        result = engine.run("复杂问题", "general")
+        assert result.total_turns == 2
+        assert result.total_tool_calls == 2
+        assert result.confidence <= 0.5
 
     def test_llm_returns_none(self):
         """LLM 返回 None → 提前退出循环，落入强制综合"""

@@ -9,6 +9,7 @@ import TaskManagement from './components/TaskManagement'
 import ModelManagement from './components/ModelManagement'
 import DatabaseManagement from './components/DatabaseManagement'
 import DecisionAssistant from './components/DecisionAssistant'
+import WikiViewer from './components/WikiViewer'
 import { logger } from './services/logger'
 
 // 标签页配置：路径 → 组件映射
@@ -21,6 +22,7 @@ const TABS = [
   { key: 'model', label: '模型管理', path: '/model' },
   { key: 'analysis', label: '分析报告', path: '/analysis' },
   { key: 'decision', label: '智能决策', path: '/decision' },
+  { key: 'wiki', label: '知识Wiki', path: '/wiki' },
 ] as const
 
 function AppContent() {
@@ -67,6 +69,7 @@ function AppContent() {
           <Route path="/model" element={<div className="tab-content"><ModelManagement /></div>} />
           <Route path="/analysis" element={<div className="tab-content"><AnalysisDashboard /></div>} />
           <Route path="/decision" element={<div className="tab-content"><DecisionAssistant /></div>} />
+          <Route path="/wiki" element={<div className="tab-content"><WikiViewer /></div>} />
           <Route path="*" element={<Navigate to="/document" replace />} />
         </Routes>
       </main>

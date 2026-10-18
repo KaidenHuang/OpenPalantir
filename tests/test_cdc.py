@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from cdc.event_processor import EventProcessor
+from models.ids import compute_relationship_id
 
 
 @pytest.fixture
@@ -168,6 +169,11 @@ class TestEventProcessor:
         total_calls = mock_neo4j_conn.execute_query.call_count
         assert total_calls >= 2, f"应有至少 2 次 Neo4j 调用（MERGE实体 + FK关系），实际 {total_calls}"
 
+        fk_queries = [c.args[0] for c in mock_neo4j_conn.execute_query.call_args_list
+                      if "MERGE" in c.args[0] and "rel" in c.args[0]]
+        assert fk_queries, "应写入 FK 关系"
+        assert all("`依赖`" in q for q in fk_queries), "外键关系须为受控类型「依赖」"
+
     def test_fk_relationship_update(self, mock_neo4j_conn, sample_schema_cache):
         """FK 值变更时：删除旧关系 + 创建新关系"""
         processor = EventProcessor(
@@ -178,11 +184,9 @@ class TestEventProcessor:
 
         mock_neo4j_conn.execute_query.side_effect = [
             [],  # MERGE 实体
-            # 查询现有 FK 关系
+            # 查询现有 FK 关系（外键谓词受控归一为「依赖」，relationship_id 同规范）
             [{
-                "rel_id": hashlib.md5(
-                    b"orders:1_Foreign key_users:42"
-                ).hexdigest(),
+                "rel_id": compute_relationship_id("orders:1", "依赖", "users:42"),
                 "target_name": "users:42",
             }],
             [],  # 删除旧关系

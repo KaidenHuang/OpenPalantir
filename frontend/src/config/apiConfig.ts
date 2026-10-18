@@ -96,6 +96,17 @@ export const API_CONFIG = {
       create: `${API_BASE_URL}/api/entity-types`,
       update: (typeKey: string) => `${API_BASE_URL}/api/entity-types/${typeKey}`,
       delete: (typeKey: string) => `${API_BASE_URL}/api/entity-types/${typeKey}`,
+    },
+    wiki: {
+      pages: `${API_BASE_URL}/api/wiki/pages`,
+      page: (pageId: string) => `${API_BASE_URL}/api/wiki/pages/${pageId}`,
+      status: (pageId: string) => `${API_BASE_URL}/api/wiki/pages/${pageId}/status`,
+      generate: `${API_BASE_URL}/api/wiki/generate`,
+      publishAnswer: `${API_BASE_URL}/api/wiki/publish_answer`,
+    },
+    ontology: {
+      domains: `${API_BASE_URL}/api/ontology/domains`,
+      report: `${API_BASE_URL}/api/ontology/report`,
     }
   }
 };

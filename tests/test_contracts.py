@@ -233,14 +233,14 @@ class TestToolTrace:
         """构造工具调用记录"""
         trace = ToolTrace(
             step=1,
-            skill_name="search_entities",
+            tool_name="search_entities",
             params={"query": "张三"},
             result_summary="找到 3 个实体",
             success=True,
             execution_time_ms=150.0,
         )
         assert trace.step == 1
-        assert trace.skill_name == "search_entities"
+        assert trace.tool_name == "search_entities"
         assert trace.success is True
 
 
