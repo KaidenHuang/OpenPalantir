@@ -14,111 +14,10 @@ from database_management.import_helpers import (
     get_fk_column_info,
     refine_pks_via_dialect,
 )
-from models.ids import compute_entity_id, compute_relationship_id
-from knowledge_graph.source_scope import union_sources
-from ontology.predicates import canonical_rel_id, cypher_rel_type
+from knowledge_graph.graph_performance import graph_performance
 from system.logger import logger
 
 from .base import TaskHandler
-
-
-def _flush_attributes_batch(accumulator, neo4j_conn, db_json_dumps, compute_entity_id_fn):
-    """将累积的属性数据批量合并写入 Neo4j（多属性表安全，不覆盖已有键）
-
-    策略：先读取已有 e.attributes → Python 侧合并 → 写回
-    无需 APOC 插件，兼容所有 Neo4j 版本
-    """
-    import json as _json
-
-    if not accumulator:
-        return 0
-
-    # 1) 构建 entity_id → (parent_name, new_attrs) 映射
-    id_to_parent = {}
-    batch_ids = []
-    for parent_name, table_attrs in accumulator.items():
-        entity_id = compute_entity_id_fn(parent_name)
-        id_to_parent[entity_id] = (parent_name, table_attrs)
-        batch_ids.append(entity_id)
-
-    # 2) 批量读取现有 attributes
-    result = neo4j_conn.execute_query(
-        "UNWIND $ids AS eid MATCH (e:Entity {id: eid}) "
-        "RETURN e.id AS id, e.attributes AS attrs",
-        {"ids": batch_ids}
-    )
-    existing: dict = {}
-    for record in result:
-        raw = record["attrs"]
-        if isinstance(raw, str):
-            try:
-                existing[record["id"]] = _json.loads(raw)
-            except Exception:
-                existing[record["id"]] = {}
-        elif isinstance(raw, dict):
-            existing[record["id"]] = raw
-
-    # 3) 合并并批量写回
-    update_batch = []
-    for eid in batch_ids:
-        parent_name, table_attrs = id_to_parent[eid]
-        attrs = existing.get(eid, {})
-        for attr_table, rows in table_attrs.items():
-            attrs[attr_table] = rows
-        update_batch.append({
-            "id": eid,
-            "attrs": db_json_dumps(attrs)
-        })
-
-    if update_batch:
-        neo4j_conn.execute_query(
-            "UNWIND $batch AS item "
-            "MATCH (e:Entity {id: item.id}) "
-            "SET e.attributes = item.attrs",
-            {"batch": update_batch}
-        )
-    return len(update_batch)
-
-
-def _save_junction_batch(relationships, neo4j_conn, db_json_dumps, compute_entity_id_fn,
-                         datasource: str = ""):
-    """将一批 junction 关系直接写入 Neo4j（按受控谓词分组，类型化 MERGE）"""
-    groups: dict = {}
-    for rel in relationships:
-        rel_id, predicate, hit = canonical_rel_id(rel["s"], rel["p"], rel["o"])
-        if not hit:
-            logger.debug(f"[junction] 谓词 '{rel['p']}' 不在受控词表，归一为 '{predicate}'")
-        groups.setdefault(predicate, []).append({
-            "src_id": compute_entity_id_fn(rel["s"]), "src_name": rel["s"],
-            "tgt_id": compute_entity_id_fn(rel["o"]), "tgt_name": rel["o"],
-            "rel_id": rel_id,
-            "predicate": predicate,
-            "raw_predicate": rel["p"] if rel["p"] != predicate else "",
-            "description": rel["d"],
-            "attributes": db_json_dumps(rel.get("a", {})),
-            "datasource": datasource,
-        })
-
-    written = 0
-    for predicate, batch in groups.items():
-        rel_type = cypher_rel_type(predicate)
-        neo4j_conn.execute_query(
-            f"UNWIND $batch AS item "
-            f"MERGE (s:Entity {{id: item.src_id}}) "
-            f"ON CREATE SET s.name = item.src_name, s._placeholder = true "
-            f"MERGE (t:Entity {{id: item.tgt_id}}) "
-            f"ON CREATE SET t.name = item.tgt_name, t._placeholder = true "
-            f"MERGE (s)-[r:{rel_type} {{relationship_id: item.rel_id}}]->(t) "
-            f"ON CREATE SET r.datasource = item.datasource "
-            f"SET r.predicate = item.predicate, r.raw_predicate = item.raw_predicate, "
-            f"r.source = 'junction_import', "
-            f"r.description = item.description, r.attributes = item.attributes, "
-            f"r.confidence = 1.0 "
-            f"SET r.datasources = {union_sources('r', 'item.datasource')}",
-            {"batch": batch}
-        )
-        written += len(batch)
-    return written
 
 
 class SchemaImportHandler(TaskHandler):
@@ -246,10 +145,10 @@ class SchemaImportHandler(TaskHandler):
                     f"若导入中途失败，需重新执行全量导入才能启用 CDC 增量同步。"
                 )
 
-            from knowledge_graph.graph_manager import graph_manager
+            from knowledge_graph.recycle import recycle_datasource
 
             try:
-                graph_manager.performance.create_indexes()
+                graph_performance.create_indexes()
                 logger.info("Neo4j 索引已就绪")
             except Exception as e:
                 logger.warning(f"创建 Neo4j 索引失败（可能已存在）: {e}")
@@ -259,7 +158,7 @@ class SchemaImportHandler(TaskHandler):
             if database_name_for_uri:
                 db_prefix += f"/{database_name_for_uri}"
 
-            recycled = graph_manager.recycle_datasource(db_prefix)
+            recycled = recycle_datasource(db_prefix)
             deleted_count = recycled["entities"]
             if deleted_count > 0:
                 logger.info(
@@ -267,7 +166,8 @@ class SchemaImportHandler(TaskHandler):
                     f"{recycled['edges']} 条关系（datasource={db_prefix}）"
                 )
 
-            graph_manager.set_defer_cache(True)
+            # 批量导入静默期：各写入点 defer_cache=True，完成后统一失效缓存
+            graph_performance.clear_cache("graph:*")
 
             actual_row_counts: Dict[str, int] = {}
 
@@ -336,7 +236,7 @@ class SchemaImportHandler(TaskHandler):
 
                         if len(entity_buffer) >= neo4j_batch_size:
                             saved_batch = EntityDataStore.save_entities_only(
-                                entity_buffer, db_prefix
+                                entity_buffer, db_prefix, defer_cache=True
                             )
                             all_saved_entities.extend(
                                 (e.get("name", ""), e.get("entity_id", ""))
@@ -346,7 +246,7 @@ class SchemaImportHandler(TaskHandler):
 
                     if entity_buffer:
                         saved_batch = EntityDataStore.save_entities_only(
-                            entity_buffer, db_prefix
+                            entity_buffer, db_prefix, defer_cache=True
                         )
                         all_saved_entities.extend(
                             (e.get("name", ""), e.get("entity_id", ""))
@@ -371,8 +271,7 @@ class SchemaImportHandler(TaskHandler):
                 FLUSH_SIZE = 50000
                 if attribute_table_names:
                     logger.info(f"步骤3b: 流式处理 {len(attribute_table_names)} 个属性表")
-                    from utils.json_utils import db_json_dumps
-                    from config.neo4j_config import neo4j_conn
+                    from knowledge_graph.entity_repository import entity_repo
 
                     for attr_idx, attr_table in enumerate(attribute_table_names):
                         fks = fk_defs_by_table.get(attr_table, [])
@@ -414,16 +313,16 @@ class SchemaImportHandler(TaskHandler):
                                 record_count += 1
 
                             if record_count >= FLUSH_SIZE:
-                                flushed = _flush_attributes_batch(
-                                    attr_accumulator, neo4j_conn, db_json_dumps, compute_entity_id
+                                flushed = entity_repo.merge_attributes(
+                                    attr_accumulator, defer_cache=True
                                 )
                                 logger.info(f"  属性批量更新: {flushed} 个实体, {record_count} 条属性记录")
                                 attr_accumulator.clear()
                                 record_count = 0
 
                         if record_count > 0:
-                            flushed = _flush_attributes_batch(
-                                attr_accumulator, neo4j_conn, db_json_dumps, compute_entity_id
+                            flushed = entity_repo.merge_attributes(
+                                attr_accumulator, defer_cache=True
                             )
                             logger.info(f"  属性批量更新(尾批): {flushed} 个实体, {record_count} 条属性记录")
                         del attr_accumulator
@@ -438,8 +337,7 @@ class SchemaImportHandler(TaskHandler):
                                         if role_map.get(t["table_name"], "entity") == "junction"]
                 if junction_tables_list:
                     logger.info(f"步骤3c: 流式处理 {len(junction_tables_list)} 个关联表")
-                    from utils.json_utils import db_json_dumps
-                    from config.neo4j_config import neo4j_conn
+                    from knowledge_graph.relationship_repository import rel_repo
 
                     for jt_idx, jt_info in enumerate(junction_tables_list):
                         jt_name = jt_info["table_name"]
@@ -462,9 +360,18 @@ class SchemaImportHandler(TaskHandler):
                                 [jt_name], {jt_name: batch}, fk_defs_by_table, pk_index
                             )
                             if rels:
-                                saved = _save_junction_batch(
-                                    rels, neo4j_conn, db_json_dumps, compute_entity_id,
-                                    datasource=db_prefix
+                                saved = rel_repo.upsert_relationships(
+                                    [
+                                        {
+                                            "subject": rel["s"], "object": rel["o"],
+                                            "predicate": rel["p"], "description": rel.get("d", ""),
+                                            "attributes": rel.get("a", {}),
+                                            "datasource": db_prefix,
+                                        }
+                                        for rel in rels
+                                    ],
+                                    source_tag="junction_import",
+                                    defer_cache=True,
                                 )
                                 total_rels += saved
                             del rels
@@ -478,16 +385,13 @@ class SchemaImportHandler(TaskHandler):
                 conn.close()
             t_close = time.time()
 
-            graph_manager.set_defer_cache(False)
-            t_defer = time.time()
-            graph_manager.performance.clear_cache("graph:*")
+            graph_performance.clear_cache("graph:*")
             t_cache = time.time()
 
             entity_count = len(all_saved_entities)
             logger.info(f"分批导入完成，共 {entity_count} 个实体")
             logger.info(
-                f"  耗时细分: conn.close={t_defer-t_close:.3f}s  "
-                f"defer_cache={t_cache-t_defer:.3f}s"
+                f"  耗时细分: 连接关闭→缓存失效={t_cache-t_close:.3f}s"
             )
 
             # --- 用实际行数更新 SQLite（替换 information_schema 的估算值）---
@@ -546,7 +450,7 @@ class SchemaImportHandler(TaskHandler):
 
                 rel_count = EntityDataStore.save_relationships_only(
                     relationships, entity_name_map, datasource=db_prefix,
-                    use_create=not use_merge
+                    use_create=not use_merge, defer_cache=True
                 )
                 logger.info(f"关系保存完成: {rel_count} 条")
             else:

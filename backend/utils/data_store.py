@@ -1,9 +1,9 @@
 import os
 from typing import List, Dict, Any, Tuple
 from system.logger import logger
-from knowledge_graph.graph_manager import graph_manager
+from knowledge_graph.entity_repository import entity_repo
+from knowledge_graph.relationship_repository import rel_repo
 from knowledge_graph.alias_cache import AliasCache
-from ontology.predicates import canonical_rel_id
 from models.graph_models import EntityData, RelationshipData
 
 # 关系分批写入大小（可通过环境变量 NEO4J_REL_BATCH_SIZE 配置，默认 5000）
@@ -11,12 +11,18 @@ _NEO4J_REL_BATCH_SIZE = int(os.getenv('NEO4J_REL_BATCH_SIZE', '5000'))
 
 
 class EntityDataStore:
-    """实体和关系数据存储工具类"""
+    """实体和关系数据存储工具类
+
+    本类只做「准备语义行」：实体/关系字段装配、别名解析、端点 id 补齐；
+    谓词归一化与 relationship_id 计算一律发生在 RelationshipRepository
+    （受控写入缝），此处不再复制归一化规则。
+    """
 
     @staticmethod
     def _save_relationships_batched(
         prepared_relationships: List[Dict[str, Any]],
-        use_create: bool = False
+        use_create: bool = False,
+        defer_cache: bool = False,
     ) -> int:
         """分批写入关系，避免单次 UNWIND 过大导致 Neo4j 内存压力和锁竞争"""
         if not prepared_relationships:
@@ -31,7 +37,8 @@ class EntityDataStore:
             batch_num = i // batch_size + 1
             logger.info(f"[save_relationships] 写入第 {batch_num}/{total_batches} 批 ({len(batch)} 条)")
             try:
-                result = graph_manager.add_relationships(batch, use_create=use_create)
+                result = rel_repo.add_relationships(batch, use_create=use_create,
+                                                    defer_cache=defer_cache)
                 total += result.get('count', 0)
             except Exception as e:
                 logger.error(f"[save_relationships] 第 {batch_num} 批写入失败: {e}")
@@ -75,7 +82,7 @@ class EntityDataStore:
         prepared_entities, redirected_ids = alias_cache.resolve_entities(prepared_entities)
 
         try:
-            result = graph_manager.add_entities(prepared_entities)
+            result = entity_repo.add_entities(prepared_entities)
             entity_ids = result.get('ids', [])
             entity_count = len(entity_ids)
             logger.info(f"实体保存成功，数量: {entity_count}")
@@ -127,17 +134,11 @@ class EntityDataStore:
                     skipped += 1
                     continue
 
-                raw_predicate = relationship.get('p', '')
-                rel_id, pkey, hit = canonical_rel_id(subject_name, raw_predicate, object_name)
-                if not hit:
-                    logger.warning(f"关系谓词未命中受控词表，归一为 '{pkey}': {raw_predicate!r}")
-
+                # 语义行：只补端点 id；谓词归一化 / relationship_id 由 RelationshipRepository 计算
                 prepared = {
                     'subject': subject_name,
                     'object': object_name,
-                    'predicate': pkey,
-                    'raw_predicate': raw_predicate if raw_predicate != pkey else '',
-                    'relationship_id': rel_id,
+                    'predicate': relationship.get('p', ''),
                     'datasource': datasource or '',
                     'occurrence_time': relationship.get('ot', ''),
                     'description': relationship.get('d', ''),
@@ -159,7 +160,8 @@ class EntityDataStore:
     @staticmethod
     def save_entities_only(
         entities: List[Dict[str, Any]],
-        datasource: str = None
+        datasource: str = None,
+        defer_cache: bool = False,
     ) -> List[Dict[str, Any]]:
         """仅保存实体（不处理关系），返回已填充 entity_id 的实体列表"""
         if not entities:
@@ -171,7 +173,7 @@ class EntityDataStore:
             prepared_entities.append(ed.to_neo4j_dict())
 
         try:
-            result = graph_manager.add_entities(prepared_entities)
+            result = entity_repo.add_entities(prepared_entities, defer_cache=defer_cache)
             entity_ids = result.get('ids', [])
             for i, entity_id in enumerate(entity_ids):
                 if i < len(prepared_entities):
@@ -186,15 +188,19 @@ class EntityDataStore:
         relationships: List[Dict[str, Any]],
         entity_name_map: Dict[str, Dict[str, Any]],
         datasource: str = "",
-        use_create: bool = False
+        use_create: bool = False,
+        defer_cache: bool = False,
     ) -> int:
         """仅保存关系，使用提供的 entity_name_map 解析 subject/object ID
+
+        语义行只补端点 id，谓词归一化 / relationship_id 由 RelationshipRepository 统一处理。
 
         Args:
             relationships: 关系列表
             entity_name_map: 实体名 → entity 字典映射（含 entity_id）
             datasource: 产出这批关系的来源 URI，写入边用于后续回收
             use_create: True=使用 CREATE（首次导入更快）；False=使用 MERGE（默认，幂等安全）
+            defer_cache: 批量导入静默期
         """
         if not relationships:
             return 0
@@ -207,16 +213,10 @@ class EntityDataStore:
             subject_entity = entity_name_map.get(subject_name) or entity_name_map.get(subject_name.lower())
             object_entity = entity_name_map.get(object_name) or entity_name_map.get(object_name.lower())
 
-            raw_predicate = relationship.get('p', '')
-            rel_id, pkey, hit = canonical_rel_id(subject_name, raw_predicate, object_name)
-            if not hit:
-                logger.warning(f"关系谓词未命中受控词表，归一为 '{pkey}': {raw_predicate!r}")
             prepared = {
                 'subject': subject_name,
                 'object': object_name,
-                'predicate': pkey,
-                'raw_predicate': raw_predicate if raw_predicate != pkey else '',
-                'relationship_id': rel_id,
+                'predicate': relationship.get('p', ''),
                 'datasource': datasource,
                 'occurrence_time': relationship.get('ot', ''),
                 'description': relationship.get('d', ''),
@@ -226,4 +226,5 @@ class EntityDataStore:
             }
             prepared_relationships.append(prepared)
 
-        return EntityDataStore._save_relationships_batched(prepared_relationships, use_create=use_create)
+        return EntityDataStore._save_relationships_batched(
+            prepared_relationships, use_create=use_create, defer_cache=defer_cache)

@@ -14,11 +14,13 @@ from models.ids import compute_relationship_id
 
 @pytest.fixture
 def mock_neo4j_conn():
-    """Mock Neo4j 连接 — 同时 patch event_processor 模块中的引用"""
+    """Mock Neo4j 连接 — patch 全部消费模块（processor + 两个 repository）内的绑定"""
     mock = MagicMock()
     mock.execute_query.return_value = []
 
-    with patch("cdc.event_processor.neo4j_conn", mock):
+    with patch("cdc.event_processor.neo4j_conn", mock), \
+         patch("knowledge_graph.relationship_repository.neo4j_conn", mock), \
+         patch("knowledge_graph.entity_repository.neo4j_conn", mock):
         yield mock
 
 
@@ -169,10 +171,10 @@ class TestEventProcessor:
         total_calls = mock_neo4j_conn.execute_query.call_count
         assert total_calls >= 2, f"应有至少 2 次 Neo4j 调用（MERGE实体 + FK关系），实际 {total_calls}"
 
-        fk_queries = [c.args[0] for c in mock_neo4j_conn.execute_query.call_args_list
-                      if "MERGE" in c.args[0] and "rel" in c.args[0]]
-        assert fk_queries, "应写入 FK 关系"
-        assert all("`依赖`" in q for q in fk_queries), "外键关系须为受控类型「依赖」"
+        fk_writes = [c.args[0] for c in mock_neo4j_conn.execute_query.call_args_list
+                     if "UNWIND" in c.args[0] and "cdc_fk" in c.args[0]]
+        assert fk_writes, "应写入 FK 关系"
+        assert all("`依赖`" in q for q in fk_writes), "外键关系须为受控类型「依赖」"
 
     def test_fk_relationship_update(self, mock_neo4j_conn, sample_schema_cache):
         """FK 值变更时：删除旧关系 + 创建新关系"""

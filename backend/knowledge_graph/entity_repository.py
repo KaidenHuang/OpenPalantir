@@ -557,6 +557,84 @@ class EntityRepository:
             logger.error(f"[get_subgraph] 获取子图失败: {e}")
             return {"nodes": [], "edges": []}
 
+    # ── 属性合并 ──
+
+    def merge_attributes(self, accumulator: Dict[str, Dict[str, list]],
+                         mode: str = "replace", defer_cache: bool = False) -> int:
+        """把属性记录合并进父实体的 attributes JSON（多属性表安全，不覆盖其他表的键）
+
+        策略：批量读已有 attributes → Python 侧合并 → 批量写回（无 APOC 依赖）。
+
+        Args:
+            accumulator: {父实体名: {属性表名: [记录, ...]}}
+            mode: "replace" = 该属性表键整体替换（全量导入语义）；
+                  "append" = 记录追加进该表键已有列表（CDC 单事件语义）
+        Returns:
+            更新的实体数
+        """
+        if not accumulator:
+            return 0
+
+        try:
+            # 1) 构建 entity_id → (parent_name, table_attrs) 映射
+            id_to_parent: Dict[str, tuple] = {}
+            batch_ids: List[str] = []
+            for parent_name, table_attrs in accumulator.items():
+                entity_id = compute_entity_id(parent_name)
+                if id_to_parent.get(entity_id) is None:
+                    batch_ids.append(entity_id)
+                id_to_parent[entity_id] = (parent_name, table_attrs)
+
+            # 2) 批量读取现有 attributes
+            result = neo4j_conn.execute_query(
+                "UNWIND $ids AS eid MATCH (e:Entity {id: eid}) "
+                "RETURN e.id AS id, e.attributes AS attrs",
+                {"ids": batch_ids}
+            )
+            existing: Dict[str, dict] = {}
+            for record in result:
+                raw = record["attrs"]
+                if isinstance(raw, str):
+                    try:
+                        existing[record["id"]] = json.loads(raw)
+                    except Exception:
+                        existing[record["id"]] = {}
+                elif isinstance(raw, dict):
+                    existing[record["id"]] = raw
+
+            # 3) 合并并批量写回
+            update_batch = []
+            from utils.json_utils import db_json_dumps
+            for eid in batch_ids:
+                _, table_attrs = id_to_parent[eid]
+                attrs = existing.get(eid, {})
+                for attr_table, rows in table_attrs.items():
+                    if mode == "append":
+                        current = attrs.get(attr_table)
+                        if isinstance(current, list):
+                            attrs[attr_table] = current + rows
+                        elif current is None:
+                            attrs[attr_table] = rows
+                        else:
+                            # 结构异常（应为 list）时退化为替换
+                            attrs[attr_table] = rows
+                    else:
+                        attrs[attr_table] = rows
+                update_batch.append({"id": eid, "attrs": db_json_dumps(attrs)})
+
+            neo4j_conn.execute_query(
+                "UNWIND $batch AS item "
+                "MATCH (e:Entity {id: item.id}) "
+                "SET e.attributes = item.attrs",
+                {"batch": update_batch}
+            )
+            if not defer_cache:
+                _invalidate_cache(nodes=True, edges=False)
+            return len(update_batch)
+        except Exception as e:
+            logger.error(f"[merge_attributes] 属性合并失败: {e}")
+            raise
+
     # ── 更新 ──
 
     def update_entity(self, entity_id: str, props: Dict[str, Any],
@@ -718,3 +796,7 @@ class EntityRepository:
         except Exception as e:
             logger.error(f"[backfill_byname] 回填失败: {e}")
             return 0
+
+
+# 模块级单例 —— 调用方直接 import 使用，不再经 GraphManager 转发
+entity_repo = EntityRepository()

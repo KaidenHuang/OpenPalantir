@@ -1,7 +1,11 @@
 """
 CDC 事件处理器 — 将 Debezium 变更事件转化为 Neo4j 实体/关系操作
+
+实体 MERGE（含 _placeholder 回填）与删除是 CDC 特化语义，留在本模块；
+关系写入统一走 RelationshipRepository.upsert_relationships（语义行 →
+受控写入，谓词归一化唯一应用点），属性合并走 EntityRepository.merge_attributes。
+仅删除侧的边身份需要 relationship_id（ID 公式契约），经 ontology.predicates 推导。
 """
-import json
 import time
 from typing import Dict, Any, Optional, List
 from datetime import datetime
@@ -10,10 +14,11 @@ from config.neo4j_config import neo4j_conn
 from cdc.schema_cache import SchemaCache
 from knowledge_graph.source_scope import union_sources
 from knowledge_graph.graph_performance import graph_performance
-from utils.json_utils import db_json_dumps
+from knowledge_graph.entity_repository import entity_repo
+from knowledge_graph.relationship_repository import rel_repo
 from system.logger import logger
 from models.ids import compute_entity_id
-from ontology.predicates import canonical_rel_id, cypher_rel_type
+from ontology.predicates import canonical_rel_id
 
 
 class EventProcessor:
@@ -172,8 +177,8 @@ class EventProcessor:
         existing_rels = neo4j_conn.execute_query(existing_query, {"entity_id": subject_id})
         existing_map = {r["target_name"]: r["rel_id"] for r in existing_rels}
 
-        # 2) 根据当前行数据计算应该存在的关系
-        desired_rels: Dict[str, Dict] = {}
+        # 2) 语义行：只声明 FK 事实；谓词归一化 / relationship_id 由 RelationshipRepository 计算
+        desired_rows: Dict[str, Dict] = {}
         for fk in fk_defs:
             fk_value = row.get(fk["column"])
             if fk_value is None or str(fk_value).strip() == "" or str(fk_value) == "None":
@@ -181,62 +186,35 @@ class EventProcessor:
 
             ref_table = fk["referenced_table_name"]
             target_name = f"{ref_table}:{fk_value}"
-            target_id = compute_entity_id(target_name)
-            raw_predicate = "Foreign key"
-            rel_id, predicate, hit = canonical_rel_id(subject_name, raw_predicate, target_name)
-            if not hit:
-                logger.warning(f"[CDC] FK 谓词未命中受控词表，归一为 '{predicate}'")
             description = f"{table_name}.{fk['column']}={fk_value} -> {ref_table}"
 
-            desired_rels[target_name] = {
-                "target_id": target_id,
-                "target_name": target_name,
-                "predicate": predicate,
-                "raw_predicate": raw_predicate if raw_predicate != predicate else "",
-                "rel_id": rel_id,
+            desired_rows[target_name] = {
+                "subject": subject_name,
+                "object": target_name,
+                "predicate": "Foreign key",
+                "datasource": self._datasource(table_name),
                 "description": description,
             }
 
         # 3) 删除不再需要的关系（FK 值变更导致旧目标失效）
-        stale_targets = set(existing_map.keys()) - set(desired_rels.keys())
+        stale_targets = set(existing_map.keys()) - set(desired_rows.keys())
         for target_name in stale_targets:
             old_rel_id = existing_map[target_name]
-            neo4j_conn.execute_query(
-                "MATCH ()-[r {relationship_id: $rel_id}]->() DELETE r",
-                {"rel_id": old_rel_id}
-            )
+            rel_repo.delete_relationship(old_rel_id)
             logger.debug(f"[CDC] 删除旧关系: {subject_name} -> {target_name}")
 
         # 4) 创建新增的关系（首次插入或 FK 值变更）
-        #    使用 MERGE 创建目标占位节点：若目标实体尚未到达，先建空节点，
+        #    占位符容错：若目标实体尚未到达，先建空节点，
         #    后续 INSERT 事件到达时 MERGE 会更新同一节点（entity_id 确定性相同）
-        new_targets = set(desired_rels.keys()) - set(existing_map.keys())
-        for target_name in new_targets:
-            desired = desired_rels[target_name]
-            rel_type = cypher_rel_type(desired["predicate"])
-            neo4j_conn.execute_query(f"""
-                MATCH (s:Entity {{id: $subject_id}})
-                MERGE (t:Entity {{id: $target_id}})
-                ON CREATE SET t.name = $target_name, t._placeholder = true
-                MERGE (s)-[r:{rel_type} {{relationship_id: $rel_id}}]->(t)
-                ON CREATE SET r.datasource = $datasource
-                SET r.predicate = $predicate,
-                    r.raw_predicate = $raw_predicate,
-                    r.source = 'cdc_fk',
-                    r.description = $description,
-                    r.confidence = 1.0
-                SET r.datasources = {union_sources('r', '$datasource')}
-            """, {
-                "subject_id": subject_id,
-                "target_id": desired["target_id"],
-                "target_name": desired["target_name"],
-                "rel_id": desired["rel_id"],
-                "predicate": desired["predicate"],
-                "raw_predicate": desired["raw_predicate"],
-                "description": desired["description"],
-                "datasource": self._datasource(table_name),
-            })
-            logger.debug(f"[CDC] 创建关系: {subject_name} -> {target_name}")
+        new_targets = set(desired_rows.keys()) - set(existing_map.keys())
+        if new_targets:
+            rel_repo.upsert_relationships(
+                [desired_rows[t] for t in new_targets],
+                source_tag="cdc_fk",
+                defer_cache=True,
+            )
+            for target_name in new_targets:
+                logger.debug(f"[CDC] 创建关系: {subject_name} -> {target_name}")
 
     def _build_description(self, table_name: str, row: Dict[str, Any]) -> str:
         """构建实体描述：所有列 col=val 拼接"""
@@ -266,50 +244,32 @@ class EventProcessor:
                 continue
             ref_table = fk["referenced_table_name"]
             target_name = f"{ref_table}:{fk_val}"
-            target_id = compute_entity_id(target_name)
-            targets.append((ref_table, target_name, target_id))
+            targets.append((ref_table, target_name))
 
         if len(targets) < 2:
             return
 
         # 非 FK 列作为关系属性
         attrs = {k: v for k, v in row.items() if k not in fk_col_names and v is not None}
-        attrs_str = db_json_dumps(attrs) if attrs else "{}"
 
-        # 为每对 (A, B) 创建单向关系 A→B（避免双向重复）
+        # 语义行：每对 (A, B) 创建单向关系 A→B（避免双向重复）；
+        # 谓词 = 关联表名原始透传，归一化 / 边类型在 Repository 内完成
+        rows = []
         for i in range(len(targets)):
             for j in range(i + 1, len(targets)):
-                _, src_name, src_id = targets[i]
-                _, tgt_name, tgt_id = targets[j]
-                rel_id, predicate, hit = canonical_rel_id(src_name, table_name, tgt_name)
-                if not hit:
-                    logger.debug(f"[CDC] Junction 表名谓词 '{table_name}' 不在受控词表，归一为 '{predicate}'")
-                description = f"{table_name}: {src_name} -> {tgt_name}"
-                rel_type = cypher_rel_type(predicate)
-
-                neo4j_conn.execute_query(f"""
-                    MERGE (s:Entity {{id: $src_id}})
-                    ON CREATE SET s.name = $src_name, s._placeholder = true
-                    MERGE (t:Entity {{id: $tgt_id}})
-                    ON CREATE SET t.name = $tgt_name, t._placeholder = true
-                    MERGE (s)-[r:{rel_type} {{relationship_id: $rel_id}}]->(t)
-                    ON CREATE SET r.datasource = $datasource
-                    SET r.predicate = $predicate,
-                        r.raw_predicate = $raw_predicate,
-                        r.source = 'cdc_junction',
-                        r.description = $description,
-                        r.attributes = $attributes,
-                        r.confidence = 1.0
-                    SET r.datasources = {union_sources('r', '$datasource')}
-                """, {
-                    "src_id": src_id, "src_name": src_name,
-                    "tgt_id": tgt_id, "tgt_name": tgt_name,
-                    "rel_id": rel_id, "predicate": predicate,
-                    "raw_predicate": table_name if table_name != predicate else "",
-                    "description": description, "attributes": attrs_str,
+                _, src_name = targets[i]
+                _, tgt_name = targets[j]
+                rows.append({
+                    "subject": src_name,
+                    "object": tgt_name,
+                    "predicate": table_name,
                     "datasource": self._datasource(table_name),
+                    "description": f"{table_name}: {src_name} -> {tgt_name}",
+                    "attributes": attrs,
                 })
-                logger.debug(f"[CDC] Junction 关系: {src_name} -> {tgt_name}")
+
+        rel_repo.upsert_relationships(rows, source_tag="cdc_junction", defer_cache=True)
+        logger.debug(f"[CDC] Junction 批写 {len(rows)} 条关系")
 
     def _handle_junction_delete(self, table_name: str, row: Dict[str, Any]):
         """关联表 DELETE：删除对应的直接关系边"""
@@ -331,11 +291,9 @@ class EventProcessor:
 
         for i in range(len(targets)):
             for j in range(i + 1, len(targets)):
-                rel_id, predicate, _hit = canonical_rel_id(targets[i], table_name, targets[j])
-                neo4j_conn.execute_query(
-                    "MATCH ()-[r {relationship_id: $rel_id}]->() DELETE r",
-                    {"rel_id": rel_id}
-                )
+                # 删除侧的边身份：relationship_id = MD5(主语_受控谓词_宾语)，ID 公式契约
+                rel_id, _predicate, _hit = canonical_rel_id(targets[i], table_name, targets[j])
+                rel_repo.delete_relationship(rel_id)
                 logger.debug(f"[CDC] 删除 Junction 关系: {targets[i]} -> {targets[j]}")
 
     # ── Attribute 表处理 ──
@@ -354,37 +312,16 @@ class EventProcessor:
 
         ref_table = fk["referenced_table_name"]
         parent_name = f"{ref_table}:{fk_val}"
-        parent_id = compute_entity_id(parent_name)
 
         # 去掉 FK 列，剩余列作为属性记录
         attr_record = {k: v for k, v in row.items() if k != fk_col and v is not None}
         if not attr_record:
             return
 
-        # 读取父实体现有 attributes
-        result = neo4j_conn.execute_query(
-            "MATCH (e:Entity {id: $id}) RETURN e.attributes as attrs",
-            {"id": parent_id}
-        )
-        existing_attrs = {}
-        if result:
-            raw = result[0].get("attrs", "{}")
-            if isinstance(raw, str):
-                try:
-                    existing_attrs = json.loads(raw)
-                except Exception:
-                    existing_attrs = {}
-            elif isinstance(raw, dict):
-                existing_attrs = raw
-
-        # 合并：按表名分组，追加或更新记录
-        table_records = existing_attrs.get(table_name, [])
-        # 简单追加（如果记录已存在则替换最后一条）
-        table_records.append(attr_record)
-        existing_attrs[table_name] = table_records
-
-        neo4j_conn.execute_query(
-            "MATCH (e:Entity {id: $id}) SET e.attributes = $attrs",
-            {"id": parent_id, "attrs": db_json_dumps(existing_attrs)}
+        # 单事件追加合并（mode="append"）：复合进父实体 attributes 的已有记录列表
+        entity_repo.merge_attributes(
+            {parent_name: {table_name: [attr_record]}},
+            mode="append",
+            defer_cache=True,
         )
         logger.debug(f"[CDC] 属性合并: {table_name} -> {parent_name}")

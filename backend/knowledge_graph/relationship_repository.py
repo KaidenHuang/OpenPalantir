@@ -314,6 +314,87 @@ class RelationshipRepository:
             logger.error(f"[add_relationships] 批量添加关系失败: {str(e)}")
             raise
 
+    # ── 写入 · 占位符容错 ──
+
+    def upsert_relationships(self, rows: List[Dict[str, Any]], source_tag: str = "",
+                             defer_cache: bool = False, default_confidence: float = 1.0) -> int:
+        """语义行 → 受控写入（唯一归一化应用点）：两端尚未落地也能写入
+
+        与 add_relationships 的差异：端点 MERGE（不存在则建 _placeholder 占位实体，
+        等后续真实数据 MERGE 回填同一 id），并支持关系级 source_tag（r.source）。
+        供数据库 junction 批导入、CDC junction/FK 写入共用，谓词归一化只在这里发生。
+
+        Args:
+            rows: 语义行列表
+                {subject, object, predicate(原始谓词), datasource,
+                 description, attributes(dict/str, 可选), confidence(可选)}
+            source_tag: 关系来源标识，如 'junction_import' / 'cdc_fk'（空则不设 r.source）
+            defer_cache: 批量导入静默期
+            default_confidence: 行未显式给 confidence 时的默认值
+        """
+        from models.ids import compute_entity_id
+
+        if not rows:
+            return 0
+
+        try:
+            groups: Dict[str, List[Dict[str, Any]]] = {}
+            for raw in rows:
+                subject = str(raw.get("subject", "")).strip()
+                target = str(raw.get("object", "")).strip()
+                if not subject or not target:
+                    continue
+                raw_predicate = raw.get("predicate", "")
+                rel_id, predicate, hit = canonical_rel_id(subject, raw_predicate, target)
+                if not hit:
+                    logger.debug(
+                        f"[upsert_relationships] 谓词兜底归一: '{raw_predicate}' -> '{predicate}'"
+                    )
+                attrs = raw.get("attributes", {})
+                attrs_str = attrs if isinstance(attrs, str) else (
+                    db_json_dumps(attrs) if attrs else "{}"
+                )
+                groups.setdefault(predicate, []).append({
+                    "src_id": compute_entity_id(subject), "src_name": subject,
+                    "tgt_id": compute_entity_id(target), "tgt_name": target,
+                    "rel_id": rel_id,
+                    "predicate": predicate,
+                    "raw_predicate": raw_predicate if raw_predicate != predicate else "",
+                    "description": raw.get("description", ""),
+                    "attributes": attrs_str,
+                    "datasource": raw.get("datasource", ""),
+                    "confidence": raw.get("confidence", default_confidence),
+                })
+
+            written = 0
+            for predicate, batch in groups.items():
+                rel_type = cypher_rel_type(predicate)
+                source_set = f", r.source = '{source_tag}'" if source_tag else ""
+                neo4j_conn.execute_query(
+                    f"UNWIND $batch AS item "
+                    f"MERGE (s:Entity {{id: item.src_id}}) "
+                    f"ON CREATE SET s.name = item.src_name, s._placeholder = true "
+                    f"MERGE (t:Entity {{id: item.tgt_id}}) "
+                    f"ON CREATE SET t.name = item.tgt_name, t._placeholder = true "
+                    f"MERGE (s)-[r:{rel_type} {{relationship_id: item.rel_id}}]->(t) "
+                    f"ON CREATE SET r.datasource = item.datasource "
+                    f"SET r.predicate = item.predicate, r.raw_predicate = item.raw_predicate"
+                    f"{source_set}, "
+                    f"r.description = item.description, r.attributes = item.attributes, "
+                    f"r.confidence = item.confidence "
+                    f"SET r.datasources = {union_sources('r', 'item.datasource')}",
+                    {"batch": batch}
+                )
+                written += len(batch)
+
+            if not defer_cache:
+                graph_performance.clear_cache("graph:edges:*")
+            logger.info(f"[upsert_relationships] 占位符容错批写完成: {written} 条")
+            return written
+        except Exception as e:
+            logger.error(f"[upsert_relationships] 批写失败: {e}")
+            raise
+
     # ── 更新 ──
 
     def update_relationship(self, relationship_id: str, props: Dict[str, Any]) -> bool:
@@ -421,3 +502,7 @@ class RelationshipRepository:
         result = neo4j_conn.execute_query(
             "MATCH ()-[r]->() WHERE size(coalesce(r.datasources, [])) = 0 RETURN count(r) AS count")
         return result[0]['count'] if result else 0
+
+
+# 模块级单例 —— 调用方直接 import 使用，不再经 GraphManager 转发
+rel_repo = RelationshipRepository()
