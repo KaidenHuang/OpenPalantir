@@ -92,18 +92,18 @@ scripts/service/start-services.ps1
 
 | 要点 | 说明 |
 |------|------|
-| `snapshot.mode=never` | Debezium 跳过初始快照,仅消费全量导入后的增量变更 |
+| `snapshot.mode=no_data` | Debezium 首次启动只做 schema 快照（建 schema history + 记位点），不读数据、不重放历史，避免 OOM |
 | 实体 ID 一致性 | CDC 使用与全量导入相同的 `{表名}:{主键值}` → MD5 方案,确保更新命中同一 Neo4j 节点 |
 | 事件映射 | `c`/`r` → MERGE 实体(upsert);`u` → MERGE 更新;`d` → DELETE 实体 |
 | 外键关系差量同步 | 删旧建新;FK 目标未见时创建占位节点,后续 INSERT 会 MERGE 命中 |
 | 断流检测 | 启动前 `check_stream_continuity()` 比对 Redis Stream 最旧消息与上次消费位点,发现间隙则建议重新全量导入 |
 | `auto_start_cdc` | 数据库导入接口参数,全量导入完成后自动启动增量同步 |
-| offset 自动初始化 | 见下节 |
+| 位点管理 | Debezium 自管 `offsets.dat`（Python 不写，见下节） |
 | 断点续传 | 每条消息处理后 ACK,定期持久化 `last_message_id` 到 SQLite |
 
-### offset 自动初始化(避免 binlog 全量重放)
+### 位点管理（为什么不由 Python 初始化）
 
-全量导入完成时(`save_binlog_checkpoint`)用捕获的 binlog 位点生成 Debezium `offsets.dat`。`cdc/offset_store.py` **复刻了 Java 序列化格式**,确保 Debezium 启动时从全量位点开始,而非从 binlog 头重放整个历史。
+`snapshot.mode=no_data` 下，Debezium 首次启动自建 schema history 并记录位点，之后按自己的周期 flush `offsets.dat`。全量导入捕获的 binlog/wal 位点只写进 `CdcSyncState` 作参考与业务约束，**Python 不写 `offsets.dat`**（原 `cdc/offset_store.py` 已删除）——由 Python 生成位点会与 Debezium 的周期 flush 互相覆盖。
 
 ### 同步状态追踪
 
@@ -113,7 +113,7 @@ scripts/service/start-services.ps1
 
 ## 6. 注意事项
 
-- **运行时重做全量导入**:若 Debezium 已在运行时重做全量导入,`offsets.dat` 会被 Debezium 周期性 flush 覆盖,**需重启 Debezium 才能让新位点生效**。
+- **重配必须夹在 stop/start 之间**：`configure_connection` 的顺序是建实例目录 → `ensure_cdc_user` → 渲染配置 → **停 Debezium → clear 旧位点 → 启 Debezium**。运行中的 Debezium 会周期 flush 把旧 `offsets.dat` 写回，clear 放在停启之外等于没清。
 - **配置依赖**:Redis 连接通过 `.env` 的 `REDIS_HOST` / `REDIS_PORT`;Debezium Server 配置由安装脚本（`scripts/install/install-debezium.sh`（Linux）或 `scripts/install/install-debezium.ps1`（Windows））自动生成。
 
 ---

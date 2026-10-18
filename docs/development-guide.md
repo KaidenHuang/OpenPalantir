@@ -49,6 +49,26 @@ cd tests
 pytest -v
 ```
 
+### 抽取质量基线（golden set）
+
+`tests/golden/extraction_v1.json` 对 `examples/docs` 三篇示例文档做了人工标注，
+`tests/test_extraction_quality.py` 用它度量抽取质量：
+
+```bash
+cd backend
+python -m pytest ../tests/test_extraction_quality.py -v -s
+```
+
+- `test_golden_labels_are_in_controlled_ontology`（unit）：金标用的实体类型与谓词必须落在
+  本体词表内、标注名称必须真实出现在文档里。不需要模型，改本体包或改示例文档后它会报错。
+- `test_extraction_meets_quality_floor`（integration/slow）：真实调用模型逐篇抽取并打分，
+  模型管理里没有可用模型时整体 skip。报告写入 `logs/extraction_quality.json`。
+- 指标口径：实体召回按规范化名称精确匹配；关系拆成**结构召回**（只看实体对，方向无关）与
+  **谓词正确率**（在结构命中里统计归一化谓词），分开是为了区分「模型没发现这条关系」和
+  「本体词表不够用」；另报告类型正确率、名称覆盖率、类型越界率与谓词兜底率。
+- 下限（`MIN_ENTITY_RECALL=0.60`、`MIN_RELATION_RECALL=0.50`）是防退化的地板值；跑通首轮
+  真实数据后应按实测值收紧，而不是放宽。新增示例文档时同步补金标。
+
 ---
 
 ## 2. 项目结构速览
@@ -76,10 +96,8 @@ OpenPalantir/
 │   │   │   ├── seed_retriever.py← 种子检索（jieba + 级联检索）
 │   │   │   ├── tools.py         ← ToolRegistry（Skill+MCP 统一注册）
 │   │   │   └── types.py         ← Observation, SeedResult, AgenticResult
-│   │   ├── retrievers/          ← 检索器（文档/数据库/图谱摘要）
-│   │   ├── memory/              ← 记忆系统（短期 SQLite + 长期 MEMORY.md）
+│   │   ├── retrievers/          ← 检索器（文档/数据库/图谱摘要）│   │   ├── memory/              ← 记忆系统（短期 SQLite + 长期 MEMORY.md）
 │   │   ├── tool_manager/        ← 工具管理层
-│   │   │   ├── tool_reasoner.py ← 遗留（已被 AgenticEngine 替代）
 │   │   │   ├── skill/           ← 本地 Skill 源（加载+注册）
 │   │   │   ├── mcp/             ← 外部 MCP 工具源（连接+管理）
 │   │   │   └── prompts/         ← 推理 Prompt 模板
@@ -105,6 +123,7 @@ OpenPalantir/
 │       └── services/logger.ts   ← 前端日志
 ├── scripts/                     ← 安装/服务管理脚本
 ├── tests/                       ← 测试
+│   └── golden/                  ← 抽取质量评测集（人工标注金标）
 └── docs/                        ← 文档
 ```
 

@@ -232,9 +232,12 @@ Prometheus 格式的监控指标。
 {
   "question": "公司当前的人力资源分布情况如何？",
   "domain": "general",
-  "session_id": "sess_abc123"
+  "session_id": "sess_abc123",
+  "scope": { "datasource": "DOC://uuid/手册.pdf", "node_id": "00000007", "title": "第3章" }
 }
 ```
+
+`scope` 可选：把提问限定在某篇文档 / 某个摘要树节点（Wiki 页「就本页提问」入口即携带此参数），检索命中会回落到该作用域内。
 
 **Response**:
 ```json
@@ -354,9 +357,17 @@ Prometheus 格式的监控指标。
 {
   "tables": ["users", "orders"],
   "ignore_tables": ["tmp_*"],
-  "database": "mydb"
+  "database": "mydb",
+  "domain": "workforce"
 }
 ```
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `tables` | string[] | 否 | 仅分析这些表 |
+| `ignore_tables` | string[] | 否 | 跳过的表名模式 |
+| `database` | string | 否 | 指定库名 |
+| `domain` | string | 否 | 本体域包名，决定 LLM 标注使用的实体/关系词表，默认 `general` |
 
 ### `POST /connections/{connection_id}/import`
 图谱导入（阶段2，创建异步任务）。
@@ -401,11 +412,39 @@ Prometheus 格式的监控指标。
 ### `DELETE /api/sources/{source_id}`
 软删除文档源。
 
-### `POST /api/sources/{source_id}/process`
-处理文档（异步任务）：解析文本 → 生成摘要树 → 提取实体和关系 → 写入图谱。
+### `POST /api/sources/{source_id}/summarize`
+为源内某个文件生成 PageIndex 摘要树（异步任务 `document_generate_summary`），并记录当时的 `content_hash`（源文件 MD5，失效判定的指纹）。
 
-### `GET /api/sources/{source_id}/summary`
-获取文档摘要树。
+**Request Body**: `{"file": "章节/红楼梦.txt"}` → `{"task_id", "message"}`；文件缺失/路径越界/类型不支持 → 400。
+
+### `POST /api/sources/{source_id}/extract`
+从已生成的摘要树抽取实体与关系写入图谱（谓词按本体词表归一化）。
+
+### `POST /api/sources/{source_id}/refresh`
+重跑一篇文档：重新生成摘要 → 回收本来源的图谱佐证 → 重新抽取 → Wiki 下游刷新（异步任务 `document_refresh`，顺序保证 LLM 失败时旧数据完好）。
+
+**Request Body**:
+```json
+{ "file": "章节/红楼梦.txt", "force": false, "domain": "general", "parallelism": 8 }
+```
+→ `{"task_id", "message"}`。
+
+### `GET /api/sources/{source_id}/stale`
+列出该源中内容已变更或已删除的文档（`changed` / `removed`），供前端提示重新生成。
+
+**Response**: `{"status", "source_id", "stale": [{source_id, file, status, ...}]}`
+
+### `GET /api/sources/{source_id}/summary?file=`
+获取指定文件已生成的摘要树。
+
+### `GET /api/sources/{source_id}/browse?prefix=`
+浏览文档源目录（列出文件与子目录）。
+
+### `GET /api/sources/{source_id}/entities?file=`
+获取该文件已抽取的实体与关系。
+
+### `POST /api/sources/{source_id}/restore`
+恢复已软删除的文档源。
 
 ### `GET /api/sources/{source_id}/tasks`
 获取文档相关的所有任务。
@@ -574,7 +613,98 @@ Prometheus 格式的监控指标。
 
 ---
 
-## 11. 错误码
+## 11. Wiki 接口 | Wiki
+
+所有接口前缀：`/api/wiki`。页面 kind 为 `document`（文档页）/ `topic`（跨文档主题页）/ `entity`（图谱实体页）/ `answer`（问答沉淀页）。
+
+### `GET /pages?kind=&status=`
+列出页面。`status` 取 `draft` / `published`。
+
+### `GET /pages/{page_id}`
+页面详情：Markdown 正文 + `source_refs` 引用锚点（`node_id` 指向摘要树节点）。
+
+### `PUT /pages/{page_id}`
+编辑页面（人工编辑是内容资产的一等公民）。
+
+**Request Body**:
+```json
+{ "title": "可选新标题", "content": "新的 Markdown 正文" }
+```
+
+### `POST /pages/{page_id}/status`
+切换发布状态，`status` 仅接受 `draft` / `published`，否则 400。
+
+### `DELETE /pages/{page_id}`
+删除页面。
+
+### `POST /publish_answer`
+把一次问答的高质量回答带引用发布为 Wiki 页（经人工确认后回流内容）。
+
+**Request Body**:
+```json
+{
+  "question": "X 的定义是什么？",
+  "answer": "……",
+  "citations": [{"node_id": "00000007", "datasource": "DOC://...", "title": "……"}]
+}
+```
+`answer` 为空 → 400。
+
+### `POST /generate`
+创建 Wiki 生成异步任务，返回 `{"task_id": ...}`（进度经 `/api/task/{task_id}` 查询）。
+
+**Request Body**（三选一，前两者优先）:
+```json
+{ "datasource": "DOC://uuid/章节.pdf", "entity_id": "…", "scope": "all|topics|entities" }
+```
+`scope` 非法值 → 400。
+
+---
+
+## 12. 本体接口 | Ontology
+
+所有接口前缀：`/api/ontology`。本体包是 YAML 文本，`domain` 参数即包名。
+
+### `GET /domains`
+列出全部域包及规模：`{name, description, object_type_count, link_type_count}`。
+
+### `GET /packs/{domain}`
+导出该域包 YAML（`{"domain", "yaml"}`），导出的文本可原样回导入。域不存在 → 404。
+
+### `POST /packs`
+导入社区/自定义本体包。
+
+**Request Body**:
+```json
+{ "yaml": "name: logistics\nobject_types: [...]\nlink_types: [...]", "persist": true }
+```
+- 校验不过（重复 key、`parent`/`domain`/`range` 类型不存在、`inverse` 未定义）→ 400，且不注册、不影响运行中词表。
+- `persist=true` 落盘 `backend/data/ontology_packs/{name}.yaml`，重启后仍在；基底包 `general` 禁止覆盖 → 400。
+- `yaml` 缺失或空白 → 400。
+- 成功后注册表版本自增，抽取与标注 prompt 的新词表**立即生效**，无需重启。
+
+### `POST /reload`
+从磁盘重新加载 `ontology/packs/` 与 `data/ontology_packs/`（手工改包文件后调用），返回最新 `domains`。
+
+### `GET /report?domain=&limit=&with_pack=`
+治理报告（只读聚合，不写图谱）：
+
+| 字段 | 内容 |
+|------|------|
+| `domains` | 当前生效的域包列表 |
+| `vocabulary` | 边总量、按谓词分布、兜底「其他」数量与占比、从未使用的词表项、词表外谓词 |
+| `object_types` | 实体类型分布、非法类型、未使用类型 |
+| `domain_range_violations` | 违反定义域/值域的 (谓词, 主语类型, 宾语类型) 组合及允许范围 |
+| `structure_issues` | 游离实体、占位实体、无来源佐证的实体/边计数 |
+| `alias_candidates` | 同一受控谓词下的原始谓词变体排行（提示该补哪些别名） |
+| `findings` | 可读的治理结论列表 |
+| `pack` | 仅当 `with_pack=true` 且给了 `domain` 时返回该包 YAML |
+
+`limit` 范围 1~500（默认 50）。
+
+---
+
+## 13. 错误码
 
 | HTTP 状态码 | 说明 |
 |------------|------|

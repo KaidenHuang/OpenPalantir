@@ -71,9 +71,69 @@ npm run dev
 cd tests
 pytest
 
-# 或运行完整集成测试
-python run-all-tests.py
+# 或运行抽取质量基线（模型管理里没有可用模型时自动 skip）
+pytest test_extraction_quality.py -v -s
 ```
+
+## 贡献领域本体包（最欢迎的贡献）
+
+本体包是纯 YAML，不需要改代码就能扩展系统能力。最有价值的包是**挂在内置域之上的增量**：
+
+```yaml
+name: rd_efficiency
+description: 研发效能领域本体
+extends: workforce          # 复用内置域的 employee/任职于/管理，只写自己的部分
+
+object_types:
+  - key: system_component
+    display_name: 系统组件
+    parent: concept
+
+link_types:
+  - key: 维护
+    domain: [person, organization]
+    range: [system_component]
+    inverse: 维护者
+    aliases: [负责维护, 运维]   # 同一语义的不同说法进别名，别开新 key
+```
+
+自查方式（本地起后端即可）：
+
+```bash
+jq -Rs '{yaml: ., persist: true}' 你的包.yaml | \
+  curl -X POST http://localhost:8000/api/ontology/packs \
+       -H 'Content-Type: application/json' -d @-
+python scripts/demo/run_demo.py --domain 你的包名 --docs examples/docs
+curl http://localhost:8000/api/ontology/report
+```
+
+报告里 `fallback_ratio` 高 → 补 aliases；`unused_link_types` 多 → 词表写宽了。规则细节与校验口径见 [docs/ontology-guide.md](docs/ontology-guide.md)。
+
+## 规格与变更提案（OpenSpec）
+
+涉及**能力边界**的改动（新增接口族、改数据模型、调整某条链路的职责）先提规格变更，再写实现；纯 bug 修复和文档不需要。
+
+```
+openspec/
+├── project.md          # 项目上下文与硬约束，动手前先读
+├── specs/<能力>/spec.md # 已生效的能力规格（wiki / ontology）
+└── changes/<变更-id>/   # 进行中的提案
+    ├── proposal.md      # Why / What Changes / Impact
+    ├── tasks.md         # 可勾选的实施清单，按它提交
+    ├── design.md        # 可选：有取舍时才写
+    └── specs/<能力>/spec.md   # 规格增量，用 ## ADDED/MODIFIED/REMOVED Requirements
+```
+
+规格写法：每条 `### Requirement:` 用 SHALL 陈述可验证的行为，下面至少一个 `#### Scenario:` 用 **WHEN/THEN** 描述具体输入输出。校验规则、错误语义、字段名都要落到 Scenario 里，评审看的是这些。
+
+流程：
+
+1. `openspec/changes/<变更-id>/` 建提案，proposal 说清为什么现在要做、影响哪些模块与数据结构
+2. 维护者在 PR 上评审规格（此时代码还没写，改起来便宜）
+3. 按 `tasks.md` 实现并勾选，测试覆盖每条 Scenario
+4. 变更合入后把提案移入 `openspec/changes/archive/`，并把增量并入 `openspec/specs/<能力>/spec.md`
+
+项目的硬约束决定了提案能被接受到什么程度：**不做向后兼容与数据迁移**（Schema 变更直接删库重建）、**词表只有一个来源**（本体注册表，不要再建一份配置）、**治理只读**（报告不改图谱）。与这些冲突的提案请先在 Issue 里讨论。
 
 ## Pull Request 流程
 

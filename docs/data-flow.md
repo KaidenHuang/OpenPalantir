@@ -9,7 +9,9 @@
 这是系统最核心的流程，将非结构化文档转化为结构化知识图谱。
 
 ```
-[用户选择文档源] → [POST /api/sources/{id}/process] → 创建异步任务
+[用户选择文档源] → POST /api/sources/{id}/summarize (摘要任务)
+                 → POST /api/sources/{id}/extract   (实体关系抽取)
+                 → POST /api/wiki/generate          (Wiki 页面生成)
                                                           ↓
   ┌─────────────────────────────────────────────────────────────┐
   │ 阶段1：文档解析                                              │
@@ -36,7 +38,8 @@
   │ 阶段3：实体提取与关系抽取                                       │
   │ LLMEntityEnhancer.extract_entities_and_relationships(text)    │
   │  ├─ 可选启用模型 → 调用 LLM API                                │
-  │  ├─ Prompt: 识别 人物/组织/地点/事件/概念 实体                   │
+  │  ├─ Prompt: 实体/关系枚举由 ontology/prompt.py 从本体注册表注入   │
+  │  │   （文档抽取与 DB Schema 标注共用同一词表，按 domain 取包）      │
   │  ├─ 同时提取实体间关系: {subject, predicate, object}             │
   │  ├─ JSON 响应自动修复（处理 LLM 输出格式问题）                     │
   │  └─ 输出: entities[{name, type, confidence}] + relationships[] │
@@ -45,13 +48,24 @@
   ┌─────────────────────────────────────────────────────────────┐
   │ 阶段4：写入图谱                                               │
   │ EntityDataStore.save_all(entities, relationships)            │
-  │  ├─ entity_id = MD5(name + type)                             │
-  │  ├─ relationship_id = MD5(subject + predicate + object)       │
-  │  ├─ 批量 MERGE 到 Neo4j (使用 Cypher UNWIND)                   │
+  │  ├─ entity_id = MD5(name)                                    │
+  │  ├─ predicate 先归一化为受控 LinkType，再算                     │
+  │  │   relationship_id = MD5(subject + predicate + object)      │
+  │  ├─ 批量 MERGE 到 Neo4j (使用 Cypher UNWIND)，边类型来自本体词表  │
+  │  ├─ 节点/边同时写 datasource(主来源) 与 datasources(佐证列表)     │
   │  └─ 创建/更新全文索引                                          │
   └─────────────────────────────────────────────────────────────┘
                           ↓
-  [Neo4j 图谱就绪] → 可供分析引擎和决策引擎查询
+  ┌─────────────────────────────────────────────────────────────┐
+  │ 阶段5：Wiki 页面生成 (backend/wiki/)                           │
+  │ wiki_service.generate_all()                                   │
+  │  ├─ 文档页：摘要树 structure 节点 → 单篇档案页                   │
+  │  ├─ 主题页：跨文档共享关键词聚类 → LLM 合并改写                    │
+  │  ├─ 实体页：按实体聚合图谱双向关系 → ENT://{entity_id}/{name}     │
+  │  └─ 每页存 source_refs(node_id 锚点) + source_hash(幂等跳过)     │
+  └─────────────────────────────────────────────────────────────┘
+                          ↓
+  [Neo4j 图谱 + Wiki 页面就绪] → 可供分析引擎、决策引擎与 Wiki 编辑使用
 ```
 
 ### 长文本处理策略
@@ -188,6 +202,37 @@
     main.py shutdown hook → cdc_manager.shutdown_all()
     → 逐个停止所有 consumer 线程 (30s 超时 join)
     → 持久化最终消费位点到 SQLite
+
+    DOC_WATCH_ENABLED=1 时同时停止 document_watcher 轮询线程
+```
+
+### 2.4 文档内容失效传播（与 CDC 对称的文档侧增量）
+
+CDC 只覆盖数据库行级变更，文档侧的「改了 / 删了」由内容指纹驱动，无需新增状态表：
+
+```
+指纹来源：摘要 JSON 内的 content_hash = 生成当时源文件的 MD5
+          （document_processing/summary_generator.py 是唯一出口）
+
+[源文件变更/删除]
+    → file_sources/watcher.py 每 DOC_WATCH_INTERVAL 秒调 refresh_service.scan_stale()
+      （也可手动 POST /api/sources/{id}/refresh；GET /api/sources/{id}/stale 查待刷新项）
+    → 创建 task_type = document_refresh 异步任务（同一文档在途任务不重复派发）
+                              ↓
+  ┌─────────────────────────────────────────────────────────────┐
+  │ source_management/refresh_service.refresh_document()          │
+  │  ① 重新生成摘要并落盘                                          │
+  │     LLM 失败即抛出 —— 旧摘要、旧图谱、旧 Wiki 页保持完整          │
+  │  ② graph_manager.recycle_datasource("DOC://{sid}/{文件}")      │
+  │     先摘边佐证再摘实体佐证，datasources 清空才 DETACH DELETE      │
+  │     → 被其他文档佐证的实体/关系不受影响                          │
+  │  ③ 按可用模型重新抽取实体关系入库                                │
+  │  ④ Wiki 传播：文档页重生成 → 主题页/实体页按 source_hash 重算     │
+  │     → wiki_service.prune_orphans() 清理失去依据的页面            │
+  └─────────────────────────────────────────────────────────────┘
+
+源文件已删除（reason=removed）时走删除分支：
+    回收图谱产出 → 删除摘要 JSON → remove_pages_by_datasource() → prune_orphans()
 ```
 
 #### SchemaCache 初始化
@@ -394,12 +439,16 @@ LOOP (最多 10 轮):
 
 ### 任务类型
 
-| 类型 | 触发接口 | 执行内容 |
-|------|---------|---------|
-| `document_process` | `POST /api/sources/{id}/process` | 文档解析+摘要+实体提取+图谱写入 |
-| `database_import` | `POST /api/database/connections/{id}/import` | Schema 分析 (P1) / 行级导入 (P2) + 可选 CDC 启动 |
-| `entity_extraction` | 文档处理子任务 | 对指定文本块提取实体和关系 |
-| `analysis_report` | `POST /api/analysis/report` | 生成 HTML/PDF 分析报告 |
+`TaskManager._handlers` 按 `task_type` 分发（`backend/task_management/handlers/`）：
+
+| 类型 | 触发接口 | Handler | 执行内容 |
+|------|---------|---------|---------|
+| `document_generate_summary` | `POST /api/sources/{id}/summarize` | DocumentSummaryHandler | PageIndex 摘要树 + 记录 content_hash |
+| `document_refresh` | `POST /api/sources/{id}/refresh`、文档监听 | DocumentRefreshHandler | 重跑摘要 → 回收旧图谱 → 重抽取 → Wiki 刷新（见 §2.4） |
+| `wiki_generate` | `POST /api/wiki/generate` | WikiGenerateHandler | 文档页 / 主题页 / 实体页批量生成 |
+| `database_schema_analyze` | `POST /api/database/{connection_id}/analyze` | SchemaAnalyzeHandler | 阶段1 Schema 语义标注 |
+| `database_schema_import` | `POST /api/database/{connection_id}/import` | SchemaImportHandler | 阶段2 行级导入图谱 + 可选 auto_start_cdc |
+| `database_cdc_start` | `POST /api/cdc/{connection_id}/start` | CdcStartHandler | 长驻 CDC 消费（通知式停止） |
 
 ### 任务状态机
 
@@ -426,3 +475,38 @@ pending → running → completed
                                       ↓
                   [返回解析结果]
 ```
+
+---
+
+## 6. 本体链路：从社区包导入到治理报告
+
+本体是「词表 → 抽取 → 落库 → 治理」的闭环，任何一环都从同一个注册表取定义。
+
+```
+[内置包 ontology/packs/ · 社区包 data/ontology_packs/]
+        │  OntologyRegistry.load()：同名以用户包为准，逐个 validate_pack()
+        │  域视图 = general ⊕ extends 链 ⊕ 本包（社区包可挂内置域，只写增量）
+        ▼
+POST /api/ontology/packs {yaml, persist}
+        │  校验不过 → 400 且不注册（内置包与社区包同一标准）
+        │  注册成功 → registry.version += 1
+        ▼
+ontology/prompt.py  缓存键 (version, domain)
+        │  新词表立刻进 prompt，无需重启
+        ▼
+抽取/标注产出 predicate ──▶ predicates.normalize_predicate()
+        │  exact key → 别名（大小写/空白不敏感）→ 未命中兜底「其他」+ 记 raw_predicate
+        ▼
+relationship_id = MD5(subject_受控predicate_object) ──▶ Neo4j 类型化边（LinkType key 作边类型）
+        ▼
+GET /api/ontology/report?domain=&limit=
+           ├─ vocabulary：兜底占比、词表外谓词、从未使用的词表项
+           ├─ object_types：非法实体类型、未使用类型
+           ├─ domain_range_violations：定义域/值域越界的谓词组合
+           ├─ structure_issues：游离实体、占位实体、无来源佐证产出
+           ├─ alias_candidates：同一受控谓词下的 raw 变体排行（供并入别名）
+           └─ findings：拼成人话的治理结论
+```
+
+- **治理是只读的**：报告只跑聚合查询，不改图谱；整改动作（把高频 raw_predicate 并入 aliases、删除非法类型实体）由人或后续脚本据 `findings` 决定。
+- **社区包的验收路径**：`export_pack(domain)` 导出的 YAML 可以原样 `import_pack()` 回读，因此「 fork 一个内置包 → 改词表 → 提交」这条社区贡献路径没有格式落差。
