@@ -27,9 +27,8 @@ requests>=2.31.0
 python-louvain>=0.16
 python-multipart>=0.0.24
 
-# 监控和任务队列
+# 监控
 prometheus_client>=0.25.0
-celery>=5.6.3
 
 # 缓存
 redis>=7.4.0
@@ -47,6 +46,7 @@ psycopg2-binary>=2.9.9
 
 # 测试
 pytest>=8.0.0
-pytest-asyncio>=0.23.0
+pytest-asyncio>=0.24.0
 pytest-cov>=5.0.0
 pytest-mock>=3.12.0
+httpx2>=1.0.0
