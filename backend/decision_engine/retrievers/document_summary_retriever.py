@@ -22,8 +22,24 @@ class DocumentSummaryRetriever(BaseRetriever):
             except Exception as e:
                 logger.warning(f"[retriever][document] error reading {file_path}: {e}")
 
+        results = self._hybrid_rerank(query, results)
         logger.info(f"[retriever][document] 文档摘要匹配到 {len(results)} 条相关内容")
         return results
+
+    def _hybrid_rerank(self, query: AnalyzedQuery, results: List[RawEvidence]) -> List[RawEvidence]:
+        """关键词分 + embedding 语义分混合重排；embedding 不可用时按原分排序"""
+        from decision_engine.retrievers.embedding_utils import hybrid_rank
+
+        if not results:
+            return results
+        query_text = " ".join(list(query.entities) + list(query.sub_questions))
+
+        def text_of(ev: RawEvidence) -> str:
+            content = ev.content or {}
+            return f"{content.get('title', '')} {content.get('doc_description') or content.get('summary', '')}"
+
+        return hybrid_rank(query_text, results, text_of,
+                           lambda ev: ev.relevance_score, top_k=20)
 
     def _search_file(self, file_path: str, keywords: set, query: AnalyzedQuery) -> List[RawEvidence]:
         with open(file_path, "r", encoding="utf-8") as f:

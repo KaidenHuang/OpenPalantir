@@ -37,7 +37,7 @@ class SchemaCache:
             for table_info in schema["tables"]:
                 table_name = table_info["table_name"]
                 self.tables.append(table_name)
-                self.entity_types[table_name] = table_info.get("entity_type", "其他")
+                self.entity_types[table_name] = table_info.get("entity_type", "other")
                 self.table_roles[table_name] = table_info.get("table_role", "entity")
 
             # 加载列信息（按表分组）

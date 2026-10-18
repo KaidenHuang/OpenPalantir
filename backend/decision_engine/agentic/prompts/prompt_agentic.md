@@ -4,6 +4,8 @@
 
 {entity_types_section}
 
+{scope_section}
+
 # 可用工具
 
 你可以调用以下工具来获取信息：
@@ -24,7 +26,8 @@
 - **历史对话仅供参考**：绝不能从历史对话中直接复制答案。每次提问都必须重新获取最新数据
 - **严格匹配工具用途**：根据问题选择合适的工具
   - `list_summaries` → 发现系统中有哪些文档和数据库（**必须首先调用**，获取 datasource 供后续工具使用）
-  - `get_summary_detail` → 获取某个文档的段落结构或数据库的表结构详情（datasource 来自 list_summaries 返回）
+  - `get_summary_detail` → 获取某个文档的骨架树（title/node_id/summary，不含原文）或数据库的表结构详情（datasource 来自 list_summaries 返回）
+  - `read_summary_nodes` → 读取文档骨架树中选定节点的原文（先 get_summary_detail 选 node_id，再本工具下钻，单次最多 8 个节点）
   - `search_entities` → 按关键词搜索实体，获取完整属性（如 birth_date、salaries、titles 等）。支持 `filters` 参数按属性精确筛选（如 `{{"gender": "F"}}`）
   - `explore_neighbors` → 从已知实体出发，沿关系遍历找到关联实体（如：查找某部门的员工、某人的上级）。支持 `filters` 参数对邻居属性精确筛选并统计匹配数量（如 `{{"gender": "F"}}` 返回 `matched_count`）；支持 `mode="aggregate"` 做 COUNT/SUM/AVG/MIN/MAX 聚合统计
   - `explore_subgraph` → 多跳遍历（1-5 hops），发现间接关系和组织层级（如：CEO→经理→员工链路）

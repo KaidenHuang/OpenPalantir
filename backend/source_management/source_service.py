@@ -119,10 +119,12 @@ class SourceService:
         summary_path: str,
         datasource: str,
         parallelism: int = 8,
+        domain: str = "general",
     ) -> Dict[str, Any]:
         """从概要文件提取实体和关系。
 
         流程：读文件 → 分段 → LLM 并发提取 → 去重 → 持久化
+        domain 决定注入 prompt 的实体/关系本体类型枚举。
         """
         from entity_extraction.llm_entity_enhancer import LLMEntityEnhancer
         from utils.data_store import EntityDataStore
@@ -143,7 +145,7 @@ class SourceService:
 
         def extract_one(idx: int, chunk: str):
             logger.info(f"提取第 {idx+1} 块，长度: {len(chunk)}")
-            result = enhancer.extract_entities_and_relationships(chunk)
+            result = enhancer.extract_entities_and_relationships(chunk, domain=domain)
             return result.get("entities", []), result.get("relationships", [])
 
         with ThreadPoolExecutor(max_workers=parallelism) as executor:

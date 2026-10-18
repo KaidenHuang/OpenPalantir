@@ -5,6 +5,12 @@ from decision_engine.contracts import AnalyzedQuery, RawEvidence
 from decision_engine.retrievers.base_retriever import BaseRetriever
 
 from knowledge_graph.graph_manager import graph_manager
+from knowledge_graph.source_scope import match_any_prefix
+
+
+def _endpoint_in_sources(param: str = "$prefixes") -> str:
+    """边的任一端归属于给定来源前缀列表"""
+    return "(" + match_any_prefix('n', param) + " OR " + match_any_prefix('m', param) + ")"
 
 
 class GraphRetriever(BaseRetriever):
@@ -194,7 +200,7 @@ class GraphRetriever(BaseRetriever):
 
         conditions = ["n.name STARTS WITH $prefix"]
         if datasource_prefixes:
-            conditions.append("ANY(p IN $prefixes WHERE n.datasource STARTS WITH p OR m.datasource STARTS WITH p)")
+            conditions.append(_endpoint_in_sources())
             params["prefixes"] = datasource_prefixes
 
         cypher += " WHERE " + " AND ".join(conditions)
@@ -221,7 +227,7 @@ class GraphRetriever(BaseRetriever):
         params = {"name": name}
 
         if datasource_prefixes:
-            cypher += " WHERE ANY(prefix IN $prefixes WHERE n.datasource STARTS WITH prefix OR m.datasource STARTS WITH prefix)"
+            cypher += " WHERE " + _endpoint_in_sources()
             params["prefixes"] = datasource_prefixes
 
         cypher += """
@@ -252,9 +258,7 @@ class GraphRetriever(BaseRetriever):
 
         conditions = ["n.name IN $names"]
         if datasource_prefixes:
-            conditions.append(
-                "ANY(prefix IN $prefixes WHERE n.datasource STARTS WITH prefix OR m.datasource STARTS WITH prefix)"
-            )
+            conditions.append(_endpoint_in_sources())
             params["prefixes"] = datasource_prefixes
 
         cypher += " WHERE " + " AND ".join(conditions)

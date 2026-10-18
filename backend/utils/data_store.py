@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Tuple
 from system.logger import logger
 from knowledge_graph.graph_manager import graph_manager
 from knowledge_graph.alias_cache import AliasCache
-from models.ids import compute_relationship_id
+from ontology.predicates import canonical_rel_id
 from models.graph_models import EntityData, RelationshipData
 
 # 关系分批写入大小（可通过环境变量 NEO4J_REL_BATCH_SIZE 配置，默认 5000）
@@ -119,19 +119,26 @@ class EntityDataStore:
                 object_id = object_entity.get('entity_id', '') if object_entity else ''
 
                 if not subject_id:
-                    logger.warning(f"跳过关系（主体实体不存在）: '{subject_name}' -> {relationship.get('p', 'RELATES_TO')} -> '{object_name}'")
+                    logger.warning(f"跳过关系（主体实体不存在）: '{subject_name}' -> {relationship.get('p', '')} -> '{object_name}'")
                     skipped += 1
                     continue
                 if not object_id:
-                    logger.warning(f"跳过关系（客体实体不存在）: '{subject_name}' -> {relationship.get('p', 'RELATES_TO')} -> '{object_name}'")
+                    logger.warning(f"跳过关系（客体实体不存在）: '{subject_name}' -> {relationship.get('p', '')} -> '{object_name}'")
                     skipped += 1
                     continue
+
+                raw_predicate = relationship.get('p', '')
+                rel_id, pkey, hit = canonical_rel_id(subject_name, raw_predicate, object_name)
+                if not hit:
+                    logger.warning(f"关系谓词未命中受控词表，归一为 '{pkey}': {raw_predicate!r}")
 
                 prepared = {
                     'subject': subject_name,
                     'object': object_name,
-                    'predicate': relationship.get('p', 'RELATES_TO'),
-                    'relationship_id': compute_relationship_id(subject_name, relationship.get('p', 'RELATES_TO'), object_name),
+                    'predicate': pkey,
+                    'raw_predicate': raw_predicate if raw_predicate != pkey else '',
+                    'relationship_id': rel_id,
+                    'datasource': datasource or '',
                     'occurrence_time': relationship.get('ot', ''),
                     'description': relationship.get('d', ''),
                     'subject_id': subject_id,
@@ -178,6 +185,7 @@ class EntityDataStore:
     def save_relationships_only(
         relationships: List[Dict[str, Any]],
         entity_name_map: Dict[str, Dict[str, Any]],
+        datasource: str = "",
         use_create: bool = False
     ) -> int:
         """仅保存关系，使用提供的 entity_name_map 解析 subject/object ID
@@ -185,6 +193,7 @@ class EntityDataStore:
         Args:
             relationships: 关系列表
             entity_name_map: 实体名 → entity 字典映射（含 entity_id）
+            datasource: 产出这批关系的来源 URI，写入边用于后续回收
             use_create: True=使用 CREATE（首次导入更快）；False=使用 MERGE（默认，幂等安全）
         """
         if not relationships:
@@ -198,12 +207,17 @@ class EntityDataStore:
             subject_entity = entity_name_map.get(subject_name) or entity_name_map.get(subject_name.lower())
             object_entity = entity_name_map.get(object_name) or entity_name_map.get(object_name.lower())
 
-            predicate = relationship.get('p', 'RELATES_TO')
+            raw_predicate = relationship.get('p', '')
+            rel_id, pkey, hit = canonical_rel_id(subject_name, raw_predicate, object_name)
+            if not hit:
+                logger.warning(f"关系谓词未命中受控词表，归一为 '{pkey}': {raw_predicate!r}")
             prepared = {
                 'subject': subject_name,
                 'object': object_name,
-                'predicate': predicate,
-                'relationship_id': compute_relationship_id(subject_name, predicate, object_name),
+                'predicate': pkey,
+                'raw_predicate': raw_predicate if raw_predicate != pkey else '',
+                'relationship_id': rel_id,
+                'datasource': datasource,
                 'occurrence_time': relationship.get('ot', ''),
                 'description': relationship.get('d', ''),
                 'attributes': relationship.get('a', {}),

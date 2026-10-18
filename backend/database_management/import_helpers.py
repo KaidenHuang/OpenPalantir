@@ -8,7 +8,7 @@ from typing import Dict, List, Any, Optional
 from system.logger import logger
 
 _PRIMARY_KEY_MARKERS = ("PRI", "PRIMARY KEY", "PK")
-_DEFAULT_ENTITY_TYPE = "其他"
+_DEFAULT_ENTITY_TYPE = "other"
 _MAX_CROSS_PRODUCT_PAIRS = 50
 
 

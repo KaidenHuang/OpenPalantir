@@ -66,13 +66,23 @@ class GraphPerformanceOptimizer:
             except Exception as e:
                 logger.warning(f"创建全文索引失败: {e}")
 
-            # 关系属性索引（加速 MERGE 中 relationship_id 的存在性检查）
+            # 关系属性索引：Neo4j 4.4 关系索引必须指定类型，
+            # 按本体受控词表逐 LinkType 预建（加速类型化 MERGE 的存在性检查）
             try:
-                neo4j_conn.execute_query(
-                    "CREATE INDEX rel_relationship_id IF NOT EXISTS "
-                    "FOR ()-[r:RELATED_TO]-() ON (r.relationship_id)"
-                )
-                logger.info("[create_indexes] 关系属性索引创建成功")
+                from ontology.registry import ontology_registry
+                created = 0
+                for key in ontology_registry.all_link_keys():
+                    if "`" in key:
+                        continue
+                    try:
+                        neo4j_conn.execute_query(
+                            f"CREATE INDEX `rel_rid_{key}` IF NOT EXISTS "
+                            f"FOR ()-[r:`{key}`]-() ON (r.relationship_id)"
+                        )
+                        created += 1
+                    except Exception as e:
+                        logger.debug(f"[create_indexes] 关系索引 rel_rid_{key} 创建失败: {e}")
+                logger.info(f"[create_indexes] 关系属性索引创建成功: {created} 个 LinkType")
             except Exception as e:
                 logger.warning(f"创建关系属性索引失败: {e}")
 

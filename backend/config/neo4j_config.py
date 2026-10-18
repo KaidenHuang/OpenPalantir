@@ -25,6 +25,13 @@ class Neo4jConnection:
         with self.driver.session() as session:
             result = session.run(query, parameters)
             return [record for record in result]
+
+    def execute_read_query(self, query, parameters=None):
+        """以只读会话执行 Cypher —— 写入语句（SET/CREATE/MERGE/DELETE…）会直接被 Neo4j 拒绝。"""
+        from neo4j import READ_ACCESS
+        with self.driver.session(default_access_mode=READ_ACCESS) as session:
+            result = session.run(query, parameters)
+            return [record for record in result]
     
     def initialize_schema(self):
         """初始化Neo4j schema"""

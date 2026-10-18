@@ -12,7 +12,7 @@ from system.logger import logger
 from config.database import Base, engine
 
 # 导入所有模型
-from models import model, task, database, source, cdc, memory
+from models import model, task, database, source, cdc, memory, embedding, wiki
 
 # 创建数据库表
 Base.metadata.create_all(bind=engine)
@@ -64,7 +64,7 @@ async def root():
     return {"message": "分析决策系统API服务运行中"}
 
 # 导入路由
-from api.routes import graph, analysis, model, database, decision, filesystem, source, cdc as cdc_routes, entity_types
+from api.routes import graph, analysis, model, database, decision, filesystem, source, cdc as cdc_routes, entity_types, wiki as wiki_routes, ontology as ontology_routes
 from api import task
 
 app.include_router(graph.router, prefix="/api/graph", tags=["graph"])
@@ -77,6 +77,8 @@ app.include_router(filesystem.router, prefix="/api/filesystem", tags=["filesyste
 app.include_router(source.router, prefix="/api", tags=["source"])
 app.include_router(cdc_routes.router, tags=["cdc"])
 app.include_router(entity_types.router, prefix="/api/entity-types", tags=["entity-types"])
+app.include_router(wiki_routes.router, prefix="/api/wiki", tags=["wiki"])
+app.include_router(ontology_routes.router, prefix="/api/ontology", tags=["ontology"])
 
 # WebSocket 任务实时推送
 from websocket.task_ws import task_ws_manager
@@ -84,6 +86,9 @@ from websocket.task_ws import task_ws_manager
 @app.on_event("startup")
 async def startup_ws_loop():
     task_ws_manager.set_main_loop(asyncio.get_running_loop())
+    if os.getenv("DOC_WATCH_ENABLED") == "1":
+        from file_sources.watcher import document_watcher
+        document_watcher.start()
 
 @app.websocket("/ws/tasks")
 async def websocket_tasks(websocket: WebSocket):
@@ -98,9 +103,12 @@ async def websocket_tasks(websocket: WebSocket):
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """应用关闭时优雅停止所有 CDC Consumer"""
+    """应用关闭时优雅停止 CDC Consumer 与文档监听"""
     from cdc.cdc_manager import cdc_manager
     cdc_manager.shutdown_all()
+    if os.getenv("DOC_WATCH_ENABLED") == "1":
+        from file_sources.watcher import document_watcher
+        document_watcher.stop()
 
 if __name__ == "__main__":
     import uvicorn

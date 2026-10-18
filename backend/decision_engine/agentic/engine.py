@@ -73,7 +73,8 @@ class AgenticEngine:
             entity_types: list = None,
             history: list = None,
             memories: list = None,
-            long_term_memories: dict = None) -> AgenticResult:
+            long_term_memories: dict = None,
+            scope: dict = None) -> AgenticResult:
         """主入口：构建上下文 → Agentic 循环"""
         start_time = time.time()
 
@@ -84,6 +85,7 @@ class AgenticEngine:
             history=history or [],
             memories=memories or [],
             long_term_memories=long_term_memories or {},
+            scope=scope or {},
         )
 
         # Phase B: 构建 system prompt
@@ -159,8 +161,7 @@ class AgenticEngine:
                 "role": "assistant",
                 "content": response.get("content", ""),
             }
-            if self._supports_native_tools():
-                assistant_msg["tool_calls"] = tool_calls
+            assistant_msg["tool_calls"] = tool_calls
             messages.append(assistant_msg)
 
             for tc in tool_calls:
@@ -354,6 +355,7 @@ class AgenticEngine:
         prompt = self._prompt_template.format(
             domain=ctx.domain,
             entity_types_section=ctx.format_entity_types(),
+            scope_section=ctx.format_scope(),
             tool_descriptions=tool_desc,
             history=ctx.format_history(),
             memories=ctx.format_memories(),
@@ -385,9 +387,3 @@ class AgenticEngine:
         except FileNotFoundError:
             logger.error(f"[agentic] prompt 模板文件不存在: {prompt_path}")
             return "你是一个 AI 决策分析师。请根据用户问题给出 JSON 格式的回答。"
-
-    def _supports_native_tools(self) -> bool:
-        """检查当前 LLM 是否支持原生 tool calling"""
-        if self.llm and hasattr(self.llm, "_supports_tools"):
-            return self.llm._supports_tools
-        return True

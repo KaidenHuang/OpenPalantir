@@ -54,11 +54,11 @@ class GraphManager:
 
     def add_entity(self, entity: Dict[str, Any]) -> Dict[str, Any]:
         return self.entity_repo.add_entity(
-            entity, defer_cache=self._defer_cache, performance=self.performance)
+            entity, defer_cache=self._defer_cache)
 
     def add_entities(self, entities: List[Dict[str, Any]]) -> Dict[str, Any]:
         return self.entity_repo.add_entities(
-            entities, defer_cache=self._defer_cache, performance=self.performance)
+            entities, defer_cache=self._defer_cache)
 
     def get_entity(self, entity_id: str) -> Optional[Dict[str, Any]]:
         return self.entity_repo.get_entity(entity_id)
@@ -79,18 +79,46 @@ class GraphManager:
 
     def update_entity(self, entity_id: str, props: Dict[str, Any]) -> bool:
         return self.entity_repo.update_entity(
-            entity_id, props, defer_cache=self._defer_cache, performance=self.performance)
+            entity_id, props, defer_cache=self._defer_cache)
 
     def delete_entity(self, entity_id: str) -> bool:
         return self.entity_repo.delete_entity(
-            entity_id, defer_cache=self._defer_cache, performance=self.performance)
+            entity_id, defer_cache=self._defer_cache)
 
-    def delete_entities_by_datasource(self, datasource_prefix: str) -> int:
-        return self.entity_repo.delete_entities_by_datasource(
-            datasource_prefix, defer_cache=self._defer_cache, performance=self.performance)
+    def recycle_datasource(self, datasource_prefix: str) -> Dict[str, int]:
+        """回收某来源的全部产出：先摘边佐证，再摘实体佐证（佐证清空即删）"""
+        edges = self.rel_repo.recycle_datasource(
+            datasource_prefix, defer_cache=self._defer_cache)
+        entities = self.entity_repo.recycle_datasource(
+            datasource_prefix, defer_cache=self._defer_cache)
+        return {"edges": edges, "entities": entities}
 
     def backfill_byname(self) -> int:
         return self.entity_repo.backfill_byname()
+
+    # ── 治理统计（委托两个仓库的只读聚合）──
+
+    def type_usage(self) -> Dict[str, int]:
+        return self.entity_repo.type_usage()
+
+    def isolated_entities(self, limit: int = 50) -> List[Dict[str, Any]]:
+        return self.entity_repo.isolated_entities(limit)
+
+    def placeholder_entities(self, limit: int = 50) -> List[Dict[str, Any]]:
+        return self.entity_repo.placeholder_entities(limit)
+
+    def predicate_usage(self) -> Dict[str, int]:
+        return self.rel_repo.predicate_usage()
+
+    def raw_predicate_variants(self, limit: int = 200) -> List[Dict[str, Any]]:
+        return self.rel_repo.raw_predicate_variants(limit)
+
+    def endpoint_type_pairs(self) -> List[Dict[str, Any]]:
+        return self.rel_repo.endpoint_type_pairs()
+
+    def provenance_gaps(self) -> Dict[str, int]:
+        return {"entities": self.entity_repo.count_missing_provenance(),
+                "relationships": self.rel_repo.count_missing_provenance()}
 
     def list_entities(self, entity_type: str = None, limit: int = 100) -> List[Dict[str, Any]]:
         return self.entity_repo.list_entities(entity_type, limit)
@@ -109,18 +137,18 @@ class GraphManager:
     # ── 关系 CRUD（委托 rel_repo）──
 
     def get_edges(self, limit: int = 5000) -> List[Dict[str, Any]]:
-        return self.rel_repo.get_edges(limit, performance=self.performance)
+        return self.rel_repo.get_edges(limit)
 
     def get_edge_count(self) -> int:
         return self.rel_repo.get_edge_count()
 
     def add_relationship(self, relationship: Dict[str, Any]) -> Dict[str, Any]:
-        return self.rel_repo.add_relationship(relationship, performance=self.performance)
+        return self.rel_repo.add_relationship(relationship)
 
     def add_relationships(self, relationships: List[Dict[str, Any]], use_create: bool = False) -> Dict[str, Any]:
         return self.rel_repo.add_relationships(
             relationships, use_create=use_create,
-            defer_cache=self._defer_cache, performance=self.performance)
+            defer_cache=self._defer_cache)
 
     def list_relationships(self, limit: int = 100) -> List[Dict[str, Any]]:
         return self.rel_repo.list_relationships(limit)
@@ -129,10 +157,10 @@ class GraphManager:
         return self.rel_repo.get_entity_relationships(entity_id)
 
     def update_relationship(self, relationship_id: str, props: Dict[str, Any]) -> bool:
-        return self.rel_repo.update_relationship(relationship_id, props, performance=self.performance)
+        return self.rel_repo.update_relationship(relationship_id, props)
 
     def delete_relationship(self, relationship_id: str) -> bool:
-        return self.rel_repo.delete_relationship(relationship_id, performance=self.performance)
+        return self.rel_repo.delete_relationship(relationship_id)
 
     # ── 图查询 ──
 
@@ -177,10 +205,9 @@ class GraphManager:
             raise
 
     def query_graph(self, query: str, params: Dict = None) -> List[Dict[str, Any]]:
-        """查询图谱"""
+        """查询图谱（只读 —— 供 /api/graph/query 端点使用，写入语句会被驱动拒绝）"""
         try:
-            optimized_query = self.performance.optimize_query(query)
-            result = neo4j_conn.execute_query(optimized_query, parameters=params)
+            result = neo4j_conn.execute_read_query(query, parameters=params)
             results = []
             for record in result:
                 record_dict = {}
@@ -358,9 +385,9 @@ class GraphManager:
             # Step 2: 核心节点（快速采样，避免 COUNT 子查询全表扫描）
             t0 = time.time()
             if safe_min_edges <= 1:
-                # 快速路径: 只要有至少一条 RELATED_TO 边即可（pattern 匹配，不需计数）
+                # 快速路径: 只要有至少一条关系边即可（泛型 pattern，覆盖全部 LinkType）
                 core_query = """
-                MATCH (n:Entity)-[:RELATED_TO]-()
+                MATCH (n:Entity)-[]-()
                 WHERE n.type IN $entity_types
                 WITH DISTINCT n
                 LIMIT $max_nodes
@@ -376,7 +403,7 @@ class GraphManager:
                     if ids:
                         count_result = neo4j_conn.execute_query(
                             """MATCH (n:Entity) WHERE n.id IN $ids
-                               RETURN n.id as id, COUNT { (n)-[:RELATED_TO]-() } as c""",
+                               RETURN n.id as id, COUNT { (n)-[]-() } as c""",
                             {"ids": ids}
                         )
                         count_map = {r['id']: r['c'] for r in count_result}
@@ -387,7 +414,7 @@ class GraphManager:
                 core_query = """
                 MATCH (n:Entity)
                 WHERE n.type IN $entity_types
-                WITH n, COUNT { (n)-[:RELATED_TO]-() } as edge_count
+                WITH n, COUNT { (n)-[]-() } as edge_count
                 WHERE edge_count >= $min_edges
                 RETURN n{.*} as node, edge_count
                 LIMIT $max_nodes
@@ -453,12 +480,12 @@ class GraphManager:
                         all_nodes.append(node)
             logger.info(f"[viz] Step4 补齐后: {len(all_nodes)} 个节点, {time.time()-t0:.2f}s")
 
-            # Step 5: 获取边（只取 RELATED_TO，从核心节点出发避免全图扫描）
+            # Step 5: 获取边（泛型关系匹配，从核心节点出发避免全图扫描）
             t0 = time.time()
             edges: List[Dict[str, Any]] = []
             if core_ids:
                 edge_result = neo4j_conn.execute_query(
-                    """MATCH (a:Entity)-[r:RELATED_TO]->(b:Entity)
+                    """MATCH (a:Entity)-[r]->(b:Entity)
                        WHERE a.id IN $core_ids AND b.id IN $core_ids
                        RETURN a.id as source_id, b.id as target_id,
                               a.name as source, b.name as target,

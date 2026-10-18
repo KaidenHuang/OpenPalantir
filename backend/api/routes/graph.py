@@ -69,7 +69,7 @@ def list_nodes(
         }
     except Exception as e:
         logger.error(f"获取节点列表失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/nodes/{entity_id}")
@@ -85,7 +85,7 @@ def get_node(entity_id: str):
         raise
     except Exception as e:
         logger.error(f"获取节点详情失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/nodes/search")
@@ -118,7 +118,7 @@ def search_nodes(request: EntitySearchRequest):
         }
     except Exception as e:
         logger.error(f"搜索节点失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/nodes")
@@ -133,7 +133,7 @@ def add_node(entity: dict = Body(...)):
         return result
     except Exception as e:
         logger.error(f"添加节点失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/nodes/batch")
@@ -147,7 +147,7 @@ def batch_add_nodes(entities: list = Body(...)):
         return result
     except Exception as e:
         logger.error(f"批量添加节点失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 
@@ -171,7 +171,7 @@ def update_node(entity_id: str, request: EntityUpdateRequest):
         raise
     except Exception as e:
         logger.error(f"更新节点失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/nodes/{entity_id}")
@@ -190,7 +190,7 @@ def delete_node(entity_id: str):
         raise
     except Exception as e:
         logger.error(f"删除节点失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/nodes/{entity_id}/relationships")
@@ -210,7 +210,7 @@ def get_node_relationships(entity_id: str):
         raise
     except Exception as e:
         logger.error(f"获取节点关系失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/nodes/{entity_id}/subgraph")
@@ -231,7 +231,7 @@ def get_node_subgraph(
         raise
     except Exception as e:
         logger.error(f"获取子图失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ═══════════════════════════════════════════
@@ -249,7 +249,7 @@ def get_edges(limit: int = Query(50000, ge=1, le=50000, description="返回边�
         return {"edges": edges, "total_count": total_count}
     except Exception as e:
         logger.error(f"获取图谱边失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/graph-data")
@@ -276,7 +276,7 @@ def get_graph_visualization_data(
         return result
     except Exception as e:
         logger.error(f"获取图谱可视化数据失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ═══════════════════════════════════════════
@@ -297,7 +297,7 @@ def add_relationship(relationship: dict = Body(...)):
         return result
     except Exception as e:
         logger.error(f"添加关系失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/relationships/batch")
@@ -316,7 +316,7 @@ def batch_add_relationships(relationships: list = Body(...), use_create: bool = 
         return result
     except Exception as e:
         logger.error(f"批量添加关系失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.put("/relationships/{relationship_id}")
@@ -332,7 +332,7 @@ def update_relationship(relationship_id: str, props: dict = Body(...)):
         raise
     except Exception as e:
         logger.error(f"更新关系失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/relationships/{relationship_id}")
@@ -348,7 +348,7 @@ def delete_relationship(relationship_id: str):
         raise
     except Exception as e:
         logger.error(f"删除关系失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ═══════════════════════════════════════════
@@ -366,7 +366,7 @@ def query_graph(query: str = Body(..., description="Cypher 查询语句")):
         return {"query": query, "results": results}
     except Exception as e:
         logger.error(f"查询图谱失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/export")
@@ -389,7 +389,7 @@ def export_graph(format: str = Body("json", description="导出格式")):
         return {"format": format, "status": "unsupported"}
     except Exception as e:
         logger.error(f"导出图谱失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ═══════════════════════════════════════════
@@ -407,7 +407,7 @@ def partition_graph(method: str = Body("louvain", description="分区方法")):
         return result
     except Exception as e:
         logger.error(f"分区图谱失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/compress")
@@ -421,7 +421,7 @@ def compress_graph(compression_ratio: float = Body(0.5, description="压缩比�
         return result
     except Exception as e:
         logger.error(f"压缩图谱失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/meta-graph")
@@ -435,7 +435,7 @@ def get_meta_graph():
         return result
     except Exception as e:
         logger.error(f"创建元图谱失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/partition/{entity_name}")
@@ -449,7 +449,7 @@ def get_entity_partition(entity_name: str):
         return result
     except Exception as e:
         logger.error(f"获取实体分区失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ═══════════════════════════════════════════
@@ -467,7 +467,7 @@ def optimize_schema():
         return result
     except Exception as e:
         logger.error(f"优化 schema 失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/optimize/clear-cache")
@@ -481,7 +481,7 @@ def clear_cache():
         return result
     except Exception as e:
         logger.error(f"清除缓存失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/optimize/query-performance")
@@ -495,4 +495,4 @@ def get_query_performance(query: str = Body(..., description="Cypher 查询语�
         return result
     except Exception as e:
         logger.error(f"获取查询性能信息失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")

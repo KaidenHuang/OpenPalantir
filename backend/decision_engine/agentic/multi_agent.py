@@ -26,26 +26,6 @@ from system.logger import logger
 
 # ── 子 Agent 角色 Prompt ──────────────────────────────────
 
-_PLANNER_PROMPT_TEMPLATE = """你是一个任务规划专家。你的职责是将复杂的分析问题分解为可执行的子任务。
-
-给定用户问题，请输出 JSON 格式的任务分解：
-```json
-{{{{
-  "analysis": "对问题的分析（1-2句）",
-  "sub_tasks": [
-    {{{{"id": 1, "type": "research", "description": "需要检索的信息", "query": "具体查询内容"}}}},
-    {{{{"id": 2, "type": "analyze", "description": "需要的分析", "query": "具体分析内容"}}}}
-  ],
-  "mode": "chain"
-}}}}
-```
-
-规则：
-- sub_tasks 最多 {max_subtasks} 个
-- type 只能是 "research"（信息检索）或 "analyze"（图谱分析）
-- 如果问题简单，只生成 1 个 sub_task，mode 设为 "simple"
-- 不要编造数据，只描述需要什么"""
-
 _CRITIC_PROMPT = """你是一个严谨的审核专家。你的职责是校验答案的准确性和完整性。
 
 给定用户问题和初步答案，请评估：
@@ -81,7 +61,8 @@ class MultiAgentEngine:
             entity_types: list = None,
             history: list = None,
             memories: list = None,
-            long_term_memories: dict = None) -> AgenticResult:
+            long_term_memories: dict = None,
+            scope: dict = None) -> AgenticResult:
         """主入口：先单 Agent 执行，低置信度时触发 Critic 校验"""
         start_time = time.time()
 
@@ -94,6 +75,7 @@ class MultiAgentEngine:
             history=history,
             memories=memories,
             long_term_memories=long_term_memories,
+            scope=scope,
         )
 
         # Phase 2: 低置信度时触发 Critic 校验

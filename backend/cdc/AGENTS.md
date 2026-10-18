@@ -30,7 +30,6 @@ Neo4j（实体名 {table}:{pk}，entity_id = MD5(name)，与全量导入一致�
 | `cdc_consumer.py` | `CDCConsumer`：后台线程消费 Redis Stream（`XREADGROUP`）+ 断点续传（last_message_id）+ `_parse_event` 解析 Debezium 消息 + 指数退避重试 |
 | `event_processor.py` | Debezium 事件 → Neo4j 操作（c/r/u/d 映射 + 外键关系差量同步 + 占位节点） |
 | `schema_cache.py` | 从 SQLite 加载表/列/PK/FK/entity_type + 按 `connector_type` 生成 stream key |
-| `offset_store.py` | 生成 `offsets.dat`（MySQL Java 序列化字节级复刻）。**当前 `no_data` 模式不使用**（Python 不写 offset），保留代码供后续场景 |
 
 ## 关键设计
 
@@ -69,7 +68,7 @@ Neo4j（实体名 {table}:{pk}，entity_id = MD5(name)，与全量导入一致�
 - **查 java 进程**：用 `Get-CimInstance Win32_Process`（`Get-Process | Where CommandLine` 在 PowerShell 5.1 拿不到命令行，会误判无进程）。
 - **CDCConsumer 是后端进程内的线程**：`uvicorn --reload` 会杀它（需重新「增量同步」启动）；但 Debezium 实例是独立 java 进程，不受后端 reload 影响。
 - **前端「配置 CDC」按钮**：仅 `mysql`/`postgresql` 类型显示（`frontend/src/components/DatabaseManagement.tsx`）。对应接口 `POST /api/cdc/{connection_id}/configure`。
-- **`offset_store.py` 当前未启用**：`no_data` 模式下 Debezium 自管 offset。若未来要精确控制位点（如从全量位点开始），再启用 `write_debezium_offset`。
+- **位点由 Debezium 自管**：`no_data` 模式下 Python 不写 `offsets.dat`（原 `offset_store.py` 已随 `no_data` 改造删除）。若未来要精确控制起始位点，需重新实现位点写入并同时停掉 Debezium 的周期 flush。
 
 ## 三阶段演进背景（已全部落地）
 

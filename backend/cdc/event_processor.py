@@ -2,14 +2,18 @@
 CDC 事件处理器 — 将 Debezium 变更事件转化为 Neo4j 实体/关系操作
 """
 import json
+import time
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 from config.neo4j_config import neo4j_conn
 from cdc.schema_cache import SchemaCache
+from knowledge_graph.source_scope import union_sources
+from knowledge_graph.graph_performance import graph_performance
 from utils.json_utils import db_json_dumps
 from system.logger import logger
-from models.ids import compute_entity_id, compute_relationship_id
+from models.ids import compute_entity_id
+from ontology.predicates import canonical_rel_id, cypher_rel_type
 
 
 class EventProcessor:
@@ -19,6 +23,18 @@ class EventProcessor:
         self.schema = schema
         self.connection_id = connection_id
         self.database_name = database_name
+        self._last_cache_clear = 0.0
+
+    def _invalidate_graph_cache(self) -> None:
+        """图谱写入后失效 Redis 快照缓存（5 秒节流，高频事件不逐条清）。"""
+        now = time.time()
+        if now - self._last_cache_clear >= 5:
+            graph_performance.clear_cache("graph:*")
+            self._last_cache_clear = now
+
+    def _datasource(self, table_name: str) -> str:
+        """事件所属来源 URI —— 与全量导入同一 DBS:// 体系，保证命中同一节点"""
+        return f"DBS://{self.connection_id}/{self.database_name}/{table_name}"
 
     def process_event(self, event: Dict[str, Any]) -> str:
         """
@@ -39,6 +55,7 @@ class EventProcessor:
             row = event.get("after")
             if row:
                 self._handle_upsert(table_name, row)
+                self._invalidate_graph_cache()
                 return "upsert"
 
         elif op == "u":
@@ -46,6 +63,7 @@ class EventProcessor:
             row = event.get("after")
             if row:
                 self._handle_upsert(table_name, row)
+                self._invalidate_graph_cache()
                 return "upsert"
 
         elif op == "d":
@@ -53,6 +71,7 @@ class EventProcessor:
             row = event.get("before")
             if row:
                 self._handle_delete(table_name, row)
+                self._invalidate_graph_cache()
                 return "delete"
 
         return "skip"
@@ -74,22 +93,23 @@ class EventProcessor:
             return  # PK 值为空，跳过
 
         entity_id = compute_entity_id(entity_name)
-        datasource = f"DBS://{self.connection_id}/{self.database_name}/{table_name}"
-        entity_type = self.schema.entity_types.get(table_name, "其他")
+        datasource = self._datasource(table_name)
+        entity_type = self.schema.entity_types.get(table_name, "other")
         description = self._build_description(table_name, row)
         ts = datetime.now().isoformat()
 
         # MERGE 实体（与全量导入共享同一 entity_id 体系）
         query = """
         MERGE (e:Entity {id: $entity_id})
+        ON CREATE SET e.datasource = $datasource
         SET e.name = $name,
             e.type = $type,
-            e.datasource = $datasource,
             e.description = $description,
             e.count = 1,
             e.confidence = 1.0,
             e.cdc_updated_at = $ts
         REMOVE e._placeholder
+        SET e.datasources = """ + union_sources('e', '$datasource') + """
         """
         neo4j_conn.execute_query(query, {
             "entity_id": entity_id,
@@ -143,9 +163,9 @@ class EventProcessor:
         if not fk_defs:
             return
 
-        # 1) 查询该实体当前的出向 FK 关系（通过 r.source = 'cdc_fk' 标识）
+        # 1) 查询该实体当前的出向 FK 关系（通过 r.source = 'cdc_fk' 标识；泛型匹配全部 LinkType）
         existing_query = """
-        MATCH (s:Entity {id: $entity_id})-[r:RELATED_TO]->(t:Entity)
+        MATCH (s:Entity {id: $entity_id})-[r]->(t:Entity)
         WHERE r.source = 'cdc_fk'
         RETURN r.relationship_id as rel_id, t.name as target_name
         """
@@ -162,14 +182,17 @@ class EventProcessor:
             ref_table = fk["referenced_table_name"]
             target_name = f"{ref_table}:{fk_value}"
             target_id = compute_entity_id(target_name)
-            predicate = "Foreign key"
-            rel_id = compute_relationship_id(subject_name, predicate, target_name)
+            raw_predicate = "Foreign key"
+            rel_id, predicate, hit = canonical_rel_id(subject_name, raw_predicate, target_name)
+            if not hit:
+                logger.warning(f"[CDC] FK 谓词未命中受控词表，归一为 '{predicate}'")
             description = f"{table_name}.{fk['column']}={fk_value} -> {ref_table}"
 
             desired_rels[target_name] = {
                 "target_id": target_id,
                 "target_name": target_name,
                 "predicate": predicate,
+                "raw_predicate": raw_predicate if raw_predicate != predicate else "",
                 "rel_id": rel_id,
                 "description": description,
             }
@@ -179,7 +202,7 @@ class EventProcessor:
         for target_name in stale_targets:
             old_rel_id = existing_map[target_name]
             neo4j_conn.execute_query(
-                "MATCH ()-[r:RELATED_TO {relationship_id: $rel_id}]->() DELETE r",
+                "MATCH ()-[r {relationship_id: $rel_id}]->() DELETE r",
                 {"rel_id": old_rel_id}
             )
             logger.debug(f"[CDC] 删除旧关系: {subject_name} -> {target_name}")
@@ -190,22 +213,28 @@ class EventProcessor:
         new_targets = set(desired_rels.keys()) - set(existing_map.keys())
         for target_name in new_targets:
             desired = desired_rels[target_name]
-            neo4j_conn.execute_query("""
-                MATCH (s:Entity {id: $subject_id})
-                MERGE (t:Entity {id: $target_id})
+            rel_type = cypher_rel_type(desired["predicate"])
+            neo4j_conn.execute_query(f"""
+                MATCH (s:Entity {{id: $subject_id}})
+                MERGE (t:Entity {{id: $target_id}})
                 ON CREATE SET t.name = $target_name, t._placeholder = true
-                MERGE (s)-[r:RELATED_TO {relationship_id: $rel_id}]->(t)
+                MERGE (s)-[r:{rel_type} {{relationship_id: $rel_id}}]->(t)
+                ON CREATE SET r.datasource = $datasource
                 SET r.predicate = $predicate,
+                    r.raw_predicate = $raw_predicate,
                     r.source = 'cdc_fk',
                     r.description = $description,
                     r.confidence = 1.0
+                SET r.datasources = {union_sources('r', '$datasource')}
             """, {
                 "subject_id": subject_id,
                 "target_id": desired["target_id"],
                 "target_name": desired["target_name"],
                 "rel_id": desired["rel_id"],
                 "predicate": desired["predicate"],
+                "raw_predicate": desired["raw_predicate"],
                 "description": desired["description"],
+                "datasource": self._datasource(table_name),
             })
             logger.debug(f"[CDC] 创建关系: {subject_name} -> {target_name}")
 
@@ -252,26 +281,33 @@ class EventProcessor:
             for j in range(i + 1, len(targets)):
                 _, src_name, src_id = targets[i]
                 _, tgt_name, tgt_id = targets[j]
-                predicate = table_name
-                rel_id = compute_relationship_id(src_name, predicate, tgt_name)
+                rel_id, predicate, hit = canonical_rel_id(src_name, table_name, tgt_name)
+                if not hit:
+                    logger.debug(f"[CDC] Junction 表名谓词 '{table_name}' 不在受控词表，归一为 '{predicate}'")
                 description = f"{table_name}: {src_name} -> {tgt_name}"
+                rel_type = cypher_rel_type(predicate)
 
-                neo4j_conn.execute_query("""
-                    MERGE (s:Entity {id: $src_id})
+                neo4j_conn.execute_query(f"""
+                    MERGE (s:Entity {{id: $src_id}})
                     ON CREATE SET s.name = $src_name, s._placeholder = true
-                    MERGE (t:Entity {id: $tgt_id})
+                    MERGE (t:Entity {{id: $tgt_id}})
                     ON CREATE SET t.name = $tgt_name, t._placeholder = true
-                    MERGE (s)-[r:RELATED_TO {relationship_id: $rel_id}]->(t)
+                    MERGE (s)-[r:{rel_type} {{relationship_id: $rel_id}}]->(t)
+                    ON CREATE SET r.datasource = $datasource
                     SET r.predicate = $predicate,
+                        r.raw_predicate = $raw_predicate,
                         r.source = 'cdc_junction',
                         r.description = $description,
                         r.attributes = $attributes,
                         r.confidence = 1.0
+                    SET r.datasources = {union_sources('r', '$datasource')}
                 """, {
                     "src_id": src_id, "src_name": src_name,
                     "tgt_id": tgt_id, "tgt_name": tgt_name,
                     "rel_id": rel_id, "predicate": predicate,
+                    "raw_predicate": table_name if table_name != predicate else "",
                     "description": description, "attributes": attrs_str,
+                    "datasource": self._datasource(table_name),
                 })
                 logger.debug(f"[CDC] Junction 关系: {src_name} -> {tgt_name}")
 
@@ -295,10 +331,9 @@ class EventProcessor:
 
         for i in range(len(targets)):
             for j in range(i + 1, len(targets)):
-                predicate = table_name
-                rel_id = compute_relationship_id(targets[i], predicate, targets[j])
+                rel_id, predicate, _hit = canonical_rel_id(targets[i], table_name, targets[j])
                 neo4j_conn.execute_query(
-                    "MATCH ()-[r:RELATED_TO {relationship_id: $rel_id}]->() DELETE r",
+                    "MATCH ()-[r {relationship_id: $rel_id}]->() DELETE r",
                     {"rel_id": rel_id}
                 )
                 logger.debug(f"[CDC] 删除 Junction 关系: {targets[i]} -> {targets[j]}")

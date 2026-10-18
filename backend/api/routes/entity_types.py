@@ -20,12 +20,14 @@ router = APIRouter()
 class EntityTypeCreate(BaseModel):
     type_key: str
     display_name: str
+    parent_key: Optional[str] = None
     color: str = "#95A5A6"
     sort_order: int = 0
 
 
 class EntityTypeUpdate(BaseModel):
     display_name: Optional[str] = None
+    parent_key: Optional[str] = None
     color: Optional[str] = None
     sort_order: Optional[int] = None
 
@@ -43,10 +45,14 @@ def create_entity_type(body: EntityTypeCreate, db: Session = Depends(get_db)):
     existing = db.query(EntityType).filter(EntityType.type_key == body.type_key).first()
     if existing:
         raise HTTPException(status_code=409, detail=f"类型 '{body.type_key}' 已存在")
+    if body.parent_key and not db.query(EntityType).filter(
+            EntityType.type_key == body.parent_key).first():
+        raise HTTPException(status_code=400, detail=f"父类型 '{body.parent_key}' 不存在")
 
     entity_type = EntityType(
         type_key=body.type_key,
         display_name=body.display_name,
+        parent_key=body.parent_key,
         color=body.color,
         sort_order=body.sort_order,
         is_builtin=False,
@@ -66,6 +72,13 @@ def update_entity_type(type_key: str, body: EntityTypeUpdate, db: Session = Depe
 
     if body.display_name is not None:
         entity_type.display_name = body.display_name
+    if body.parent_key is not None:
+        if body.parent_key == type_key:
+            raise HTTPException(status_code=400, detail="父类型不能是自身")
+        if body.parent_key and not db.query(EntityType).filter(
+                EntityType.type_key == body.parent_key).first():
+            raise HTTPException(status_code=400, detail=f"父类型 '{body.parent_key}' 不存在")
+        entity_type.parent_key = body.parent_key or None
     if body.color is not None:
         entity_type.color = body.color
     if body.sort_order is not None:

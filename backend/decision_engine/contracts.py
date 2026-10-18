@@ -40,20 +40,8 @@ class EvidenceCitation(BaseModel):
     citation: str
     source_type: str
     source_id: str
-
-
-class StructuredContext(BaseModel):
-    question: str
-    history: List[Dict[str, Any]] = Field(default_factory=list)
-    domain: str = ""
-    intent: str = ""
-    sub_questions: List[str] = Field(default_factory=list)
-    document_context: List[EvidenceItem] = Field(default_factory=list)
-    database_context: List[EvidenceItem] = Field(default_factory=list)
-    entity_context: List[EvidenceItem] = Field(default_factory=list)
-    graph_context: List[EvidenceItem] = Field(default_factory=list)
-    memory_context: str = ""  # 格式化的记忆片段，注入 prompt
-    total_tokens_estimate: int = 0
+    datasource: str = ""   # DOC:// 或 DBS:// URI（可溯源时填充）
+    node_id: str = ""      # 摘要树节点 ID（可溯源时填充）
 
 
 class WorkOrder(BaseModel):
@@ -164,6 +152,7 @@ class DecisionRequest(BaseModel):
     connection_id: Optional[str] = None
     context: Dict[str, Any] = Field(default_factory=dict)
     session_id: Optional[str] = None
+    scope: Optional[Dict[str, Any]] = None  # 提问作用域: {datasource, node_id, title}
 
 
 class DecisionResponse(BaseModel):

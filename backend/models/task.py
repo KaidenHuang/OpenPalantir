@@ -8,6 +8,7 @@ class Task(Base):
     id = Column(String, primary_key=True, index=True)
     type = Column(String)
     status = Column(String)
+    progress = Column(Integer, nullable=False, server_default="0")  # 0-100，REST 与 WS 双通道同源
     create_time = Column(DateTime(timezone=True), server_default=func.now())
     complete_time = Column(DateTime(timezone=True), nullable=True)
     file_id = Column(String, nullable=True)

@@ -10,12 +10,24 @@ from system.metrics import REQUEST_COUNT, REQUEST_LATENCY, ACTIVE_REQUESTS, ERRO
 
 
 def register_middleware(app) -> None:
-    """注册 CORS 和 HTTP 请求日志中间件。"""
+    """注册鉴权、CORS 和 HTTP 请求日志中间件。"""
+    # 鉴权：设置 API_AUTH_KEY 后所有 /api 路由要求 X-API-Key 头（本地开发不设置则跳过）
+    api_auth_key = os.getenv("API_AUTH_KEY", "")
+
+    async def require_api_key(request: Request, call_next):
+        if api_auth_key and request.url.path.startswith("/api"):
+            provided = request.headers.get("x-api-key", "")
+            if provided != api_auth_key:
+                return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+        return await call_next(request)
+
+    app.middleware("http")(require_api_key)
+
     # CORS
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=os.getenv('CORS_ORIGINS', '*').split(','),
-        allow_credentials=True,
+        allow_origins=[o.strip() for o in os.getenv('CORS_ORIGINS', '*').split(',')],
+        allow_credentials=False,
         allow_methods=['*'],
         allow_headers=['*'],
     )

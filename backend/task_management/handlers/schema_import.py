@@ -15,6 +15,8 @@ from database_management.import_helpers import (
     refine_pks_via_dialect,
 )
 from models.ids import compute_entity_id, compute_relationship_id
+from knowledge_graph.source_scope import union_sources
+from ontology.predicates import canonical_rel_id, cypher_rel_type
 from system.logger import logger
 
 from .base import TaskHandler
@@ -78,35 +80,45 @@ def _flush_attributes_batch(accumulator, neo4j_conn, db_json_dumps, compute_enti
     return len(update_batch)
 
 
-def _save_junction_batch(relationships, neo4j_conn, db_json_dumps, compute_entity_id_fn):
-    """将一批 junction 关系直接写入 Neo4j"""
-    batch = []
+def _save_junction_batch(relationships, neo4j_conn, db_json_dumps, compute_entity_id_fn,
+                         datasource: str = ""):
+    """将一批 junction 关系直接写入 Neo4j（按受控谓词分组，类型化 MERGE）"""
+    groups: dict = {}
     for rel in relationships:
-        src_id = compute_entity_id_fn(rel["s"])
-        tgt_id = compute_entity_id_fn(rel["o"])
-        rel_id = compute_relationship_id(rel["s"], rel["p"], rel["o"])
-        batch.append({
-            "src_id": src_id, "src_name": rel["s"],
-            "tgt_id": tgt_id, "tgt_name": rel["o"],
+        rel_id, predicate, hit = canonical_rel_id(rel["s"], rel["p"], rel["o"])
+        if not hit:
+            logger.debug(f"[junction] 谓词 '{rel['p']}' 不在受控词表，归一为 '{predicate}'")
+        groups.setdefault(predicate, []).append({
+            "src_id": compute_entity_id_fn(rel["s"]), "src_name": rel["s"],
+            "tgt_id": compute_entity_id_fn(rel["o"]), "tgt_name": rel["o"],
             "rel_id": rel_id,
-            "predicate": rel["p"],
+            "predicate": predicate,
+            "raw_predicate": rel["p"] if rel["p"] != predicate else "",
             "description": rel["d"],
             "attributes": db_json_dumps(rel.get("a", {})),
+            "datasource": datasource,
         })
-    if batch:
+
+    written = 0
+    for predicate, batch in groups.items():
+        rel_type = cypher_rel_type(predicate)
         neo4j_conn.execute_query(
-            "UNWIND $batch AS item "
-            "MERGE (s:Entity {id: item.src_id}) "
-            "ON CREATE SET s.name = item.src_name, s._placeholder = true "
-            "MERGE (t:Entity {id: item.tgt_id}) "
-            "ON CREATE SET t.name = item.tgt_name, t._placeholder = true "
-            "MERGE (s)-[r:RELATED_TO {relationship_id: item.rel_id}]->(t) "
-            "SET r.predicate = item.predicate, r.source = 'junction_import', "
-            "r.description = item.description, r.attributes = item.attributes, "
-            "r.confidence = 1.0",
+            f"UNWIND $batch AS item "
+            f"MERGE (s:Entity {{id: item.src_id}}) "
+            f"ON CREATE SET s.name = item.src_name, s._placeholder = true "
+            f"MERGE (t:Entity {{id: item.tgt_id}}) "
+            f"ON CREATE SET t.name = item.tgt_name, t._placeholder = true "
+            f"MERGE (s)-[r:{rel_type} {{relationship_id: item.rel_id}}]->(t) "
+            f"ON CREATE SET r.datasource = item.datasource "
+            f"SET r.predicate = item.predicate, r.raw_predicate = item.raw_predicate, "
+            f"r.source = 'junction_import', "
+            f"r.description = item.description, r.attributes = item.attributes, "
+            f"r.confidence = 1.0 "
+            f"SET r.datasources = {union_sources('r', 'item.datasource')}",
             {"batch": batch}
         )
-    return len(batch)
+        written += len(batch)
+    return written
 
 
 class SchemaImportHandler(TaskHandler):
@@ -241,9 +253,13 @@ class SchemaImportHandler(TaskHandler):
             if database_name_for_uri:
                 db_prefix += f"/{database_name_for_uri}"
 
-            deleted_count = graph_manager.delete_entities_by_datasource(db_prefix)
+            recycled = graph_manager.recycle_datasource(db_prefix)
+            deleted_count = recycled["entities"]
             if deleted_count > 0:
-                logger.info(f"全量导入前清理旧数据: 删除 {deleted_count} 个实体（datasource={db_prefix}）")
+                logger.info(
+                    f"全量导入前回收旧数据: 删除 {deleted_count} 个实体、"
+                    f"{recycled['edges']} 条关系（datasource={db_prefix}）"
+                )
 
             graph_manager.set_defer_cache(True)
 
@@ -441,7 +457,8 @@ class SchemaImportHandler(TaskHandler):
                             )
                             if rels:
                                 saved = _save_junction_batch(
-                                    rels, neo4j_conn, db_json_dumps, compute_entity_id
+                                    rels, neo4j_conn, db_json_dumps, compute_entity_id,
+                                    datasource=db_prefix
                                 )
                                 total_rels += saved
                             del rels
@@ -522,7 +539,8 @@ class SchemaImportHandler(TaskHandler):
                 del all_saved_entities
 
                 rel_count = EntityDataStore.save_relationships_only(
-                    relationships, entity_name_map, use_create=not use_merge
+                    relationships, entity_name_map, datasource=db_prefix,
+                    use_create=not use_merge
                 )
                 logger.info(f"关系保存完成: {rel_count} 条")
             else:

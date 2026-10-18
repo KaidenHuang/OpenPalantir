@@ -42,6 +42,7 @@ class AnalyzeRequest(BaseModel):
     tables: Optional[List[str]] = None
     ignore_tables: Optional[List[str]] = None
     database: Optional[str] = None
+    domain: Optional[str] = None   # 本体域包名，决定标注用的实体/关系词表
 
 @router.post("/test-connection", response_model=Dict)
 def test_connection_config(config: ConnectionConfig):
@@ -56,7 +57,7 @@ def test_connection_config(config: ConnectionConfig):
             return {"success": False, "message": "连接测试失败"}
     except Exception as e:
         logger.error(f"测试数据库连接配置失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/connections", response_model=Dict)
 def create_connection(config: ConnectionConfig, db: Session = Depends(get_db)):
@@ -71,7 +72,7 @@ def create_connection(config: ConnectionConfig, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         logger.error(f"创建数据库连接失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/connections/{connection_id}/databases", response_model=Dict)
 def list_databases(connection_id: str, db: Session = Depends(get_db)):
@@ -85,7 +86,7 @@ def list_databases(connection_id: str, db: Session = Depends(get_db)):
         return {"databases": merged}
     except Exception as e:
         logger.error(f"获取数据库列表失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/connections", response_model=Dict)
 def get_all_connections(show_deleted: bool = False, db: Session = Depends(get_db)):
@@ -104,7 +105,7 @@ def get_all_connections(show_deleted: bool = False, db: Session = Depends(get_db
         return {"connections": result}
     except Exception as e:
         logger.error(f"获取数据库连接列表失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/connections/{connection_id}", response_model=Dict)
 def get_connection(connection_id: str, db: Session = Depends(get_db)):
@@ -121,7 +122,7 @@ def get_connection(connection_id: str, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         logger.error(f"获取数据库连接失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.put("/connections/{connection_id}", response_model=Dict)
 def update_connection(connection_id: str, config: ConnectionUpdate, db: Session = Depends(get_db)):
@@ -135,7 +136,7 @@ def update_connection(connection_id: str, config: ConnectionUpdate, db: Session 
         raise
     except Exception as e:
         logger.error(f"更新数据库连接失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.delete("/connections/{connection_id}", response_model=Dict)
 def delete_connection(connection_id: str, db: Session = Depends(get_db)):
@@ -150,7 +151,7 @@ def delete_connection(connection_id: str, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         logger.error(f"删除数据库连接失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/connections/{connection_id}/restore", response_model=Dict)
@@ -178,7 +179,7 @@ def restore_connection(connection_id: str, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         logger.error(f"恢复数据库连接失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/connections/{connection_id}/test", response_model=Dict)
 def test_connection(connection_id: str):
@@ -191,7 +192,7 @@ def test_connection(connection_id: str):
             return {"success": False, "message": "连接测试失败"}
     except Exception as e:
         logger.error(f"测试数据库连接失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/{connection_id}/analyze", response_model=Dict)
 def analyze_database(connection_id: str, request: Optional[AnalyzeRequest] = None):
@@ -206,13 +207,14 @@ def analyze_database(connection_id: str, request: Optional[AnalyzeRequest] = Non
             "connection_id": connection_id,
             "tables": request.tables if request else None,
             "ignore_tables": request.ignore_tables if request else None,
-            "database_name": request.database if request else None
+            "database_name": request.database if request else None,
+            "domain": (request.domain if request and request.domain else "general"),
         }
         task_id = task_manager.create_task("database_schema_analyze", payload)
         return {"task_id": task_id, "message": "分析任务已创建"}
     except Exception as e:
         logger.error(f"创建数据库分析任务失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/{connection_id}/analysis-result", response_model=Dict)
 def get_analysis_result(connection_id: str, db: Session = Depends(get_db)):
@@ -227,7 +229,7 @@ def get_analysis_result(connection_id: str, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         logger.error(f"获取数据库分析结果失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/{connection_id}/summary")
 def get_database_summary(connection_id: str, db: Session = Depends(get_db)):
@@ -243,7 +245,7 @@ def get_database_summary(connection_id: str, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         logger.error(f"获取数据库概要失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/{connection_id}/import", response_model=Dict)
 def import_to_graph(connection_id: str, batch_size: int = 5000, row_limit: int = 0, neo4j_batch_size: int = 20000, use_merge: bool = False, auto_start_cdc: bool = False):
@@ -261,4 +263,4 @@ def import_to_graph(connection_id: str, batch_size: int = 5000, row_limit: int =
         return {"task_id": task_id, "message": "导入任务已创建"}
     except Exception as e:
         logger.error(f"创建图谱导入任务失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")

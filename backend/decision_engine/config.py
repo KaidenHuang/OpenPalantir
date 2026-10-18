@@ -28,8 +28,6 @@ _DEFAULTS = {
         "critic_threshold": 0.6,
         "critic_evidence": 8,
         "critic_max_issues": 3,
-        "hallucination_penalty": -0.3,
-        "planner_max_subtasks": 6,
     },
     "memory": {
         "short_term_ttl_days": 7,

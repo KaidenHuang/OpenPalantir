@@ -5,6 +5,7 @@ from typing import List
 from fastapi import APIRouter, HTTPException, Body, Depends
 from sqlalchemy.orm import Session
 from config.database import get_db
+from document_processing import summary_generator
 from models.source import DocumentSource
 from model_management.model_service import ModelService
 from system.logger import logger
@@ -57,7 +58,7 @@ def create_source(data: dict = Body(...), db: Session = Depends(get_db)):
         raise
     except Exception as e:
         logger.error(f"创建文档源失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/sources")
@@ -85,7 +86,7 @@ def list_sources(include_deleted: bool = False, db: Session = Depends(get_db)):
         }
     except Exception as e:
         logger.error(f"获取文档源列表失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/sources/{source_id}")
@@ -102,7 +103,7 @@ def delete_source(source_id: str, db: Session = Depends(get_db)):
             raise HTTPException(status_code=404, detail="文档源不存在")
 
         # 检查是否有已提取的概要或实体数据
-        summary_dir = os.path.join("data", "summaries", "DOC", source_id)
+        summary_dir = summary_generator.source_summary_dir(source_id)
         has_data = os.path.isdir(summary_dir) and bool(os.listdir(summary_dir))
 
         if not has_data:
@@ -122,7 +123,7 @@ def delete_source(source_id: str, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         logger.error(f"删除文档源失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/sources/{source_id}/restore")
@@ -146,7 +147,7 @@ def restore_source(source_id: str, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         logger.error(f"恢复文档源失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/sources/{source_id}/browse")
@@ -203,7 +204,7 @@ def browse_source(source_id: str, prefix: str = "", db: Session = Depends(get_db
         raise
     except Exception as e:
         logger.error(f"浏览文档源失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/sources/{source_id}/summarize")
@@ -228,7 +229,7 @@ def summarize_file(source_id: str, data: dict = Body(...), db: Session = Depends
             raise HTTPException(status_code=400, detail="文件不存在")
 
         ext = os.path.splitext(full_path)[1].lower()
-        if ext not in (".pdf", ".md", ".txt", ".docx"):
+        if not summary_generator.is_supported(full_path):
             raise HTTPException(status_code=400, detail=f"不支持的文件类型: {ext}")
 
         payload = {
@@ -249,15 +250,66 @@ def summarize_file(source_id: str, data: dict = Body(...), db: Session = Depends
         raise
     except Exception as e:
         logger.error(f"提交概要生成任务失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/sources/{source_id}/refresh")
+def refresh_file(source_id: str, data: dict = Body(...), db: Session = Depends(get_db)):
+    """重跑一篇文档：摘要 → 图谱回收 → 重新抽取 → Wiki 刷新（异步任务）"""
+    from task_management.task_manager import task_manager
+
+    try:
+        file_path = data.get("file", "").strip()
+        if not file_path:
+            raise HTTPException(status_code=400, detail="file is required")
+
+        source = db.query(DocumentSource).filter(DocumentSource.id == source_id).first()
+        if not source:
+            raise HTTPException(status_code=404, detail="文档源不存在")
+
+        payload = {
+            "source_id": source_id,
+            "file_path": file_path,
+            "force": bool(data.get("force", False)),
+            "domain": data.get("domain", "general"),
+            "parallelism": data.get("parallelism", 8),
+        }
+        task_id = task_manager.create_task("document_refresh", payload)
+
+        logger.info(f"文档刷新任务已创建: task_id={task_id}, source_id={source_id}, file={file_path}")
+        return {"task_id": task_id, "message": "文档刷新任务已提交"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"提交文档刷新任务失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/sources/{source_id}/stale")
+def list_stale_files(source_id: str, db: Session = Depends(get_db)):
+    """列出该源中内容已变更或已删除的文档（供前端提示重新生成）"""
+    from source_management import refresh_service
+
+    try:
+        source = db.query(DocumentSource).filter(DocumentSource.id == source_id).first()
+        if not source:
+            raise HTTPException(status_code=404, detail="文档源不存在")
+
+        stale = [item for item in refresh_service.scan_stale()
+                 if item["source_id"] == source_id]
+        return {"status": "success", "source_id": source_id, "stale": stale}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"扫描失效文档失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/sources/{source_id}/summary")
 def get_summary(source_id: str, file: str, db: Session = Depends(get_db)):
     """获取已生成的概要内容"""
     try:
-        summary_rel_path = file + ".json"
-        summary_abs_path = os.path.join("data", "summaries", "DOC", source_id, summary_rel_path)
+        summary_abs_path = summary_generator.summary_path(source_id, file)
 
         if not os.path.isfile(summary_abs_path):
             raise HTTPException(status_code=404, detail="概要不存在，请先生成")
@@ -270,7 +322,7 @@ def get_summary(source_id: str, file: str, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         logger.error(f"获取概要失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/sources/{source_id}/extract")
@@ -285,7 +337,7 @@ def extract_from_summary(source_id: str, data: dict = Body(...), db: Session = D
         if not source:
             raise HTTPException(status_code=404, detail="文档源不存在")
 
-        summary_abs_path = os.path.join("data", "summaries", "DOC", source_id, file_path + ".json")
+        summary_abs_path = summary_generator.summary_path(source_id, file_path)
         if not os.path.isfile(summary_abs_path):
             raise HTTPException(status_code=404, detail="概要不存在，请先生成概要")
 
@@ -295,12 +347,13 @@ def extract_from_summary(source_id: str, data: dict = Body(...), db: Session = D
 
         from source_management.source_service import SourceService
 
-        datasource = f"DOC://{source_id}/{file_path}"
+        datasource = summary_generator.datasource_for(source_id, file_path)
         service = SourceService(model_config)
         result = service.extract_from_summary(
             summary_path=summary_abs_path,
             datasource=datasource,
             parallelism=data.get("parallelism", 8),
+            domain=data.get("domain", "general"),
         )
 
         return {
@@ -312,7 +365,7 @@ def extract_from_summary(source_id: str, data: dict = Body(...), db: Session = D
         raise
     except Exception as e:
         logger.error(f"提取实体关系失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/sources/{source_id}/entities")
@@ -321,7 +374,7 @@ def get_source_entities(source_id: str, file: str, db: Session = Depends(get_db)
     from knowledge_graph.graph_manager import graph_manager
 
     try:
-        datasource = f"DOC://{source_id}/{file}"
+        datasource = summary_generator.datasource_for(source_id, file)
         entities = graph_manager.get_entities_by_datasource(datasource)
 
         entity_ids = {e.get("entity_id") for e in entities if e.get("entity_id")}
@@ -340,4 +393,4 @@ def get_source_entities(source_id: str, file: str, db: Session = Depends(get_db)
         raise
     except Exception as e:
         logger.error(f"获取实体列表失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")

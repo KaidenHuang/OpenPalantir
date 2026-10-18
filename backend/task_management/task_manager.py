@@ -10,7 +10,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 from config.database import SessionLocal
 from task_management.task_service import TaskService
-from task_management.handlers import SchemaAnalyzeHandler, SchemaImportHandler, CdcStartHandler, DocumentSummaryHandler
+from task_management.handlers import (SchemaAnalyzeHandler, SchemaImportHandler,
+                                       CdcStartHandler, DocumentSummaryHandler,
+                                       DocumentRefreshHandler, WikiGenerateHandler)
 from system.logger import logger
 
 class Task:
@@ -42,12 +44,25 @@ class Task:
             "completed_at": self.completed_at
         }
 
+def _apply_db_row(task: "Task", db_task) -> "Task":
+    """任务行 → 内存对象的唯一翻译点（消灭五份逐字翻译样板）"""
+    task.status = db_task.status
+    task.progress = db_task.progress or 0
+    task.result = db_task.result
+    task.created_at = db_task.create_time.isoformat() if db_task.create_time else None
+    task.completed_at = db_task.complete_time.isoformat() if db_task.complete_time else None
+    task.file_id = db_task.file_id
+    return task
+
+
 class TaskManager:
     _handlers = {
         "database_schema_analyze": SchemaAnalyzeHandler,
         "database_schema_import": SchemaImportHandler,
         "database_cdc_start": CdcStartHandler,
         "document_generate_summary": DocumentSummaryHandler,
+        "document_refresh": DocumentRefreshHandler,
+        "wiki_generate": WikiGenerateHandler,
     }
 
     def __init__(self, max_concurrent_tasks: int = 5):
@@ -109,18 +124,9 @@ class TaskManager:
                     payload = {}
                     if db_task.file_id:
                         payload["document_id"] = db_task.file_id
-                    
+
                     # 创建Task对象
-                    task = Task(
-                        task_id=db_task.id,
-                        task_type=db_task.type,
-                        payload=payload
-                    )
-                    task.status = db_task.status
-                    task.result = db_task.result
-                    task.created_at = db_task.create_time.isoformat() if db_task.create_time else None
-                    task.completed_at = db_task.complete_time.isoformat() if db_task.complete_time else None
-                    task.file_id = db_task.file_id
+                    task = _apply_db_row(Task(task_id=db_task.id, task_type=db_task.type, payload=payload), db_task)
                     
                     # 保存到内存中
                     with self.lock:
@@ -145,18 +151,8 @@ class TaskManager:
             try:
                 db_task = self.task_service.get_task(db, task_id)
                 if db_task:
-                    # 创建Task对象
-                    task = Task(
-                        task_id=db_task.id,
-                        task_type=db_task.type,
-                        payload={}
-                    )
-                    task.status = db_task.status
-                    task.result = db_task.result
-                    task.created_at = db_task.create_time.isoformat() if db_task.create_time else None
-                    task.completed_at = db_task.complete_time.isoformat() if db_task.complete_time else None
-                    task.file_id = db_task.file_id
-                    
+                    task = _apply_db_row(Task(task_id=db_task.id, task_type=db_task.type, payload={}), db_task)
+
                     result = task.to_dict()
                     return result
             finally:
@@ -195,17 +191,7 @@ class TaskManager:
                 db_tasks = self.task_service.get_tasks(db, skip=0, limit=1000)
                 tasks = []
                 for db_task in db_tasks:
-                    # 创建Task对象
-                    task = Task(
-                        task_id=db_task.id,
-                        task_type=db_task.type,
-                        payload={}
-                    )
-                    task.status = db_task.status
-                    task.result = db_task.result
-                    task.created_at = db_task.create_time.isoformat() if db_task.create_time else None
-                    task.completed_at = db_task.complete_time.isoformat() if db_task.complete_time else None
-                    task.file_id = db_task.file_id
+                    task = _apply_db_row(Task(task_id=db_task.id, task_type=db_task.type, payload={}), db_task)
 
                     task_dict = task.to_dict()
                     tasks.append(task_dict)
@@ -308,25 +294,22 @@ class TaskManager:
             raise
 
     def _process_tasks(self):
-        """处理任务队列"""
+        """处理任务队列 —— 锁只保护容器读写；DB 写与等待在锁外（避免 create_task 被周期阻塞）"""
         while True:
+            task_id = None
             with self.lock:
-                # 处理队列中的任务
                 if len(self.running_tasks) < self.max_concurrent_tasks and self.task_queue:
                     task_id = self.task_queue.pop(0)
                     self.running_tasks.append(task_id)
                     task = self.tasks[task_id]
                     task.status = "running"
                     task.started_at = datetime.now().isoformat()
-                    self._update_task_in_db(task_id, "running")
-                    
-                    # 执行任务
-                    threading.Thread(target=self._execute_task, args=(task_id,)).start()
-                else:
-                    time.sleep(1)
-                    continue
-            
-            time.sleep(0.1)
+            if task_id:
+                self._update_task_in_db(task_id, "running")
+                threading.Thread(target=self._execute_task, args=(task_id,)).start()
+                time.sleep(0.1)
+            else:
+                time.sleep(1)
 
     def _execute_task(self, task_id: str):
         """执行具体任务"""
@@ -347,20 +330,15 @@ class TaskManager:
                         logger.warning(f"[_execute_task] 内存中未找到任务: task_id={task_id}")
                         # 如果内存中没有任务，创建一个新的Task对象
                         # 创建payload，包含document_id
-                        payload = {}
                         if db_task.file_id:
                             payload["document_id"] = db_task.file_id
-                        
+
                         task = Task(
                             task_id=db_task.id,
                             task_type=db_task.type,
                             payload=payload
                         )
-                        task.status = db_task.status
-                        task.result = db_task.result
-                        task.created_at = db_task.create_time.isoformat() if db_task.create_time else None
-                        task.completed_at = db_task.complete_time.isoformat() if db_task.complete_time else None
-                        task.file_id = db_task.file_id
+                        _apply_db_row(task, db_task)
                         self.tasks[task_id] = task
             finally:
                 db.close()
@@ -372,8 +350,17 @@ class TaskManager:
                     raise ValueError(f"Unknown task type: {task.task_type}")
 
                 def progress_callback(progress: int):
+                    # 锁只保护内存字段；DB 写在锁外（避免把 SQLite 写纳入全局锁临界区）
                     with self.lock:
                         task.progress = progress
+                    try:
+                        db = SessionLocal()
+                        try:
+                            self.task_service.update_task(db, task_id, progress=progress)
+                        finally:
+                            db.close()
+                    except Exception as db_err:
+                        logger.warning(f"[_execute_task] 进度落库失败（不影响执行）: {db_err}")
                     from websocket.task_ws import task_ws_manager
                     task_ws_manager.broadcast_sync({
                         "type": "task_progress",
@@ -450,12 +437,7 @@ class TaskManager:
                 loaded_count = 0
                 for db_task in tasks:
                     if db_task.status in ["pending", "running"]:
-                        # 直接使用数据库中的task_id
-                        task = Task(db_task.id, db_task.type, {})
-                        task.status = db_task.status
-                        task.result = db_task.result
-                        task.created_at = db_task.create_time.isoformat() if db_task.create_time else None
-                        task.completed_at = db_task.complete_time.isoformat() if db_task.complete_time else None
+                        task = _apply_db_row(Task(db_task.id, db_task.type, {}), db_task)
                         self.tasks[task.task_id] = task
                         
                         # 重新加入队列（如果任务未完成）

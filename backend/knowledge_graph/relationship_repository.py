@@ -1,29 +1,77 @@
 """
-关系仓库 — 封装 Neo4j RELATED_TO 边的全部 CRUD 操作
+关系仓库 — 封装 Neo4j 类型化关系边（LinkType）的全部 CRUD 操作
 
 从 GraphManager 中拆出，职责单一：关系增删改查。
 GraphManager 作为薄门面委托调用本模块。
+
+本体约束（M2）：
+- 边类型 = 归一化后的受控 LinkType key（写入前经 ontology.predicates 归一）
+- relationship_id = MD5(subject_受控谓词_object)，归一化先于 ID 计算
+- predicate 属性与边类型保持一致；未知谓词兜底为「其他」并记录 raw_predicate
+- Cypher 类型名插值仅允许来自本体词表的值（cypher_rel_type 白名单校验）
+
+来源约束（M3）：
+- 边记 datasource（主来源）与 datasources（全部佐证来源），回收按 datasources 判定
 """
-import json
-from typing import List, Dict, Any
+from typing import Any, Dict, List, Tuple
 from config.neo4j_config import neo4j_conn
+from knowledge_graph.graph_performance import graph_performance
+from knowledge_graph.source_scope import match_prefix, strip_prefix, union_sources
 from utils.json_utils import db_json_dumps
+from ontology.predicates import cypher_rel_type, normalize_predicate, canonical_rel_id
 from system.logger import logger
 
 
+def _normalize_rel(raw: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
+    """单条关系字典 → (归一化后的写入行, 是否命中词表)
+
+    归一化内容：predicate → 受控 key；有 subject/object 名时重算 relationship_id。
+    """
+    subject = raw.get("subject") or ""
+    object_name = raw.get("object") or ""
+    raw_predicate = raw.get("predicate") or ""
+
+    if subject and object_name:
+        rel_id, pkey, hit = canonical_rel_id(subject, raw_predicate, object_name)
+    else:
+        rel_id = raw.get("relationship_id") or ""
+        pkey, hit = normalize_predicate(raw_predicate)
+
+    attrs = raw.get("attributes", {})
+    attrs_str = attrs if isinstance(attrs, str) else (
+        db_json_dumps(attrs) if attrs else "{}"
+    )
+
+    row = {
+        'subject': subject,
+        'target': object_name,
+        'predicate': pkey,
+        'raw_predicate': raw_predicate if raw_predicate != pkey else '',
+        'relationship_id': rel_id,
+        'confidence': raw.get('confidence', 0.5),
+        'subject_id': raw.get('subject_id', ''),
+        'object_id': raw.get('object_id', ''),
+        'datasource': raw.get('datasource', ''),
+        'occurrence_time': raw.get('occurrence_time'),
+        'description': raw.get('description'),
+        'attributes': attrs_str,
+    }
+    return row, hit
+
+
 class RelationshipRepository:
-    """Neo4j RELATED_TO 边 CRUD"""
+    """Neo4j 类型化关系边 CRUD（边类型来自本体受控词表）"""
 
     # ── 查询 ──
 
-    def get_edges(self, limit: int = 5000, performance=None) -> List[Dict[str, Any]]:
-        """获取图谱边"""
+    def get_edges(self, limit: int = 5000) -> List[Dict[str, Any]]:
+        """获取图谱边（泛型匹配，覆盖全部 LinkType）"""
         try:
             safe_limit = min(max(1, limit), 50000)
             logger.info(f"[get_edges] 开始获取图谱边, limit={safe_limit}")
 
-            if safe_limit == 5000 and performance:
-                cached = performance.get_cached_graph_data("edges:all")
+            if safe_limit == 5000:
+                cached = graph_performance.get_cached_graph_data("edges:all")
                 if cached:
                     logger.info(f"[get_edges] 从缓存获取边: {len(cached)} 条")
                     return cached
@@ -43,7 +91,7 @@ class RelationshipRepository:
                 edges.append({
                     'source': record['source'],
                     'target': record['target'],
-                    'type': record.get('type', 'REL'),
+                    'type': record.get('type') or '其他',
                     'confidence': record.get('confidence', 0.5),
                     'subject_id': record.get('subject_id'),
                     'object_id': record.get('object_id'),
@@ -52,8 +100,8 @@ class RelationshipRepository:
                     'relationship_id': record.get('relationship_id')
                 })
 
-            if safe_limit == 5000 and performance:
-                performance.cache_graph_data("edges:all", edges)
+            if safe_limit == 5000:
+                graph_performance.cache_graph_data("edges:all", edges)
 
             logger.info(f"[get_edges] 获取边成功: {len(edges)} 条")
             return edges
@@ -75,7 +123,7 @@ class RelationshipRepository:
         """列出所有关系"""
         try:
             query = """
-            MATCH (s:Entity)-[r:RELATED_TO]->(t:Entity)
+            MATCH (s:Entity)-[r]->(t:Entity)
             RETURN s.name as subject, s.id as subject_id,
                    t.name as object, t.id as object_id,
                    r.predicate as predicate, r.relationship_id as relationship_id,
@@ -92,7 +140,7 @@ class RelationshipRepository:
                     'subject_id': r['subject_id'],
                     'object': r['object'],
                     'object_id': r['object_id'],
-                    'predicate': r.get('predicate', 'RELATES_TO'),
+                    'predicate': r.get('predicate') or '其他',
                     'relationship_id': r['relationship_id'],
                     'description': r.get('description', ''),
                     'occurrence_time': r.get('occurrence_time', ''),
@@ -107,7 +155,7 @@ class RelationshipRepository:
         """获取实体关联的所有关系"""
         try:
             query = """
-            MATCH (s:Entity)-[r:RELATED_TO]->(t:Entity)
+            MATCH (s:Entity)-[r]->(t:Entity)
             WHERE s.id = $id OR t.id = $id
             RETURN s.name as subject, s.id as subject_id,
                    t.name as object, t.id as object_id,
@@ -124,7 +172,7 @@ class RelationshipRepository:
                     'subject_id': r['subject_id'],
                     'object': r['object'],
                     'object_id': r['object_id'],
-                    'predicate': r.get('predicate', 'RELATES_TO'),
+                    'predicate': r.get('predicate') or '其他',
                     'relationship_id': r['relationship_id'],
                     'description': r.get('description', ''),
                     'occurrence_time': r.get('occurrence_time', ''),
@@ -137,124 +185,154 @@ class RelationshipRepository:
 
     # ── 写入 ──
 
-    def add_relationship(self, relationship: Dict[str, Any],
-                         performance=None) -> Dict[str, Any]:
-        """添加单条关系"""
+    def add_relationship(self, relationship: Dict[str, Any]) -> Dict[str, Any]:
+        """添加单条关系（谓词归一化 + 类型化 MERGE）"""
         try:
-            subject = relationship.get("subject")
-            object_name = relationship.get("object")
-            predicate = relationship.get("predicate", "RELATES_TO")
-            relationship_id = relationship.get("relationship_id")
-            logger.info(f"[add_relationship] 开始添加关系: {subject} -{predicate}-> {object_name}, ID: {relationship_id}")
+            row, hit = _normalize_rel(relationship)
+            subject = row['subject']
+            object_name = row['target']
+            predicate = row['predicate']
+            rel_type = cypher_rel_type(predicate)
 
-            params = {
-                'source': subject,
-                'target': object_name,
-                'predicate': predicate,
-                'relationship_id': relationship_id,
-                'confidence': relationship.get('confidence', 0.5),
-                'subject_id': relationship.get('subject_id', ''),
-                'object_id': relationship.get('object_id', ''),
-                'occurrence_time': relationship.get('occurrence_time'),
-                'description': relationship.get('description'),
-                'attributes': relationship.get('attributes', '{}') if isinstance(relationship.get('attributes'), str) else db_json_dumps(relationship.get('attributes', {})) if relationship.get('attributes') else '{}'
-            }
+            if not hit:
+                logger.warning(
+                    f"[add_relationship] 谓词 '{row['raw_predicate']}' 不在受控词表，"
+                    f"归一为 '{predicate}': {subject} -> {object_name}"
+                )
+            logger.info(f"[add_relationship] 开始添加关系: {subject} -{predicate}-> {object_name}, ID: {row['relationship_id']}")
 
-            query = """
-            MATCH (s:Entity {name: $source})
-            MATCH (t:Entity {name: $target})
-            MERGE (s)-[r:RELATED_TO {relationship_id: $relationship_id}]->(t)
-            ON CREATE SET r.created_at = datetime()
-            SET r.predicate = $predicate, r.confidence = $confidence,
+            query = f"""
+            MATCH (s:Entity {{name: $source}})
+            MATCH (t:Entity {{name: $target}})
+            MERGE (s)-[r:{rel_type} {{relationship_id: $relationship_id}}]->(t)
+            ON CREATE SET r.created_at = datetime(), r.datasource = $datasource
+            SET r.predicate = $predicate, r.raw_predicate = $raw_predicate,
+                r.confidence = $confidence,
                 r.subject_id = $subject_id, r.object_id = $object_id,
                 r.occurrence_time = $occurrence_time, r.description = $description,
                 r.attributes = $attributes
+            SET r.datasources = {union_sources('r', '$datasource')}
             RETURN type(r) as type
             """
-            neo4j_conn.execute_query(query, params)
+            neo4j_conn.execute_query(query, {
+                'source': subject,
+                'target': object_name,
+                'predicate': predicate,
+                'raw_predicate': row['raw_predicate'],
+                'relationship_id': row['relationship_id'],
+                'confidence': row['confidence'],
+                'subject_id': row['subject_id'],
+                'object_id': row['object_id'],
+                'datasource': row['datasource'],
+                'occurrence_time': row['occurrence_time'],
+                'description': row['description'],
+                'attributes': row['attributes'],
+            })
 
-            if performance:
-                performance.clear_cache("graph:edges:*")
+            graph_performance.clear_cache("graph:edges:*")
 
             logger.info(f"[add_relationship] 添加关系成功: {subject} -{predicate}-> {object_name}")
-            return {"status": "success", "predicate": predicate}
+            return {"status": "success", "predicate": predicate,
+                    "relationship_id": row['relationship_id']}
         except Exception as e:
             logger.error(f"[add_relationship] 添加关系失败: {str(e)}")
             raise
 
     def add_relationships(self, relationships: List[Dict[str, Any]],
-                          use_create: bool = False, defer_cache: bool = False,
-                          performance=None) -> Dict[str, Any]:
-        """批量添加关系（UNWIND + CREATE/MERGE）"""
+                          use_create: bool = False, defer_cache: bool = False) -> Dict[str, Any]:
+        """批量添加关系：按受控谓词分组，每组一条 UNWIND + CREATE/MERGE 类型化查询
+
+        Cypher 关系类型名不能参数化，按 LinkType 分组后逐组写入；
+        受控词表规模小，组数可控。
+        """
         try:
             logger.info(f"[add_relationships] 开始批量添加关系，数量: {len(relationships)}, use_create={use_create}")
 
             if not relationships:
                 logger.info("[add_relationships] 没有需要添加的关系")
-                return {"status": "success", "count": 0}
+                return {"status": "success", "count": 0, "fallback_count": 0}
 
-            rel_list = []
-            for rel in relationships:
-                attrs = rel.get('attributes', {})
-                attrs_str = db_json_dumps(attrs) if attrs else '{}'
-                rel_list.append({
-                    'subject_id': rel.get('subject_id', ''),
-                    'object_id': rel.get('object_id', ''),
-                    'predicate': rel.get("predicate", "RELATES_TO"),
-                    'relationship_id': rel.get("relationship_id", ""),
-                    'confidence': rel.get('confidence', 0.5),
-                    'occurrence_time': rel.get('occurrence_time'),
-                    'description': rel.get('description'),
-                    'attributes': attrs_str
-                })
+            groups: Dict[str, List[Dict[str, Any]]] = {}
+            fallback_count = 0
+            for raw in relationships:
+                row, hit = _normalize_rel(raw)
+                if not hit:
+                    fallback_count += 1
+                    logger.debug(
+                        f"[add_relationships] 谓词兜底归一: '{row['raw_predicate']}' -> '{row['predicate']}'"
+                    )
+                groups.setdefault(row['predicate'], []).append(row)
 
-            if use_create:
-                query = """
-                UNWIND $relationships AS r
-                MATCH (s:Entity {id: r.subject_id})
-                MATCH (t:Entity {id: r.object_id})
-                CREATE (s)-[rel:RELATED_TO {relationship_id: r.relationship_id}]->(t)
-                SET rel.predicate = r.predicate, rel.confidence = r.confidence,
-                    rel.occurrence_time = r.occurrence_time, rel.description = r.description,
-                    rel.attributes = r.attributes,
-                    rel.created_at = datetime()
-                """
-            else:
-                query = """
-                UNWIND $relationships AS r
-                MATCH (s:Entity {id: r.subject_id})
-                MATCH (t:Entity {id: r.object_id})
-                MERGE (s)-[rel:RELATED_TO {relationship_id: r.relationship_id}]->(t)
-                ON CREATE SET rel.created_at = datetime()
-                SET rel.predicate = r.predicate, rel.confidence = r.confidence,
-                    rel.occurrence_time = r.occurrence_time, rel.description = r.description,
-                    rel.attributes = r.attributes
-                """
-            neo4j_conn.execute_query(query, {"relationships": rel_list})
+            if fallback_count:
+                logger.warning(f"[add_relationships] {fallback_count} 条关系谓词未命中受控词表，归入兜底类型")
 
-            if performance and not defer_cache:
-                performance.clear_cache("graph:edges:*")
+            write_keys = {'subject_id': None, 'object_id': None, 'relationship_id': None,
+                          'predicate': None, 'raw_predicate': None, 'confidence': None,
+                          'datasource': None,
+                          'occurrence_time': None, 'description': None, 'attributes': None}
 
-            logger.info(f"[add_relationships] 批量添加关系完成，成功: {len(relationships)}")
-            return {"status": "success", "count": len(relationships), "failed_count": 0}
+            written = 0
+            union_rel_sources = union_sources('rel', 'r.datasource')
+            for predicate, rows in groups.items():
+                rel_type = cypher_rel_type(predicate)
+                payload = [{k: r[k] for k in write_keys} for r in rows]
+                if use_create:
+                    query = f"""
+                    UNWIND $relationships AS r
+                    MATCH (s:Entity {{id: r.subject_id}})
+                    MATCH (t:Entity {{id: r.object_id}})
+                    CREATE (s)-[rel:{rel_type} {{relationship_id: r.relationship_id}}]->(t)
+                    SET rel.predicate = r.predicate, rel.raw_predicate = r.raw_predicate,
+                        rel.confidence = r.confidence, rel.datasource = r.datasource,
+                        rel.occurrence_time = r.occurrence_time, rel.description = r.description,
+                        rel.attributes = r.attributes,
+                        rel.created_at = datetime()
+                    SET rel.datasources = {union_rel_sources}
+                    """
+                else:
+                    query = f"""
+                    UNWIND $relationships AS r
+                    MATCH (s:Entity {{id: r.subject_id}})
+                    MATCH (t:Entity {{id: r.object_id}})
+                    MERGE (s)-[rel:{rel_type} {{relationship_id: r.relationship_id}}]->(t)
+                    ON CREATE SET rel.created_at = datetime(), rel.datasource = r.datasource
+                    SET rel.predicate = r.predicate, rel.raw_predicate = r.raw_predicate,
+                        rel.confidence = r.confidence,
+                        rel.occurrence_time = r.occurrence_time, rel.description = r.description,
+                        rel.attributes = r.attributes
+                    SET rel.datasources = {union_rel_sources}
+                    """
+                neo4j_conn.execute_query(query, {"relationships": payload})
+                written += len(rows)
+
+            if not defer_cache:
+                graph_performance.clear_cache("graph:edges:*")
+
+            logger.info(f"[add_relationships] 批量添加关系完成，成功: {written}，兜底: {fallback_count}")
+            return {"status": "success", "count": written, "fallback_count": fallback_count}
         except Exception as e:
             logger.error(f"[add_relationships] 批量添加关系失败: {str(e)}")
             raise
 
     # ── 更新 ──
 
-    def update_relationship(self, relationship_id: str, props: Dict[str, Any],
-                            performance=None) -> bool:
-        """更新关系属性（predicate/confidence/description 等）"""
+    def update_relationship(self, relationship_id: str, props: Dict[str, Any]) -> bool:
+        """更新关系属性（confidence/description 等）
+
+        predicate 不可经本接口变更：边类型是创建时确定的关系标识，
+        改谓词请走「删除 + 重新添加」。
+        """
         try:
+            if 'predicate' in props:
+                logger.warning("[update_relationship] predicate 不可更新，请删除后按新谓词重建")
+                return False
             query = """
-            MATCH ()-[r:RELATED_TO {relationship_id: $id}]-()
+            MATCH ()-[r {relationship_id: $id}]-()
             SET r += $props
             RETURN r.relationship_id as id
             """
             result = neo4j_conn.execute_query(query, {"id": relationship_id, "props": props})
-            if performance:
-                performance.clear_cache("graph:edges:*")
+            graph_performance.clear_cache("graph:edges:*")
             return len(result) > 0
         except Exception as e:
             logger.error(f"更新关系失败: {e}")
@@ -262,19 +340,84 @@ class RelationshipRepository:
 
     # ── 删除 ──
 
-    def delete_relationship(self, relationship_id: str,
-                            performance=None) -> bool:
-        """删除单条关系"""
+    def recycle_datasource(self, datasource_prefix: str,
+                           defer_cache: bool = False) -> int:
+        """摘除某来源对全部边的佐证，佐证清空则删除边
+
+        同一条关系可被多个来源佐证（relationship_id 由 s_p_o 决定，与来源无关），
+        因此只删除本来源不再佐证的边，其他来源仍在的边保留。
+        """
+        try:
+            query = f"""
+            MATCH ()-[r]->()
+            WHERE {match_prefix('r', '$prefix')}
+            SET r.datasources = {strip_prefix('r')}
+            SET r.datasource = coalesce(head(r.datasources), '')
+            WITH r WHERE size(coalesce(r.datasources, [])) = 0
+            DELETE r
+            RETURN count(r) AS deleted
+            """
+            result = neo4j_conn.execute_query(query, {"prefix": datasource_prefix})
+            deleted = result[0].get('deleted', 0) if result else 0
+
+            if not defer_cache:
+                graph_performance.clear_cache("graph:edges:*")
+            logger.info(f"[recycle_datasource] 回收数据源 '{datasource_prefix}' 的边，删除 {deleted} 条")
+            return deleted
+        except Exception as e:
+            logger.error(f"[recycle_datasource] 边回收失败: {e}")
+            raise
+
+    def delete_relationship(self, relationship_id: str) -> bool:
+        """删除单条关系（按 relationship_id 泛型匹配，不限边类型）"""
         try:
             query = """
-            MATCH ()-[r:RELATED_TO {relationship_id: $id}]-()
+            MATCH ()-[r {relationship_id: $id}]-()
             DELETE r
+            RETURN count(r) as deleted
             """
             result = neo4j_conn.execute_query(query, {"id": relationship_id})
-            if performance:
-                performance.clear_cache("graph:edges:*")
-            logger.info(f"[delete_relationship] 删除关系: {relationship_id}")
-            return True
+            deleted = result[0]['deleted'] if result else 0
+            graph_performance.clear_cache("graph:edges:*")
+            logger.info(f"[delete_relationship] 删除关系: {relationship_id}, 命中 {deleted} 条")
+            return deleted > 0
         except Exception as e:
             logger.error(f"删除关系失败: {e}")
             return False
+
+    # ── 治理统计（只读聚合，供 ontology/governance 使用）──
+
+    def predicate_usage(self) -> Dict[str, int]:
+        """各受控谓词的边数；兜底谓词的占比由此算出"""
+        result = neo4j_conn.execute_query(
+            "MATCH ()-[r]->() RETURN r.predicate AS predicate, count(r) AS count")
+        return {(r['predicate'] or ''): r['count'] for r in result}
+
+    def raw_predicate_variants(self, limit: int = 200) -> List[Dict[str, Any]]:
+        """原始谓词 → 归一后谓词的分布，用于发现词表该补哪些别名"""
+        result = neo4j_conn.execute_query(
+            """
+            MATCH ()-[r]->() WHERE r.raw_predicate IS NOT NULL AND r.raw_predicate <> ''
+            RETURN r.predicate AS predicate, r.raw_predicate AS raw_predicate,
+                   count(r) AS count
+            ORDER BY count DESC LIMIT $limit
+            """, {"limit": limit})
+        return [{'predicate': r['predicate'], 'raw_predicate': r['raw_predicate'],
+                 'count': r['count']} for r in result]
+
+    def endpoint_type_pairs(self) -> List[Dict[str, Any]]:
+        """(谓词, 主语类型, 宾语类型) 三元组计数，供定义域/值域校验"""
+        result = neo4j_conn.execute_query(
+            """
+            MATCH (s:Entity)-[r]->(t:Entity)
+            RETURN r.predicate AS predicate, s.type AS subject_type,
+                   t.type AS object_type, count(r) AS count
+            """)
+        return [{'predicate': r['predicate'], 'subject_type': r['subject_type'],
+                 'object_type': r['object_type'], 'count': r['count']} for r in result]
+
+    def count_missing_provenance(self) -> int:
+        """无来源佐证的边数 —— 来源不可追溯的存量数据"""
+        result = neo4j_conn.execute_query(
+            "MATCH ()-[r]->() WHERE size(coalesce(r.datasources, [])) = 0 RETURN count(r) AS count")
+        return result[0]['count'] if result else 0

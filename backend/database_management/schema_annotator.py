@@ -28,7 +28,8 @@ class SchemaAnnotator:
         annotated_schema = annotator.batch_annotate(schema)
     """
     
-    def __init__(self, model_config: Optional[Any] = None, db_session=None):
+    def __init__(self, model_config: Optional[Any] = None, db_session=None,
+                 domain: str = "general"):
         """
         初始化Schema标注器
         
@@ -51,6 +52,7 @@ class SchemaAnnotator:
         self.model_config = model_config
         self.model_client = ModelClient(model_config)
         self.has_available_model = model_config is not None
+        self.domain = domain or "general"
     
     def batch_annotate(self, schema: Dict) -> Dict:
         """
@@ -187,9 +189,13 @@ class SchemaAnnotator:
             prompt_template = f.read()
         
         # 替换模板变量（使用简单的字符串替换，避免format的解析问题）
+        from ontology.prompt import prompt_sections
+        sections = prompt_sections(self.domain)
         prompt = prompt_template.replace('{tables_info}', tables_info)\
                                .replace('{columns_text}', columns_text)\
-                               .replace('{fk_text}', fk_text)
+                               .replace('{fk_text}', fk_text)\
+                               .replace('{entity_types}', sections['entity_types'])\
+                               .replace('{link_types}', sections['link_types'])
         
         return prompt
     

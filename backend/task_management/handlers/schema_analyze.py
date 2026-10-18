@@ -25,6 +25,7 @@ class SchemaAnalyzeHandler(TaskHandler):
             tables = task.payload.get("tables")
             ignore_tables = task.payload.get("ignore_tables")
             database_name = task.payload.get("database_name")
+            domain = task.payload.get("domain", "general")
 
             logger.info(f"开始执行数据库Schema分析任务，连接ID: {connection_id}, 数据库: {database_name}")
 
@@ -43,7 +44,7 @@ class SchemaAnalyzeHandler(TaskHandler):
             logger.info("步骤2: 使用LLM进行业务标注")
             db = SessionLocal()
             try:
-                annotator = SchemaAnnotator(db_session=db)
+                annotator = SchemaAnnotator(db_session=db, domain=domain)
                 annotated_schema = annotator.batch_annotate(schema)
             finally:
                 db.close()

@@ -445,7 +445,7 @@ class Analyzer:
             trunc_unit = 'month'
 
         query = f"""
-        MATCH ()-[r:RELATED_TO]->()
+        MATCH ()-[r]->()
         WHERE r.created_at >= datetime($since)
         WITH date.truncate('{trunc_unit}', r.created_at.date()) AS bucket, count(r) AS cnt
         RETURN bucket.year AS y, bucket.month AS m, bucket.day AS d, cnt
@@ -471,7 +471,7 @@ class Analyzer:
         new_counts = [bucket_counts.get(lbl, 0) for lbl in labels]
 
         base_query = """
-        MATCH ()-[r:RELATED_TO]->()
+        MATCH ()-[r]->()
         WHERE r.created_at < datetime($since)
         RETURN count(r) AS cnt
         """

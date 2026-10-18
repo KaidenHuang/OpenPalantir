@@ -126,13 +126,15 @@ class LLMEntityEnhancer:
             logger.error(f"实体增强失败: {e}")
             return []
     
-    def extract_entities_and_relationships(self, text: str, max_chunk_length: int = 25000) -> Dict[str, List[Dict[str, Any]]]:
+    def extract_entities_and_relationships(self, text: str, max_chunk_length: int = 25000,
+                                           domain: str = "general") -> Dict[str, List[Dict[str, Any]]]:
         """
         使用LLM同时提取实体和实体关系
         
         Args:
             text: 要分析的文本
             max_chunk_length: 单个文本块的最大长度，超过此长度将自动分块处理
+            domain: 领域本体名（实体/关系类型枚举从该域本体注入）
             
         Returns:
             Dict: 包含实体列表和关系列表的字典
@@ -140,7 +142,7 @@ class LLMEntityEnhancer:
         try:
             # 检查文本长度，如果过长则分块处理
             if len(text) <= max_chunk_length:
-                prompt = self._build_combined_prompt(text)
+                prompt = self._build_combined_prompt(text, domain)
                 logger.info(f"构建同时提取实体和关系的提示词，长度: {len(prompt)}")
                 
                 system_prompt = "你是一个实体和关系提取专家，需要根据给定的文本，同时识别实体和提取实体之间的关系。"
@@ -163,8 +165,8 @@ class LLMEntityEnhancer:
                     if len(text) > 2000:
                         logger.info(f"LLM返回空，尝试切半后重试（文本长度: {len(text)}）")
                         mid = self._find_split_point(text, len(text) // 2)
-                        left = self.extract_entities_and_relationships(text[:mid])
-                        right = self.extract_entities_and_relationships(text[mid:])
+                        left = self.extract_entities_and_relationships(text[:mid], domain=domain)
+                        right = self.extract_entities_and_relationships(text[mid:], domain=domain)
                         entities = left.get("entities", []) + right.get("entities", [])
                         relationships = left.get("relationships", []) + right.get("relationships", [])
                         seen = set()
@@ -180,7 +182,7 @@ class LLMEntityEnhancer:
             else:
                 # 文本过长，需要分块处理
                 logger.info(f"文本长度 {len(text)} 超过限制 {max_chunk_length}，开始分块处理")
-                return self._extract_combined_with_chunking(text, max_chunk_length)
+                return self._extract_combined_with_chunking(text, max_chunk_length, domain)
 
         except Exception as e:
             logger.error(f"同时提取实体和关系失败: {e}")
@@ -194,15 +196,21 @@ class LLMEntityEnhancer:
         )
         return template.replace('{text}', text)
 
-    def _build_combined_prompt(self, text: str) -> str:
-        """构建同时提取实体和关系的提示词（使用缓存的模板）"""
+    def _build_combined_prompt(self, text: str, domain: str = "general") -> str:
+        """构建同时提取实体和关系的提示词（模板缓存 + 本体类型枚举动态注入）"""
         template = self._load_template(
             'prompt_combined_template.md',
             "请分析以下文本，提取实体和关系：{text}"
         )
-        return template.replace('{text}', text)
+        from ontology.prompt import prompt_sections
+        sections = prompt_sections(domain)
+        return (template
+                .replace('{entity_types}', sections['entity_types'])
+                .replace('{link_types}', sections['link_types'])
+                .replace('{text}', text))
     
-    def _extract_combined_with_chunking(self, text: str, max_chunk_length: int = 50000) -> Dict[str, List[Dict[str, Any]]]:
+    def _extract_combined_with_chunking(self, text: str, max_chunk_length: int = 50000,
+                                        domain: str = "general") -> Dict[str, List[Dict[str, Any]]]:
         """
         使用分块方式同时提取实体和关系
         
@@ -228,7 +236,7 @@ class LLMEntityEnhancer:
                 
                 logger.info(f"处理第 {i+1}/{num_chunks} 块，文本长度: {len(chunk_text)}，位置: {start_pos}-{end_pos}")
                 
-                prompt = self._build_combined_prompt(chunk_text)
+                prompt = self._build_combined_prompt(chunk_text, domain)
                 logger.info(f"第 {i+1} 块构建提示词长度: {len(prompt)}")
                 
                 system_prompt = "你是一个实体和关系提取专家，需要根据给定的文本，同时识别实体和提取实体之间的关系。"

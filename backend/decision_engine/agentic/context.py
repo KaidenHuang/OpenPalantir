@@ -21,13 +21,15 @@ class AgenticContext:
                  entity_types: list = None,
                  history: list = None,
                  memories: list = None,
-                 long_term_memories: dict = None):
+                 long_term_memories: dict = None,
+                 scope: dict = None):
         self.question = question
         self.domain = domain
         self.entity_types = entity_types or []
         self.history = history or []
         self.memories = memories or []
         self.long_term_memories = long_term_memories or {}
+        self.scope = scope or {}
         self.observations: List[Observation] = []
         self.running_summary: str = ""
 
@@ -151,4 +153,23 @@ class AgenticContext:
                 lines.append(f"- **{et['name']}**: {et.get('description', '')}")
             else:
                 lines.append(f"- {et}")
+        return "\n".join(lines)
+
+    def format_scope(self) -> str:
+        """格式化提问作用域（Wiki 页面/文档节点上下文），用于 prompt 注入"""
+        ds = self.scope.get("datasource", "")
+        node_id = self.scope.get("node_id", "")
+        title = self.scope.get("title", "")
+        if not (ds or title):
+            return ""
+        lines = ["\n## 当前提问范围（scope）\n"]
+        if title:
+            lines.append(f"用户正在 Wiki 页面「{title}」中就本页提问。")
+        if ds:
+            focus = f"聚焦数据源 `{ds}`"
+            if node_id:
+                focus += f" 的节点 `{node_id}`"
+            lines.append(focus + "。")
+        lines.append("优先围绕该范围调用 get_summary_detail / read_summary_nodes 检索，"
+                     "回答必须引用该范围内的具体内容，不要泛泛检索全库。")
         return "\n".join(lines)

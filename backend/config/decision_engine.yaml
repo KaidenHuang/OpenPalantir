@@ -28,8 +28,6 @@ multi_agent:
   critic_threshold: 0.6      # 触发 Critic 校验的置信度阈值
   critic_evidence: 8         # Critic 审核时的证据条数（原 5）
   critic_max_issues: 3       # Critic 问题展示最大数
-  hallucination_penalty: -0.3 # 幻觉置信度惩罚
-  planner_max_subtasks: 6    # Planner 子任务上限（原 4，复杂问题需要更多分解）
 
 # 记忆系统
 memory:

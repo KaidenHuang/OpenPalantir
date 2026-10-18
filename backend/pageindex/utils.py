@@ -59,13 +59,14 @@ def count_tokens(text, model=None):
 # ── LLM 调用（使用 ModelClient）──
 
 def _get_client():
-    """从全局配置创建 ModelClient 实例。"""
+    """获取 ModelClient：优先模块级注入配置，否则走全局版本化缓存工厂。"""
     from model_management import ModelClient
 
     if _pageindex_model_config:
         return ModelClient(_pageindex_model_config)
-    # 无配置时使用默认配置
-    return ModelClient()
+    from model_management.model_client import get_model_client
+    client = get_model_client()
+    return client if client else ModelClient()
 
 
 def _call_llm(prompt, system_prompt="你是一个AI助手。"):
@@ -104,7 +105,8 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False,
     if _pageindex_model_config:
         client = ModelClient(_pageindex_model_config)
     else:
-        client = ModelClient()
+        from model_management.model_client import get_model_client
+        client = get_model_client() or ModelClient()
 
     # 如果调用方传入了临时 api_key/api_base，覆盖配置
     if api_key:

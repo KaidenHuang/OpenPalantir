@@ -7,6 +7,10 @@ GraphManager 作为薄门面委托调用本模块。
 import json
 from typing import List, Dict, Any, Optional, Tuple
 from config.neo4j_config import neo4j_conn
+from knowledge_graph.graph_performance import graph_performance
+from knowledge_graph.source_scope import (
+    match_any_prefix, match_either, match_prefix, strip_prefix, union_sources,
+)
 from system.logger import logger
 from models.ids import compute_entity_id
 
@@ -35,13 +39,23 @@ def _process_result_nodes(results: list, node_key: str = "node") -> List[Dict[st
     return entities
 
 
+def _invalidate_cache(nodes: bool = False, edges: bool = False) -> None:
+    """写入后的缓存失效 —— 收拢在仓库实现内部，调用方不再传 performance 参数。
+
+    defer_cache（批量导入静默期）为 True 时由调用方自行在导入完成后整体失效。
+    """
+    if nodes:
+        graph_performance.clear_cache("graph:nodes:*")
+    if edges:
+        graph_performance.clear_cache("graph:edges:*")
+
+
 class EntityRepository:
     """Neo4j 实体节点 CRUD"""
 
     # ── 写入 ──
 
-    def add_entity(self, entity: Dict[str, Any], defer_cache: bool = False,
-                   performance=None) -> Dict[str, Any]:
+    def add_entity(self, entity: Dict[str, Any], defer_cache: bool = False) -> Dict[str, Any]:
         """添加单个实体"""
         try:
             entity_name = entity.get("name")
@@ -69,17 +83,17 @@ class EntityRepository:
 
             query = """
             MERGE (e:Entity {id: $id})
-            ON CREATE SET e.created_at = datetime()
+            ON CREATE SET e.created_at = datetime(), e.datasource = $datasource
             SET e.name = $name, e.type = $type, e.count = $count,
                 e.confidence = $confidence, e.byname = $byname,
-                e.datasource = $datasource, e.description = $description,
-                e.attributes = $attributes
+                e.description = $description, e.attributes = $attributes
+            SET e.datasources = """ + union_sources('e', '$datasource') + """
             RETURN e.id as id, e.name as name
             """
             neo4j_conn.execute_query(query, params)
 
-            if performance and not defer_cache:
-                performance.clear_cache("graph:nodes:*")
+            if not defer_cache:
+                _invalidate_cache(nodes=True)
 
             logger.info(f"[add_entity] 添加实体成功: {entity_name}")
             return {"status": "success", "id": entity_id, "name": entity_name}
@@ -87,9 +101,8 @@ class EntityRepository:
             logger.error(f"[add_entity] 添加实体失败: {str(e)}")
             raise
 
-    def add_entities(self, entities: List[Dict[str, Any]], defer_cache: bool = False,
-                     performance=None) -> Dict[str, Any]:
-        """批量添加实体（UNWIND + CREATE）"""
+    def add_entities(self, entities: List[Dict[str, Any]], defer_cache: bool = False) -> Dict[str, Any]:
+        """批量添加实体（UNWIND + MERGE，按 id 幂等）"""
         try:
             logger.info(f"[add_entities] 开始批量添加实体，数量: {len(entities)}")
 
@@ -120,16 +133,17 @@ class EntityRepository:
 
             query = """
             UNWIND $entities AS e
-            CREATE (n:Entity {id: e.id})
+            MERGE (n:Entity {id: e.id})
+            ON CREATE SET n.created_at = datetime(), n.datasource = e.datasource
             SET n.name = e.name, n.type = e.type, n.count = e.count,
                 n.confidence = e.confidence, n.byname = e.byname,
-                n.datasource = e.datasource, n.description = e.description,
-                n.attributes = e.attributes, n.created_at = datetime()
+                n.description = e.description, n.attributes = e.attributes
+            SET n.datasources = """ + union_sources('n', 'e.datasource') + """
             """
             neo4j_conn.execute_query(query, {"entities": entity_list})
 
-            if performance and not defer_cache:
-                performance.clear_cache("graph:nodes:*")
+            if not defer_cache:
+                _invalidate_cache(nodes=True)
 
             logger.info(f"[add_entities] 批量添加实体成功，数量: {len(entity_ids)}")
             return {"status": "success", "count": len(entity_ids), "ids": entity_ids}
@@ -193,17 +207,17 @@ class EntityRepository:
             if source_filters and entity_types:
                 cypher = f"""
                 CALL db.index.fulltext.queryNodes('entities_fts', $query) YIELD node, score
-                WHERE ANY(p IN $source_filters WHERE node.datasource STARTS WITH p){type_clause}
+                WHERE {match_any_prefix('node', '$source_filters')}{type_clause}
                 RETURN node{{.*}} as node, score
                 ORDER BY score DESC LIMIT $limit
                 """
                 params["source_filters"] = source_filters
                 params["entity_types"] = entity_types
             elif source_filters:
-                cypher = """
+                cypher = f"""
                 CALL db.index.fulltext.queryNodes('entities_fts', $query) YIELD node, score
-                WHERE ANY(p IN $source_filters WHERE node.datasource STARTS WITH p)
-                RETURN node{.*} as node, score
+                WHERE {match_any_prefix('node', '$source_filters')}
+                RETURN node{{.*}} as node, score
                 ORDER BY score DESC LIMIT $limit
                 """
                 params["source_filters"] = source_filters
@@ -235,7 +249,7 @@ class EntityRepository:
             params = {"query": query, "limit": limit}
             conditions = ["(n.name CONTAINS $query OR n.description CONTAINS $query)"]
             if source_filters:
-                conditions.append("ANY(p IN $source_filters WHERE n.datasource STARTS WITH p)")
+                conditions.append(match_any_prefix('n', '$source_filters'))
                 params["source_filters"] = source_filters
             if entity_types:
                 conditions.append("n.type IN $entity_types")
@@ -255,10 +269,10 @@ class EntityRepository:
     def search_entities_by_datasource(self, datasource_prefix: str, limit: int = 100) -> List[Dict[str, Any]]:
         """按 datasource 前缀查询实体"""
         try:
-            cypher = """
+            cypher = f"""
             MATCH (n:Entity)
-            WHERE n.datasource STARTS WITH $prefix
-            RETURN n{.*} as node LIMIT $limit
+            WHERE {match_prefix('n', '$prefix')}
+            RETURN n{{.*}} as node LIMIT $limit
             """
             result = neo4j_conn.execute_query(cypher, {"prefix": datasource_prefix, "limit": limit})
             return _process_result_nodes(result)
@@ -475,13 +489,13 @@ class EntityRepository:
             return [], 0
 
     def get_entities_by_datasource(self, datasource: str) -> List[Dict[str, Any]]:
-        """根据数据源获取实体（支持 URI 前缀匹配）"""
+        """根据数据源获取实体（URI 前缀匹配，非 URI 则整串相等）"""
         try:
-            is_prefix = "://" in datasource
-            if is_prefix:
-                query = "MATCH (n:Entity) WHERE n.datasource STARTS WITH $ds RETURN n{.*} as node"
+            if "://" in datasource:
+                pred = match_either('n', '$ds')
             else:
-                query = "MATCH (n:Entity) WHERE n.datasource = $ds RETURN n{.*} as node"
+                pred = "$ds IN coalesce(n.datasources, [])"
+            query = f"MATCH (n:Entity) WHERE {pred} RETURN n{{.*}} as node"
             result = neo4j_conn.execute_query(query, {"ds": datasource})
             entities = _process_result_nodes(result)
             for e in entities:
@@ -501,7 +515,7 @@ class EntityRepository:
             safe_limit = max(10, min(limit, 500))
 
             query = f"""
-            MATCH path = (start:Entity {{id: $id}})-[:RELATED_TO*1..{safe_hops}]-(neighbor:Entity)
+            MATCH path = (start:Entity {{id: $id}})-[*1..{safe_hops}]-(neighbor:Entity)
             WITH nodes(path) AS ns, relationships(path) AS rs
             UNWIND ns AS n
             WITH collect(DISTINCT n) AS all_nodes, collect(rs) AS all_rels
@@ -546,13 +560,13 @@ class EntityRepository:
     # ── 更新 ──
 
     def update_entity(self, entity_id: str, props: Dict[str, Any],
-                      defer_cache: bool = False, performance=None) -> bool:
+                      defer_cache: bool = False) -> bool:
         """更新实体属性"""
         try:
             query = "MATCH (n:Entity {id: $id}) SET n += $props RETURN n.id as id"
             result = neo4j_conn.execute_query(query, {"id": entity_id, "props": props})
-            if performance and not defer_cache:
-                performance.clear_cache("graph:nodes:*")
+            if not defer_cache:
+                _invalidate_cache(nodes=True)
             return len(result) > 0
         except Exception as e:
             logger.error(f"更新实体失败: {e}")
@@ -560,52 +574,83 @@ class EntityRepository:
 
     # ── 删除 ──
 
-    def delete_entity(self, entity_id: str, defer_cache: bool = False,
-                      performance=None) -> bool:
+    def delete_entity(self, entity_id: str, defer_cache: bool = False) -> bool:
         """删除实体及关联关系"""
         try:
             query = "MATCH (n:Entity {id: $id}) DETACH DELETE n RETURN count(n) as deleted"
             result = neo4j_conn.execute_query(query, {"id": entity_id})
-            if performance and not defer_cache:
-                performance.clear_cache("graph:nodes:*")
-                performance.clear_cache("graph:edges:*")
+            if not defer_cache:
+                _invalidate_cache(nodes=True, edges=True)
             return result and result[0].get('deleted', 0) > 0
         except Exception as e:
             logger.error(f"删除实体失败: {e}")
             return False
 
-    def delete_entities_by_datasource(self, datasource_prefix: str,
-                                      defer_cache: bool = False, performance=None) -> int:
-        """删除指定数据源前缀的所有实体及关联关系"""
+    def recycle_datasource(self, datasource_prefix: str,
+                           defer_cache: bool = False) -> int:
+        """摘除某来源对全部实体的佐证，佐证清空则删除实体
+
+        文档重跑/删除、数据库重新导入前的回收入口：
+        被其他来源佐证的实体保留（仅从 datasources 去掉本来源），
+        无来源可证的实体连同其边一起删除。
+        """
         try:
-            count_query = """
+            query = f"""
             MATCH (n:Entity)
-            WHERE n.datasource STARTS WITH $prefix
-            RETURN count(n) as cnt
+            WHERE {match_prefix('n', '$prefix')}
+            SET n.datasources = {strip_prefix('n')}
+            SET n.datasource = coalesce(head(n.datasources), '')
+            WITH n WHERE size(coalesce(n.datasources, [])) = 0
+            DETACH DELETE n
+            RETURN count(n) AS deleted
             """
-            count_result = neo4j_conn.execute_query(count_query, {"prefix": datasource_prefix})
-            deleted = count_result[0].get('cnt', 0) if count_result else 0
+            result = neo4j_conn.execute_query(query, {"prefix": datasource_prefix})
+            deleted = result[0].get('deleted', 0) if result else 0
 
-            if deleted > 0:
-                delete_query = """
-                MATCH (n:Entity)
-                WHERE n.datasource STARTS WITH $prefix
-                CALL {
-                    WITH n
-                    DETACH DELETE n
-                } IN TRANSACTIONS
-                OF 1000 ROWS
-                """
-                neo4j_conn.execute_query(delete_query, {"prefix": datasource_prefix})
-
-            if performance and not defer_cache:
-                performance.clear_cache("graph:nodes:*")
-                performance.clear_cache("graph:edges:*")
-            logger.info(f"[delete_entities_by_datasource] 清理数据源 '{datasource_prefix}'，删除实体 {deleted} 个")
+            if not defer_cache:
+                _invalidate_cache(nodes=True, edges=True)
+            logger.info(f"[recycle_datasource] 回收数据源 '{datasource_prefix}'，删除实体 {deleted} 个")
             return deleted
         except Exception as e:
-            logger.error(f"[delete_entities_by_datasource] 删除失败: {e}")
+            logger.error(f"[recycle_datasource] 回收失败: {e}")
             raise
+
+    # ── 治理统计（只读聚合，供 ontology/governance 使用）──
+
+    def type_usage(self) -> Dict[str, int]:
+        """各实体类型的节点数，用于检测游离于本体词表之外的类型"""
+        result = neo4j_conn.execute_query(
+            "MATCH (n:Entity) RETURN n.type AS type, count(n) AS count ORDER BY count DESC")
+        return {(r['type'] or ''): r['count'] for r in result}
+
+    def isolated_entities(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """游离实体：无任何关系边，说明抽取只识别出名词、没建立关联"""
+        result = neo4j_conn.execute_query(
+            """
+            MATCH (n:Entity) WHERE n._placeholder IS NULL AND NOT (n)-[]-()
+            RETURN n.id AS entity_id, n.name AS name, n.type AS type,
+                   n.datasource AS datasource
+            ORDER BY n.name LIMIT $limit
+            """, {"limit": limit})
+        return [{'entity_id': r['entity_id'], 'name': r['name'], 'type': r['type'],
+                 'datasource': r['datasource']} for r in result]
+
+    def placeholder_entities(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """未回填的占位实体：只由关系端点创建、缺类型与描述，等文档抽取补齐"""
+        result = neo4j_conn.execute_query(
+            """
+            MATCH (n:Entity) WHERE n._placeholder = true
+            RETURN n.id AS entity_id, n.name AS name, n.datasource AS datasource
+            ORDER BY n.name LIMIT $limit
+            """, {"limit": limit})
+        return [{'entity_id': r['entity_id'], 'name': r['name'],
+                 'datasource': r['datasource']} for r in result]
+
+    def count_missing_provenance(self) -> int:
+        """无来源佐证的实体数 —— 来源不可追溯的存量数据"""
+        result = neo4j_conn.execute_query(
+            "MATCH (n:Entity) WHERE size(coalesce(n.datasources, [])) = 0 RETURN count(n) AS count")
+        return result[0]['count'] if result else 0
 
     # ── 回填 ──
 

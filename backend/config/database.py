@@ -1,5 +1,5 @@
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 from contextlib import contextmanager
 import os
@@ -23,9 +23,19 @@ if "sqlite" in DATABASE_URL:
     os.makedirs(db_dir, exist_ok=True)
 
 # 创建数据库引擎
-engine = create_engine(
-    DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
-)
+_sqlite_connect_args = {"check_same_thread": False, "timeout": 30} if "sqlite" in DATABASE_URL else {}
+engine = create_engine(DATABASE_URL, connect_args=_sqlite_connect_args)
+
+# SQLite 并发写防护：多线程（任务调度/CDC 消费/记忆 worker/FastAPI 线程池）同时写，
+# 必须启用 WAL + busy_timeout，否则 "database is locked" 是必然结局。
+if "sqlite" in DATABASE_URL:
+
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragma(dbapi_conn, _record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.close()
 
 # 创建会话工厂
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

@@ -20,6 +20,7 @@
 """
 
 import json
+import os
 import time
 import traceback
 from dataclasses import dataclass, field
@@ -27,6 +28,11 @@ from typing import Dict, Any, Optional, List
 import requests
 from system.logger import logger
 from utils.json_utils import extract_json as _extract_json_unified, fix_json
+
+
+class _EmbedEndpointMissing(Exception):
+    """Ollama 旧版本无 /api/embed 端点，触发降级"""
+    pass
 
 
 @dataclass
@@ -56,11 +62,14 @@ class ModelConfig:
     max_retries: int = 3
     retry_delay: float = 1.0
     timeout: int = 600
-    
+    embedding_model: Optional[str] = None
+
     def __post_init__(self):
         """初始化后处理，设置默认模型名称"""
         if not self.model_name and self.models:
             self.model_name = self.models[0]
+        if not self.embedding_model:
+            self.embedding_model = os.environ.get('EMBED_MODEL', 'bge-m3')
     
     @classmethod
     def from_dict(cls, config: Dict[str, Any]) -> 'ModelConfig':
@@ -82,7 +91,8 @@ class ModelConfig:
             model_name=config.get('model_name'),
             max_retries=config.get('max_retries', 3),
             retry_delay=config.get('retry_delay', 1.0),
-            timeout=config.get('timeout', 600)
+            timeout=config.get('timeout', 600),
+            embedding_model=config.get('embedding_model')
         )
     
     def to_dict(self) -> Dict[str, Any]:
@@ -181,6 +191,14 @@ class ModelClient:
             return self._call_local_model(prompt, "json", temperature, max_tokens)
         else:
             return self._call_cloud_model(prompt, system_prompt, "json_object", temperature, max_tokens)
+
+    def call_text(self, prompt: str, system_prompt: str = "你是一个专业的文档写作助手。",
+                  temperature: float = 0.3, max_tokens: int = 8192) -> str:
+        """调用模型返回纯文本（Markdown 等长文），供 Wiki 页面生成等模块使用。"""
+        if self.config.type == "local":
+            return self._call_local_model(prompt, "text", temperature, max_tokens)
+        else:
+            return self._call_cloud_model(prompt, system_prompt, "text", temperature, max_tokens)
 
     def call_json(
         self, 
@@ -323,6 +341,76 @@ class ModelClient:
             logger.error(f"测试连接失败: {e}")
             return False
 
+    def embed(self, texts: List[str]) -> Optional[List[List[float]]]:
+        """批量计算文本向量（embedding 模型）。失败返回 None，调用方需优雅降级。"""
+        if not texts:
+            return []
+        model = self.config.embedding_model
+        if not model:
+            return None
+        if self.config.type == "local":
+            return self._embed_local(model, texts)
+        return self._embed_cloud(model, texts)
+
+    def _embed_local(self, model: str, texts: List[str]) -> Optional[List[List[float]]]:
+        """Ollama embedding：优先新版 /api/embed，404 时降级旧版 /api/embeddings"""
+        def _do_embed():
+            response = requests.post(
+                f"{self.config.api_url}/api/embed",
+                json={"model": model, "input": texts},
+                timeout=self.config.timeout,
+            )
+            if response.status_code == 404:
+                raise _EmbedEndpointMissing()
+            if response.status_code == 200:
+                embeddings = response.json().get("embeddings")
+                if embeddings:
+                    return embeddings
+                raise ValueError("embedding 响应为空")
+            raise RuntimeError(f"HTTP {response.status_code}: {response.text[:200]}")
+
+        try:
+            return _do_embed()
+        except _EmbedEndpointMissing:
+            pass
+        except Exception as e:
+            logger.warning(f"[embed] /api/embed 失败: {e}")
+            return None
+
+        def _do_legacy():
+            vectors = []
+            for text in texts:
+                response = requests.post(
+                    f"{self.config.api_url}/api/embeddings",
+                    json={"model": model, "prompt": text},
+                    timeout=self.config.timeout,
+                )
+                if response.status_code != 200:
+                    raise RuntimeError(f"HTTP {response.status_code}: {response.text[:200]}")
+                vectors.append(response.json().get("embedding", []))
+            return vectors
+
+        return self._with_retry(_do_legacy, "embed/legacy")
+
+    def _embed_cloud(self, model: str, texts: List[str]) -> Optional[List[List[float]]]:
+        """OpenAI 兼容 /embeddings 端点"""
+        def _do_call():
+            response = requests.post(
+                f"{self.config.api_url}/embeddings",
+                headers={
+                    "Authorization": f"Bearer {self.config.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={"model": model, "input": texts},
+                timeout=self.config.timeout,
+            )
+            if response.status_code == 200:
+                items = sorted(response.json().get("data", []), key=lambda d: d.get("index", 0))
+                return [item.get("embedding", []) for item in items]
+            raise RuntimeError(f"HTTP {response.status_code}: {response.text[:200]}")
+
+        return self._with_retry(_do_call, "embed/cloud")
+
     def call_with_tools(
         self,
         messages: List[Dict[str, Any]],
@@ -445,23 +533,33 @@ class ModelClient:
         return self._with_retry(_do_call, "cloud/chat")
 
 
-# 创建默认客户端实例
-default_client = ModelClient()
+# ModelClient 全局工厂：版本化缓存单例 —— 配置（类型/模型名/地址/密钥）变化即重建，
+# 未变化则复用。解决「改模型配置何时生效」无 locality 的问题：所有调用点一处刷新。
+_client_cache: Optional[ModelClient] = None
+_client_cache_sig: tuple = ()
 
 
 def get_model_client() -> Optional[ModelClient]:
-    """Create a fresh ModelClient from the available model config."""
+    """从可用模型配置获取缓存的 ModelClient（配置版本变化即重建）。"""
+    global _client_cache, _client_cache_sig
     from config.database import SessionLocal
     from model_management.model_service import ModelService
     db = None
     try:
         db = SessionLocal()
         config = ModelService.get_available_model(db)
-        if config:
-            return ModelClient(config)
+        if not config:
+            return None
+        sig = (config.type, config.model_name, tuple(config.models or []),
+               config.api_url, config.api_key)
+        if _client_cache is not None and _client_cache_sig == sig:
+            return _client_cache
+        _client_cache = ModelClient(config)
+        _client_cache_sig = sig
+        return _client_cache
     except Exception:
-        return None
+        # DB 抖动等临时故障时返回当前缓存实例，避免调用方拿到 None 中断任务
+        return _client_cache
     finally:
         if db:
             db.close()
-    return None

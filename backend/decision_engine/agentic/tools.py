@@ -755,6 +755,88 @@ def _execute_list_summaries(params: dict) -> dict:
     return results
 
 
+def _compact_tree(nodes: list) -> list:
+    """摘要树瘦身：只保留 title/node_id/summary，去掉 text 原文（原文经 read_summary_nodes 按需获取）"""
+    compact = []
+    for node in nodes or []:
+        entry = {
+            "title": node.get("title", ""),
+            "node_id": node.get("node_id", ""),
+            "summary": node.get("summary", ""),
+        }
+        children = node.get("nodes", [])
+        if children:
+            entry["nodes"] = _compact_tree(children)
+        compact.append(entry)
+    return compact
+
+
+def _find_tree_nodes(nodes: list, node_ids: set, found: list, depth: int = 0):
+    """按 node_id 收集摘要树节点（深度保护）"""
+    if depth > 12:
+        return
+    for node in nodes or []:
+        nid = node.get("node_id", "")
+        if nid in node_ids:
+            found.append(node)
+        _find_tree_nodes(node.get("nodes", []), node_ids, found, depth + 1)
+
+
+def _execute_read_summary_nodes(params: dict) -> dict:
+    """读取指定 node_id 的摘要节点原文（树导航下钻），每节点截断至 4000 字符"""
+    import os
+    from glob import glob as glob_func
+
+    datasource = params.get("datasource", "")
+    node_ids = params.get("node_ids", [])
+    if not datasource or not node_ids:
+        return {"error": "需要 datasource 与 node_ids 参数"}
+
+    if datasource.startswith("DOC://"):
+        resource_type = "DOC"
+    else:
+        return {"error": f"read_summary_nodes 仅支持 DOC 数据源: {datasource}"}
+
+    uri_body = datasource.split("://")[1]
+    uuid = uri_body.split("/", 1)[0]
+    summaries_dir = os.path.join(os.path.dirname(__file__), "..", "..", "data", "summaries")
+    target_dir = os.path.join(os.path.abspath(summaries_dir), resource_type, uuid)
+    json_files = glob_func(os.path.join(target_dir, "*.json"))
+    if not json_files:
+        return {"error": f"未找到 datasource={datasource} 对应的摘要文件"}
+
+    try:
+        with open(json_files[0], "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        return {"error": f"摘要文件读取失败: {e}"}
+
+    found = []
+    wanted = set(str(n) for n in node_ids[:8])
+    _find_tree_nodes(data.get("structure", []), wanted, found)
+
+    cfg = _tool_cfg()
+    max_chars = cfg.get("node_max_chars", 4000)
+    nodes_out = []
+    for node in found:
+        text = node.get("text", "") or ""
+        entry = {
+            "node_id": node.get("node_id", ""),
+            "title": node.get("title", ""),
+            "text": text[:max_chars],
+        }
+        if len(text) > max_chars:
+            entry["truncated"] = True
+        nodes_out.append(entry)
+
+    missing = sorted(wanted - {n["node_id"] for n in nodes_out})
+    result = {"datasource": datasource, "nodes": nodes_out,
+              "note": f"命中 {len(nodes_out)} 个节点"}
+    if missing:
+        result["missing_node_ids"] = missing
+    return result
+
+
 def _execute_get_summary_detail(params: dict) -> dict:
     """获取指定数据源的详细结构（文档段落或数据库表结构）
 
@@ -799,7 +881,8 @@ def _execute_get_summary_detail(params: dict) -> dict:
             "datasource": canonical_ds,
             "name": data.get("doc_name", ""),
             "description": data.get("doc_description", ""),
-            "structure": data.get("structure", []),
+            "structure": _compact_tree(data.get("structure", [])),
+            "note": "structure 为骨架树（无原文）。选中心节点后用 read_summary_nodes 读取原文。",
         }
     else:  # DBS
         db_name = data.get("db_name", "")
@@ -931,6 +1014,29 @@ _BUILTIN_TOOLS = {
         },
         "executor": _execute_get_summary_detail,
     },
+    "read_summary_nodes": {
+        "definition": {
+            "type": "function",
+            "function": {
+                "name": "read_summary_nodes",
+                "description": (
+                    "读取文档摘要树中指定节点的原文内容（树导航下钻）。"
+                    "先用 get_summary_detail 获取骨架树和 node_id，再选中心节点调用本工具读取原文。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "datasource": {"type": "string",
+                                       "description": "DOC:// 数据源 URI（来自 list_summaries / get_summary_detail）"},
+                        "node_ids": {"type": "array", "items": {"type": "string"},
+                                     "description": "要读取原文的 node_id 列表（最多 8 个）"},
+                    },
+                    "required": ["datasource", "node_ids"],
+                },
+            },
+        },
+        "executor": _execute_read_summary_nodes,
+    },
 }
 
 
@@ -943,23 +1049,34 @@ class ToolRegistry:
         self._builtin_tools = _BUILTIN_TOOLS
 
     def get_definitions(self, domain: str) -> list:
-        """获取 OpenAI 兼容的 tools 列表（内置 + Skill + MCP）"""
+        """获取 OpenAI 兼容的 tools 列表（内置 + Skill + MCP），按名去重（内置优先）
+
+        重名 function 定义会被模型 API 拒绝，必须去重。
+        """
         tools = []
+        seen = set()
+
+        def _add(definitions):
+            for t in definitions:
+                name = (t or {}).get("function", {}).get("name", "")
+                if name and name in seen:
+                    continue
+                seen.add(name)
+                tools.append(t)
 
         # 内置工具（始终存在）
-        for tool_info in self._builtin_tools.values():
-            tools.append(tool_info["definition"])
+        _add([info["definition"] for info in self._builtin_tools.values()])
 
         # Skill 工具
         try:
-            tools += self._skill_registry.get_tool_definitions(domain)
+            _add(self._skill_registry.get_tool_definitions(domain))
         except Exception as e:
             logger.warning(f"[tools] Skill 工具加载失败: {e}")
 
         # MCP 工具
         if self._mcp_manager:
             try:
-                tools += self._mcp_manager.get_tool_definitions()
+                _add(self._mcp_manager.get_tool_definitions())
             except Exception as e:
                 logger.warning(f"[tools] MCP 工具加载失败: {e}")
 

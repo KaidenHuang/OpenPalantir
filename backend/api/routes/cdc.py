@@ -36,7 +36,7 @@ def start_cdc(connection_id: str, req: CdcStartRequest):
         return result
     except Exception as e:
         logger.error(f"启动 CDC 失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/{connection_id}/start-task", response_model=Dict)
@@ -51,7 +51,7 @@ def start_cdc_task(connection_id: str, req: CdcStartRequest):
         return {"task_id": task_id, "message": "增量同步任务已创建"}
     except Exception as e:
         logger.error(f"创建增量同步启动任务失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/{connection_id}/configure", response_model=Dict)
@@ -65,7 +65,7 @@ def configure_cdc(connection_id: str):
         return cdc_manager.configure_connection(connection_id)
     except Exception as e:
         logger.error(f"配置 CDC 失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/{connection_id}/stop", response_model=Dict)
@@ -76,7 +76,7 @@ def stop_cdc(connection_id: str, database_name: str):
         return result
     except Exception as e:
         logger.error(f"停止 CDC 失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/{connection_id}/pause", response_model=Dict)
@@ -87,7 +87,7 @@ def pause_cdc(connection_id: str, database_name: str):
         return result
     except Exception as e:
         logger.error(f"暂停 CDC 失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{connection_id}/status", response_model=Optional[Dict])
@@ -102,7 +102,7 @@ def get_cdc_status(connection_id: str, database_name: str):
         raise
     except Exception as e:
         logger.error(f"查询 CDC 状态失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/statuses", response_model=list)
@@ -112,4 +112,4 @@ def get_all_cdc_statuses():
         return cdc_manager.get_all_statuses()
     except Exception as e:
         logger.error(f"查询所有 CDC 状态失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")

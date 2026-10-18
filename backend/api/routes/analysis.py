@@ -23,7 +23,7 @@ def analyze_path(request: PathAnalysisRequest = Body(...)):
         return result
     except Exception as e:
         logger.error(f"分析路径失败: source_entity={request.source_entity}, target_entity={request.target_entity}, k={request.k}, weighted={request.weighted}, 错误: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/community")
 def analyze_community():
@@ -37,7 +37,7 @@ def analyze_community():
         return result
     except Exception as e:
         logger.error(f"分析社区失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 class CentralityAnalysisRequest(BaseModel):
     centrality_types: list = None
@@ -62,7 +62,7 @@ def analyze_centrality(request: CentralityAnalysisRequest = Body(...)):
         return result
     except Exception as e:
         logger.error(f"分析中心性失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/trend")
 def analyze_trend(request: TrendAnalysisRequest = Body(...)):
@@ -76,7 +76,7 @@ def analyze_trend(request: TrendAnalysisRequest = Body(...)):
         return result
     except Exception as e:
         logger.error(f"分析趋势失败: time_range={request.time_range}, metrics={request.metrics}, 错误: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/report")
 def generate_report(request: ReportRequest = Body(...)):
@@ -90,4 +90,4 @@ def generate_report(request: ReportRequest = Body(...)):
         return result
     except Exception as e:
         logger.error(f"生成分析报告失败: analysis_type={request.analysis_type}, format={request.format}, 错误: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")

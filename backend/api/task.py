@@ -25,7 +25,7 @@ def create_task(task_data: Dict[str, Any]):
         raise
     except Exception as e:
         logger.error(f"创建任务失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/list")
 def list_tasks():
@@ -39,7 +39,7 @@ def list_tasks():
         return {"tasks": tasks}
     except Exception as e:
         logger.error(f"列出所有任务失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/{task_id}")
 def get_task_status(task_id: str):
@@ -59,7 +59,7 @@ def get_task_status(task_id: str):
         raise
     except Exception as e:
         logger.error(f"获取任务状态失败: task_id={task_id}, 错误: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/{task_id}/result")
 def get_task_result(task_id: str):
@@ -88,7 +88,7 @@ def get_task_result(task_id: str):
         raise
     except Exception as e:
         logger.error(f"获取任务结果失败: task_id={task_id}, 错误: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.delete("/{task_id}")
 def delete_task(task_id: str):
@@ -111,7 +111,7 @@ def delete_task(task_id: str):
         raise
     except Exception as e:
         logger.error(f"删除任务失败: task_id={task_id}, 错误: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/{task_id}/stop")
 def stop_task(task_id: str):
@@ -131,4 +131,4 @@ def stop_task(task_id: str):
         raise
     except Exception as e:
         logger.error(f"停止任务失败: task_id={task_id}, 错误: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")

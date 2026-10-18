@@ -6,10 +6,7 @@ DecisionKernel — 决策内核
 """
 import hashlib
 import os
-from functools import lru_cache
 from typing import Optional
-
-import yaml
 
 from decision_engine.agentic.engine import AgenticEngine, quick_check_intent, SIMPLE_DEFAULTS
 from decision_engine.agentic.multi_agent import MultiAgentEngine
@@ -24,23 +21,37 @@ from decision_engine.memory.memory_manager import memory_manager
 from decision_engine.tool_manager.mcp.mcp_manager import MCPManager
 from decision_engine.tool_manager.mcp.config import load_mcp_server_configs
 from decision_engine.tool_manager.skill.skill_registry import skill_registry
+from ontology.registry import ontology_registry
 from system.logger import logger
 
 
-@lru_cache(maxsize=32)
-def load_domain_config(domain: str) -> dict:
-    """从 domain_config.yaml 加载领域配置（线程安全缓存）"""
-    config_path = os.path.join(
-        os.path.dirname(__file__), "..", "config", "domain_config.yaml",
-    )
+def _entity_types(domain: str) -> list:
+    """领域实体类型直接取自本体注册表（唯一的类型词表，社区包导入的域也自动生效）"""
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-        domains = config.get("domains", {})
-        return domains.get(domain, domains.get("general", {}))
+        return [{"name": o.key, "description": o.description or o.display_name}
+                for o in ontology_registry.object_types(domain)]
     except Exception as e:
-        logger.error(f"[kernel] 加载领域配置失败: {e}")
-        return {}
+        logger.error(f"[kernel] 读取本体实体类型失败: {e}")
+        return []
+
+
+def _citation_targets(payload: dict) -> list:
+    """从工具结果 payload 提取可溯源引用（datasource + node_id）"""
+    ds = payload.get("datasource")
+    if not isinstance(ds, str) or not ds:
+        return []
+    nodes = payload.get("nodes")
+    if isinstance(nodes, list) and nodes:
+        targets = []
+        for n in nodes[:3]:
+            if isinstance(n, dict) and n.get("node_id"):
+                targets.append({"datasource": ds, "node_id": str(n.get("node_id", "")),
+                                "title": n.get("title", "")})
+        return targets
+    if payload.get("node_id"):
+        return [{"datasource": ds, "node_id": str(payload.get("node_id", "")),
+                 "title": payload.get("title", "") or payload.get("name", "")}]
+    return [{"datasource": ds, "node_id": "", "title": payload.get("name", "")}]
 
 
 def inject_memories(request: DecisionRequest, domain: str) -> None:
@@ -107,9 +118,8 @@ class DecisionKernel:
         """主入口"""
         self._ensure_initialized()
 
-        # 1. 读取领域配置
+        # 1. 领域（词表来自本体注册表）
         domain = request.domain or "general"
-        domain_config = load_domain_config(domain)
 
         logger.info(
             f"[kernel] run domain={domain}, session_id={request.session_id}, "
@@ -132,10 +142,11 @@ class DecisionKernel:
         result = self._agentic.run(
             question=request.question,
             domain=domain,
-            entity_types=domain_config.get("entity_types", []),
+            entity_types=_entity_types(domain),
             history=history,
             memories=request.context.get("short_term_memories", []),
             long_term_memories=request.context.get("long_term_memories", {}),
+            scope=request.scope or {},
         )
 
         # 6. 提取记忆
@@ -187,11 +198,22 @@ class DecisionKernel:
         # 10. 事实性查询：key_issues 为空时，自动从 evidence 生成 citations
         if not evidence_citations and evidence:
             for ev_item in evidence:
-                evidence_citations.append(EvidenceCitation(
-                    citation=ev_item.citation,
-                    source_type=ev_item.source_type,
-                    source_id=ev_item.source_name,
-                ))
+                targets = _citation_targets(ev_item.payload or {})
+                if targets:
+                    for t in targets:
+                        evidence_citations.append(EvidenceCitation(
+                            citation=ev_item.citation,
+                            source_type=ev_item.source_type,
+                            source_id=ev_item.source_name or t.get("title", ""),
+                            datasource=t.get("datasource", ""),
+                            node_id=t.get("node_id", ""),
+                        ))
+                else:
+                    evidence_citations.append(EvidenceCitation(
+                        citation=ev_item.citation,
+                        source_type=ev_item.source_type,
+                        source_id=ev_item.source_name,
+                    ))
 
         # 11. 保存会话（包含证据和工具追踪）
         conv_manager.add_turn(

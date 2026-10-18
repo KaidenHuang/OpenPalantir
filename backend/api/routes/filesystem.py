@@ -101,4 +101,4 @@ def browse_filesystem(path: str = ""):
         raise
     except Exception as e:
         logger.error(f"浏览文件系统失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
