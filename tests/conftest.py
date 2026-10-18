@@ -247,24 +247,6 @@ def sample_debezium_event_delete() -> dict[str, Any]:
 
 
 # ============================================================
-# 记忆系统 Fixtures
-# ============================================================
-
-@pytest.fixture
-def temp_memory_dir():
-    """创建临时记忆目录"""
-    tmpdir = tempfile.mkdtemp()
-    memory_dir = os.path.join(tmpdir, "conversations")
-    os.makedirs(memory_dir, exist_ok=True)
-    memory_file = os.path.join(memory_dir, "MEMORY.md")
-
-    yield memory_dir, memory_file
-
-    import shutil
-    shutil.rmtree(tmpdir, ignore_errors=True)
-
-
-# ============================================================
 # 辅助函数
 # ============================================================
 

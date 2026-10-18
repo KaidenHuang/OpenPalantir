@@ -110,7 +110,7 @@ main.py (FastAPI 应用入口)
   │   │   ├─ summary_retriever.py     ← 摘要检索（文档 + 数据库 JSON，共享打分 helper）
   │   │   └─ embedding_utils.py       ← 向量召回 + hybrid_rank
   │   ├─ memory/                      ← 记忆系统
-  │   │   ├─ memory_manager.py        ← 短期记忆（SQLite,7天TTL）+ 长期记忆（MEMORY.md）
+  │   │   ├─ memory_manager.py        ← 短期记忆（SQLite,7天TTL）+ 长期记忆（SQLite）
   │   │   └─ memory_extractor.py      ← LLM 记忆提取（单 worker 线程）
   │   ├─ tool_manager/                ← 统一的工具管理层
   │   │   ├─ skill/                   ← 本地 Skill 源（加载 + 注册 + 执行）
@@ -202,7 +202,7 @@ main.py (FastAPI 应用入口)
 | SeedRetriever | `agentic/seed_retriever.py` | 级联种子检索：jieba 分词→摘要检索→URI 过滤图检索 |
 | ToolRegistry | `agentic/tools.py` | 统一工具注册表：Skill+MCP 合并为 OpenAI function-calling 格式 |
 | ConversationManager | `conversation_manager.py` | 多轮对话管理（JSON 文件持久化） |
-| MemoryManager | `memory/memory_manager.py` | 双层记忆：短期（SQLite, 7 天 TTL）+ 长期（MEMORY.md） |
+| MemoryManager | `memory/memory_manager.py` | 双层记忆：短期（SQLite, 7 天 TTL）+ 长期（SQLite, 去重合并/提炼覆写） |
 | MemoryExtractor | `memory/memory_extractor.py` | LLM 记忆提取（单 worker 线程串行） |
 
 #### 关键参数
@@ -287,7 +287,7 @@ App.tsx (标签导航)
 ┌─ 文件系统 (data/summaries/) ────────────────────────┐
 │  DOC/{source_uuid}/  ← 文档摘要树 JSON                  │
 │  DBS/{conn_uuid}/    ← 数据库概要 JSON                  │
-│  MEMORY.md           ← 长期记忆（用户偏好 + 重要决策，≤10条）   │
+│  （长期记忆已迁入 SQLite long_term_memories 表）        │
 └──────────────────────────────────────────────────────┘
 
 ┌─ 缓存层 (Redis) ────────────────────────────────────┐

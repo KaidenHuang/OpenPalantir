@@ -1,23 +1,18 @@
 """
 记忆系统单元测试
 
-测试 MemoryManager: 短期记忆 CRUD + 检索 + 过期清理 + 长期记忆读写
+测试 MemoryManager: 短期记忆 CRUD + 检索 + 过期清理 + 长期记忆读写（SQLite）
 """
 
-import json
 import os
 import sys
-import tempfile
-import time
+import uuid
 from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'backend'))
 
 from decision_engine.memory.memory_manager import MemoryManager
-
-# 获取模块引用，用于替换路径常量
-import sys as _sys
-_mem_module = _sys.modules["decision_engine.memory.memory_manager"]
+from models.memory import LongTermMemory
 
 
 class TestMemoryManager:
@@ -25,25 +20,35 @@ class TestMemoryManager:
 
     @classmethod
     def setup_class(cls):
-        """使用临时目录隔离 MEMORY.md"""
-        cls._tmpdir = tempfile.TemporaryDirectory()
-        cls._memory_dir = os.path.join(cls._tmpdir.name, "conversations")
-        os.makedirs(cls._memory_dir, exist_ok=True)
-        cls._memory_file = os.path.join(cls._memory_dir, "MEMORY.md")
-
-        # 创建独立的 MemoryManager，指向临时 MEMORY.md
+        """备份长期记忆表现状，测试覆写后恢复（不污染开发库）；建表幂等"""
+        from config.database import SessionLocal, engine, Base
+        Base.metadata.create_all(engine, tables=[LongTermMemory.__table__])
+        db = SessionLocal()
+        try:
+            cls._backup = [
+                {"category": r.category, "content": r.content,
+                 "created_at": r.created_at}
+                for r in db.query(LongTermMemory).all()
+            ]
+        finally:
+            db.close()
         cls.mm = MemoryManager()
-        # 替换 MEMORY.md 路径
-        cls._orig_dir = _mem_module._MEMORY_DIR
-        cls._orig_file = _mem_module._MEMORY_FILE
-        _mem_module._MEMORY_DIR = cls._memory_dir
-        _mem_module._MEMORY_FILE = cls._memory_file
 
     @classmethod
     def teardown_class(cls):
-        _mem_module._MEMORY_DIR = cls._orig_dir
-        _mem_module._MEMORY_FILE = cls._orig_file
-        cls._tmpdir.cleanup()
+        backup = getattr(cls, "_backup", [])
+        from config.database import SessionLocal
+        db = SessionLocal()
+        try:
+            db.query(LongTermMemory).delete()
+            db.add_all([
+                LongTermMemory(id=uuid.uuid4().hex[:12], category=b["category"],
+                               content=b["content"], created_at=b["created_at"])
+                for b in backup
+            ])
+            db.commit()
+        finally:
+            db.close()
 
     # ── 短期记忆 ────────────────────────────────────────
 
@@ -171,20 +176,12 @@ class TestMemoryManager:
         hash2 = self.mm.get_long_term_hash()
         assert hash1 != hash2, "内容变化后 hash 应不同"
 
-    def test_memory_file_auto_create(self):
-        """MEMORY.md 不存在时返回 None，写入时自动创建"""
-        # 删除文件
-        if os.path.isfile(self._memory_file):
-            os.remove(self._memory_file)
-
+    def test_empty_long_term_returns_empty_lists(self):
+        """空表返回空列表（不返回 None，调用方无需判空结构）"""
+        self.mm.write_long_term_memories([], [])
         result = self.mm.read_long_term_memories()
-        # 文件不存在时返回 None，不自动创建（避免并发竞态覆盖）
-        assert result is None, "文件不存在时应返回 None"
-        assert not os.path.isfile(self._memory_file), "读取不应自动创建文件"
 
-        # 写入时自动创建文件
-        self.mm.write_long_term_memories(["测试偏好"], ["测试决策"])
-        assert os.path.isfile(self._memory_file), "写入时应自动创建文件"
+        assert result == {"preferences": [], "decisions": []}
 
     # ── 工具方法 ────────────────────────────────────────
 
@@ -208,28 +205,6 @@ class TestMemoryManager:
         assert self.mm._is_similar("偏好数据驱动的决策", "偏好数据驱动的决策方式")
         assert self.mm._is_similar("hello", "hello")  # 完全相同
         assert not self.mm._is_similar("偏好数据驱动", "财务预算管理")
-
-    def test_parse_memory_md(self):
-        """解析 MEMORY.md 格式"""
-        content = """---
-updated: 2026-09-01T14:30:00
-domain: workforce
----
-
-# 长期记忆
-
-## 用户偏好
-- 偏好 A
-- 偏好 B
-
-## 重要决策
-- 决策 X
-"""
-        result = self.mm._parse_memory_md(content)
-        assert len(result["preferences"]) == 2, f"应有 2 条偏好，实际 {len(result['preferences'])}"
-        assert len(result["decisions"]) == 1, f"应有 1 条决策，实际 {len(result['decisions'])}"
-        assert "偏好 A" in result["preferences"]
-        assert "决策 X" in result["decisions"]
 
 
 def run_tests():

@@ -37,6 +37,7 @@ interface DecisionAnswer {
 }
 
 interface EvidenceCitation {
+  evidence_no?: number;
   citation: string;
   source_type: string;
   source_id: string;
@@ -556,6 +557,9 @@ function DecisionAssistant() {
                                           cursor: cit.datasource ? 'pointer' : 'default',
                                         }}
                                       >
+                                        {cit.evidence_no && cit.evidence_no > 0 && (
+                                          <strong style={{ marginRight: 4 }}>[{cit.evidence_no}]</strong>
+                                        )}
                                         {cit.citation}
                                         {cit.datasource && ' 🎯'}
                                       </span>

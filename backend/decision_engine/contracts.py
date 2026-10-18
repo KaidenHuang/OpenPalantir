@@ -36,6 +36,7 @@ class EvidenceItem(BaseModel):
 
 
 class EvidenceCitation(BaseModel):
+    evidence_no: int = 0   # 证据编号（对应 resp.evidence[evidence_no-1], 1-based；0=未配到）
     citation: str
     source_type: str
     source_id: str
@@ -129,7 +130,7 @@ class ConversationSession(BaseModel):
     turns: List[ConversationTurn] = Field(default_factory=list)
     created_at: str = ""
     updated_at: str = ""
-    long_term_memory_hash: str = ""  # MEMORY.md 内容的 MD5，用于多轮去重
+    long_term_memory_hash: str = ""  # 长期记忆内容指纹 MD5，用于多轮去重注入
 
 
 class MemoryEntry(BaseModel):

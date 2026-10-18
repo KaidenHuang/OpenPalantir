@@ -1,6 +1,6 @@
 """
 记忆提取器 — 使用 LLM 从对话轮次中提取短期记忆和长期记忆候选
-单 worker 线程串行处理，避免多线程竞争 MEMORY.md
+单 worker 线程串行处理，避免多线程写竞争
 """
 import queue
 import threading

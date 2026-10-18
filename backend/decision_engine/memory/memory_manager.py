@@ -1,8 +1,10 @@
 """
-记忆管理器 — 统一管理短期记忆（SQLite）和长期记忆（MEMORY.md）
+记忆管理器 — 统一管理短期记忆和长期记忆（SQLite）
+
+短期记忆：会话提炼信息，按 TTL 过期清理；
+长期记忆：稳定的用户偏好与重要决策，去重合并 + 超限提炼覆写。
 """
 import hashlib
-import os
 import re
 import threading
 import uuid
@@ -11,12 +13,8 @@ from typing import Dict, List, Optional
 
 from config.database import SessionLocal
 from decision_engine.config import get_config
-from models.memory import ShortTermMemory
+from models.memory import ShortTermMemory, LongTermMemory
 from system.logger import logger
-
-# 长期记忆文件路径
-_MEMORY_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "conversations")
-_MEMORY_FILE = os.path.join(_MEMORY_DIR, "MEMORY.md")
 
 
 def _mem_cfg():
@@ -25,7 +23,7 @@ def _mem_cfg():
 
 
 class MemoryManager:
-    """记忆管理器 — 短期记忆（SQLite）+ 长期记忆（MEMORY.md）"""
+    """记忆管理器 — 短期记忆（SQLite, TTL）+ 长期记忆（SQLite, 持久）"""
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -184,171 +182,122 @@ class MemoryManager:
         # 注意：提升检查需要 LLM 调用，在 MemoryExtractor 中实现
         # 这里只记录日志，实际提升由 MemoryExtractor._maybe_promote() 处理
 
-    # ─── 长期记忆（MEMORY.md）──────────────────────────────
+    # ─── 长期记忆（SQLite）──────────────────────────────
 
-    def read_long_term_memories(self) -> Optional[dict]:
-        """读取 MEMORY.md，返回 {preferences: [...], decisions: [...]}"""
+    def read_long_term_memories(self) -> dict:
+        """读取全部长期记忆，返回 {preferences: [...], decisions: [...]}（空表返回空列表）"""
         with self._lock:
             try:
-                if not os.path.isfile(_MEMORY_FILE):
-                    return None
-
-                with open(_MEMORY_FILE, "r", encoding="utf-8") as f:
-                    content = f.read()
-
-                return self._parse_memory_md(content)
+                db = SessionLocal()
+                try:
+                    rows = db.query(LongTermMemory).order_by(
+                        LongTermMemory.created_at.asc()
+                    ).all()
+                finally:
+                    db.close()
+                return {
+                    "preferences": [r.content for r in rows
+                                    if r.category == "preference"],
+                    "decisions": [r.content for r in rows if r.category == "decision"],
+                }
             except Exception as e:
                 logger.error(f"[memory] 读取长期记忆失败: {e}")
-                return None
-
-    def merge_long_term_memories(self, new_prefs: List[str],
-                                 new_decisions: List[str]) -> bool:
-        """[已废弃] 请使用 update_long_term() 代替"""
-        return self.update_long_term(new_prefs, new_decisions)
+                return {"preferences": [], "decisions": []}
 
     def update_long_term(self, new_prefs: List[str],
                          new_decisions: List[str]) -> bool:
-        """原子更新长期记忆：读取现有 → 去重合并 → 写入（锁内一步完成）"""
+        """原子合并新记忆：读取现有 → 相似去重 → 插入（锁内一步完成，超限时截断）"""
         with self._lock:
-            existing = self._read_existing()
-            all_prefs = existing["preferences"] + [
-                p for p in new_prefs
-                if not any(self._is_similar(p, ep) for ep in existing["preferences"])
-            ]
-            all_decs = existing["decisions"] + [
-                d for d in new_decisions
-                if not any(self._is_similar(d, ed) for ed in existing["decisions"])
-            ]
-            return self._write_long_term_locked(all_prefs, all_decs)
+            try:
+                existing = self._read_existing_unlocked()
+                all_prefs = existing["preferences"] + [
+                    p for p in new_prefs
+                    if not any(self._is_similar(p, ep) for ep in existing["preferences"])
+                ]
+                all_decs = existing["decisions"] + [
+                    d for d in new_decisions
+                    if not any(self._is_similar(d, ed) for ed in existing["decisions"])
+                ]
+                return self._write_all_locked(all_prefs, all_decs)
+            except Exception as e:
+                logger.error(f"[memory] 合并长期记忆失败: {e}")
+                return False
 
     def write_long_term_memories(self, preferences: List[str],
                                  decisions: List[str]) -> bool:
         """覆写长期记忆（用于提炼后的记忆覆写）"""
         with self._lock:
-            return self._write_long_term_locked(preferences, decisions)
+            try:
+                return self._write_all_locked(preferences, decisions)
+            except Exception as e:
+                logger.error(f"[memory] 覆写长期记忆失败: {e}")
+                return False
 
     def get_long_term_hash(self) -> str:
-        """获取 MEMORY.md 内容的 MD5 hash，用于多轮去重"""
-        with self._lock:
-            try:
-                if not os.path.isfile(_MEMORY_FILE):
-                    return ""
-                with open(_MEMORY_FILE, "r", encoding="utf-8") as f:
-                    return hashlib.md5(f.read().encode()).hexdigest()
-            except Exception:
-                return ""
+        """长期记忆内容的 MD5 内容指纹，用于多轮去重注入"""
+        state = self.read_long_term_memories()
+        content = "\n".join(state["preferences"] + state["decisions"])
+        return hashlib.md5(content.encode()).hexdigest()
 
-    def _read_existing(self) -> dict:
-        """在锁内读取现有长期记忆，文件不存在时返回空结构（调用方必须持有 _lock）"""
+    def _read_existing_unlocked(self) -> dict:
+        """读取现有长期记忆（调用方必须持有 _lock）"""
         try:
-            if not os.path.isfile(_MEMORY_FILE):
-                return {"preferences": [], "decisions": []}
-            with open(_MEMORY_FILE, "r", encoding="utf-8") as f:
-                return self._parse_memory_md(f.read())
+            db = SessionLocal()
+            try:
+                rows = db.query(LongTermMemory).order_by(
+                    LongTermMemory.created_at.asc()
+                ).all()
+            finally:
+                db.close()
+            return {
+                "preferences": [r.content for r in rows if r.category == "preference"],
+                "decisions": [r.content for r in rows if r.category == "decision"],
+            }
         except Exception as e:
             logger.error(f"[memory] 锁内读取长期记忆失败: {e}")
             return {"preferences": [], "decisions": []}
 
-    def _write_long_term_locked(self, preferences: List[str],
-                                 decisions: List[str]) -> bool:
-        """写入 MEMORY.md（调用方必须持有 _lock）"""
+    def _write_all_locked(self, preferences: List[str],
+                          decisions: List[str]) -> bool:
+        """覆写全部长期记忆（调用方必须持有 _lock；超限截断保留最新）"""
+        total = len(preferences) + len(decisions)
+        total_chars = sum(len(s) for s in preferences + decisions)
+        max_items = _mem_cfg()["long_term_max_items"]
+        max_chars = _mem_cfg()["long_term_max_chars"]
+
+        if total > max_items or total_chars > max_chars:
+            logger.info(
+                f"[memory] 长期记忆超限 (条目={total}/{max_items}, "
+                f"字数={total_chars}/{max_chars})，截断保留最新"
+            )
+            preferences = preferences[-max_items // 2:]
+            decisions = decisions[-max_items // 2:]
+
+        db = SessionLocal()
         try:
-            # 检查是否超限
-            total = len(preferences) + len(decisions)
-            total_chars = sum(len(s) for s in preferences + decisions)
-
-            if total > _mem_cfg()["long_term_max_items"] or total_chars > _mem_cfg()["long_term_max_chars"]:
-                max_items = _mem_cfg()["long_term_max_items"]
-                max_chars = _mem_cfg()["long_term_max_chars"]
-                logger.info(
-                    f"[memory] 长期记忆超限 (条目={total}/{max_items}, "
-                    f"字数={total_chars}/{max_chars})，截断保留最新"
-                )
-                preferences = preferences[-max_items // 2:]
-                decisions = decisions[-max_items // 2:]
-
-            now = datetime.now().isoformat()
-            domain = "workforce"
-
-            # 构建 MEMORY.md 内容
-            lines = [
-                "---",
-                f"updated: {now}",
-                f"domain: {domain}",
-                "---",
-                "",
-                "# 长期记忆",
-                "",
-            ]
-
-            if preferences:
-                lines.append("## 用户偏好")
-                for p in preferences:
-                    lines.append(f"- {p}")
-                lines.append("")
-
-            if decisions:
-                lines.append("## 重要决策")
-                for d in decisions:
-                    lines.append(f"- {d}")
-                lines.append("")
-
-            os.makedirs(_MEMORY_DIR, exist_ok=True)
-            with open(_MEMORY_FILE, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines))
-
+            db.query(LongTermMemory).delete()
+            now = datetime.now()
+            rows = (
+                [LongTermMemory(id=uuid.uuid4().hex[:12], category="preference",
+                                content=p, created_at=now)
+                 for p in preferences if p] +
+                [LongTermMemory(id=uuid.uuid4().hex[:12], category="decision",
+                                content=d, created_at=now)
+                 for d in decisions if d]
+            )
+            db.add_all(rows)
+            db.commit()
             logger.info(
                 f"[memory] 长期记忆已更新: 偏好={len(preferences)}条, "
                 f"决策={len(decisions)}条"
             )
             return True
         except Exception as e:
+            db.rollback()
             logger.error(f"[memory] 写入长期记忆失败: {e}")
             return False
-
-    def _ensure_memory_file(self):
-        """创建空的 MEMORY.md 模板"""
-        os.makedirs(_MEMORY_DIR, exist_ok=True)
-        now = datetime.now().isoformat()
-        template = f"""---
-updated: {now}
-domain: workforce
----
-
-# 长期记忆
-
-## 用户偏好
-
-## 重要决策
-"""
-        with open(_MEMORY_FILE, "w", encoding="utf-8") as f:
-            f.write(template)
-        logger.info("[memory] 创建 MEMORY.md 模板")
-
-    @staticmethod
-    def _parse_memory_md(content: str) -> dict:
-        """解析 MEMORY.md 内容"""
-        preferences = []
-        decisions = []
-        current_section = None
-
-        for line in content.split("\n"):
-            line = line.strip()
-            if line.startswith("## 用户偏好"):
-                current_section = "preferences"
-            elif line.startswith("## 重要决策"):
-                current_section = "decisions"
-            elif line.startswith("- ") and current_section:
-                item = line[2:].strip()
-                if item:
-                    if current_section == "preferences":
-                        preferences.append(item)
-                    elif current_section == "decisions":
-                        decisions.append(item)
-            elif line.startswith("## ") or line.startswith("# "):
-                current_section = None
-
-        return {"preferences": preferences, "decisions": decisions}
+        finally:
+            db.close()
 
     @staticmethod
     def _is_similar(a: str, b: str) -> bool:

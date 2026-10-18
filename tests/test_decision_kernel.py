@@ -720,6 +720,7 @@ class TestDecisionKernelRun:
         resp = kernel.run(DecisionRequest(question="技术部有多少人"))
         assert len(resp.evidence_citations) == 1
         assert resp.evidence_citations[0].citation == "找到实体: 技术部"
+        assert resp.evidence_citations[0].evidence_no == 1, "引用应带证据编号（1-based）"
 
     @patch("decision_engine.decision_kernel.memory_extractor")
     @patch("decision_engine.decision_kernel.inject_memories")
@@ -743,6 +744,7 @@ class TestDecisionKernelRun:
         resp = kernel.run(DecisionRequest(question="有哪些部门"))
         assert len(resp.evidence_citations) == 1
         assert resp.evidence_citations[0].source_type == "search_entities"
+        assert resp.evidence_citations[0].evidence_no == 1, "回退路径也要带证据编号"
 
     @patch("decision_engine.decision_kernel.memory_extractor")
     @patch("decision_engine.decision_kernel.inject_memories")

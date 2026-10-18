@@ -179,26 +179,30 @@ class DecisionKernel:
                     continue
                 matched_source = "unknown"
                 matched_type = "unknown"
-                for ev_item in evidence:
+                matched_no = 0
+                for idx, ev_item in enumerate(evidence, 1):
                     if (ev_ref in ev_item.summary
                             or ev_ref in ev_item.source_name
                             or ev_item.summary in ev_ref):
                         matched_source = ev_item.source_name
                         matched_type = ev_item.source_type
+                        matched_no = idx
                         break
                 evidence_citations.append(EvidenceCitation(
-                    citation=ev_ref,
+                    evidence_no=matched_no,
+                    citation=str(ev_ref),
                     source_type=matched_type,
                     source_id=matched_source,
                 ))
 
-        # 10. 事实性查询：key_issues 为空时，自动从 evidence 生成 citations
+        # 10. 事实性查询：key_issues 为空时，自动从 evidence 生成 citations（带证据编号）
         if not evidence_citations and evidence:
-            for ev_item in evidence:
+            for idx, ev_item in enumerate(evidence, 1):
                 targets = _citation_targets(ev_item.payload or {})
                 if targets:
                     for t in targets:
                         evidence_citations.append(EvidenceCitation(
+                            evidence_no=idx,
                             citation=ev_item.citation,
                             source_type=ev_item.source_type,
                             source_id=ev_item.source_name or t.get("title", ""),
@@ -207,6 +211,7 @@ class DecisionKernel:
                         ))
                 else:
                     evidence_citations.append(EvidenceCitation(
+                        evidence_no=idx,
                         citation=ev_item.citation,
                         source_type=ev_item.source_type,
                         source_id=ev_item.source_name,

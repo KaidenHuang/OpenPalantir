@@ -96,7 +96,8 @@ OpenPalantir/
 │   │   │   ├── seed_retriever.py← 种子检索（jieba + 级联检索）
 │   │   │   ├── tools.py         ← ToolRegistry（Skill+MCP 统一注册）
 │   │   │   └── types.py         ← Observation, SeedResult, AgenticResult
-│   │   ├── retrievers/          ← 检索器（文档/数据库/图谱摘要）│   │   ├── memory/              ← 记忆系统（短期 SQLite + 长期 MEMORY.md）
+│   │   ├── retrievers/          ← 检索器（文档/数据库/图谱摘要）
+│   │   ├── memory/              ← 记忆系统（短期 SQLite + 长期 SQLite）
 │   │   ├── tool_manager/        ← 工具管理层
 │   │   │   ├── skill/           ← 本地 Skill 源（加载+注册）
 │   │   │   ├── mcp/             ← 外部 MCP 工具源（连接+管理）
