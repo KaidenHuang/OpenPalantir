@@ -5,6 +5,8 @@ from pydantic import BaseModel
 
 from system.logger import logger
 from wiki.wiki_service import wiki_service
+from task_management.task_manager import task_manager
+from task_management.handlers import WikiGenerateHandler
 
 router = APIRouter()
 
@@ -92,6 +94,6 @@ def generate(request: GenerateRequest):
         payload["entity_id"] = request.entity_id
     else:
         payload["scope"] = request.scope
-    task_id = task_manager.create_task("wiki_generate", payload)
+    task_id = task_manager.create_task(WikiGenerateHandler.TASK_TYPE, payload)
     logger.info(f"[wiki][api] generate task_id={task_id} payload={payload}")
     return {"task_id": task_id}

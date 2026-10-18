@@ -47,6 +47,7 @@ class DocumentWatcher:
         from document_processing import summary_generator
         from source_management import refresh_service
         from task_management.task_manager import task_manager
+        from task_management.handlers.document_refresh import DocumentRefreshHandler
 
         self._prune(task_manager)
 
@@ -55,7 +56,7 @@ class DocumentWatcher:
             datasource = summary_generator.datasource_for(item["source_id"], item["file_path"])
             if datasource in self._inflight:
                 continue
-            task_id = task_manager.create_task("document_refresh", {
+            task_id = task_manager.create_task(DocumentRefreshHandler.TASK_TYPE, {
                 "source_id": item["source_id"],
                 "file_path": item["file_path"],
                 "domain": "general",

@@ -11,6 +11,11 @@ from .base import TaskHandler
 class SchemaAnalyzeHandler(TaskHandler):
     """执行数据库Schema分析任务（阶段1）"""
 
+    TASK_TYPE = "database_schema_analyze"
+    REQUIRED_KEYS = ("connection_id",)
+    OPTIONAL_DEFAULTS = {"tables": None, "ignore_tables": None,
+                         "database_name": None, "domain": "general"}
+
     def execute(self, task, progress_callback: Callable[[int], None]) -> Dict:
         logger.info(
             f"[SchemaAnalyzeHandler] 入参: task_id={task.task_id}, task_type={task.task_type}"
@@ -25,7 +30,7 @@ class SchemaAnalyzeHandler(TaskHandler):
             tables = task.payload.get("tables")
             ignore_tables = task.payload.get("ignore_tables")
             database_name = task.payload.get("database_name")
-            domain = task.payload.get("domain", "general")
+            domain = self.payload_value(task, "domain")
 
             logger.info(f"开始执行数据库Schema分析任务，连接ID: {connection_id}, 数据库: {database_name}")
 

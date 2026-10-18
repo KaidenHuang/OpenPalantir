@@ -8,6 +8,10 @@ from .base import TaskHandler
 class CdcStartHandler(TaskHandler):
     """启动 CDC 增量同步——任务常驻 running，直到任务管理点「停止」"""
 
+    TASK_TYPE = "database_cdc_start"
+    REQUIRED_KEYS = ("connection_id", "database_name")
+    OPTIONAL_DEFAULTS = {}
+
     def execute(self, task, progress_callback: Callable[[int], None]) -> Dict:
         import time
         from cdc.cdc_manager import cdc_manager
@@ -17,13 +21,12 @@ class CdcStartHandler(TaskHandler):
         connection_id = task.payload.get("connection_id")
         database_name = task.payload.get("database_name")
 
+        self.validate_payload(task.payload)
+
         logger.info(
             f"[CdcStartHandler] 入参: task_id={task.task_id}, "
             f"connection_id={connection_id}, database_name={database_name}"
         )
-
-        if not connection_id or not database_name:
-            raise ValueError("缺少 connection_id 或 database_name")
 
         progress_callback(10)
 

@@ -9,10 +9,15 @@ from .base import TaskHandler
 class DocumentSummaryHandler(TaskHandler):
     """执行文档概要生成任务"""
 
+    TASK_TYPE = "document_generate_summary"
+    REQUIRED_KEYS = ("source_id", "file_path", "full_path")
+    OPTIONAL_DEFAULTS = {}
+
     def execute(self, task, progress_callback: Callable[[int], None]) -> Dict:
         logger.info(f"[DocumentSummaryHandler] 入参: task_id={task.task_id}")
         from document_processing import summary_generator
 
+        self.validate_payload(task.payload)
         source_id = task.payload.get("source_id")
         file_path = task.payload.get("file_path")
         full_path = task.payload.get("full_path")

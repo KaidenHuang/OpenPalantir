@@ -8,13 +8,16 @@ from .base import TaskHandler
 class DocumentRefreshHandler(TaskHandler):
     """文档内容失效传播：重跑摘要 → 回收旧图谱产出 → 重新抽取 → 刷新 Wiki"""
 
+    TASK_TYPE = "document_refresh"
+    REQUIRED_KEYS = ("source_id", "file_path")
+    OPTIONAL_DEFAULTS = {"force": False, "domain": "general", "parallelism": 8}
+
     def execute(self, task, progress_callback: Callable[[int], None]) -> Dict:
         from source_management import refresh_service
 
+        self.validate_payload(task.payload)
         source_id = task.payload.get("source_id")
         file_path = task.payload.get("file_path")
-        if not source_id or not file_path:
-            raise ValueError("缺少必要参数: source_id, file_path")
 
         logger.info(f"[DocumentRefreshHandler] 入参: source_id={source_id}, file={file_path}")
         progress_callback(10)
@@ -22,9 +25,9 @@ class DocumentRefreshHandler(TaskHandler):
         result = refresh_service.refresh_document(
             source_id,
             file_path,
-            force=bool(task.payload.get("force", False)),
-            domain=task.payload.get("domain", "general"),
-            parallelism=int(task.payload.get("parallelism", 8)),
+            force=self.payload_value(task, "force"),
+            domain=self.payload_value(task, "domain"),
+            parallelism=self.payload_value(task, "parallelism"),
         )
 
         progress_callback(100)

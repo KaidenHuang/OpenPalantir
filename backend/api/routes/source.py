@@ -9,6 +9,8 @@ from document_processing import summary_generator
 from models.source import DocumentSource
 from model_management.model_service import ModelService
 from system.logger import logger
+from task_management.task_manager import task_manager
+from task_management.handlers import DocumentRefreshHandler, DocumentSummaryHandler
 router = APIRouter()
 
 
@@ -237,7 +239,7 @@ def summarize_file(source_id: str, data: dict = Body(...), db: Session = Depends
             "file_path": file_path,
             "full_path": full_path,
         }
-        task_id = task_manager.create_task("document_generate_summary", payload)
+        task_id = task_manager.create_task(DocumentSummaryHandler.TASK_TYPE, payload)
 
         logger.info(f"概要生成任务已创建: task_id={task_id}, source_id={source_id}, file={file_path}")
 
@@ -274,7 +276,7 @@ def refresh_file(source_id: str, data: dict = Body(...), db: Session = Depends(g
             "domain": data.get("domain", "general"),
             "parallelism": data.get("parallelism", 8),
         }
-        task_id = task_manager.create_task("document_refresh", payload)
+        task_id = task_manager.create_task(DocumentRefreshHandler.TASK_TYPE, payload)
 
         logger.info(f"文档刷新任务已创建: task_id={task_id}, source_id={source_id}, file={file_path}")
         return {"task_id": task_id, "message": "文档刷新任务已提交"}

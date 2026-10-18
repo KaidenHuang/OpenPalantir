@@ -124,6 +124,12 @@ def _save_junction_batch(relationships, neo4j_conn, db_json_dumps, compute_entit
 class SchemaImportHandler(TaskHandler):
     """执行数据库行级数据导入知识图谱任务（阶段2）— 分批导入"""
 
+    TASK_TYPE = "database_schema_import"
+    REQUIRED_KEYS = ("connection_id",)
+    OPTIONAL_DEFAULTS = {"batch_size": 5000, "row_limit": 0,
+                         "neo4j_batch_size": 20000, "use_merge": False,
+                         "auto_start_cdc": False}
+
     def execute(self, task, progress_callback: Callable[[int], None]) -> Dict:
         logger.info(
             f"[SchemaImportHandler] 入参: task_id={task.task_id}, task_type={task.task_type}"
@@ -135,11 +141,11 @@ class SchemaImportHandler(TaskHandler):
             from config.database import SessionLocal
 
             connection_id = task.payload.get("connection_id")
-            batch_size = task.payload.get("batch_size", 5000)
-            row_limit = task.payload.get("row_limit", 0)
-            neo4j_batch_size = task.payload.get("neo4j_batch_size", 20000)
-            use_merge = task.payload.get("use_merge", False)
-            auto_start_cdc = task.payload.get("auto_start_cdc", False)
+            batch_size = self.payload_value(task, "batch_size")
+            row_limit = self.payload_value(task, "row_limit")
+            neo4j_batch_size = self.payload_value(task, "neo4j_batch_size")
+            use_merge = self.payload_value(task, "use_merge")
+            auto_start_cdc = self.payload_value(task, "auto_start_cdc")
 
             logger.info(
                 f"开始执行数据库行级导入任务，连接ID: {connection_id}, "

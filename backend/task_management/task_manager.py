@@ -10,9 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 from config.database import SessionLocal
 from models.task import Task as TaskRow
-from task_management.handlers import (SchemaAnalyzeHandler, SchemaImportHandler,
-                                       CdcStartHandler, DocumentSummaryHandler,
-                                       DocumentRefreshHandler, WikiGenerateHandler)
+from task_management.handlers import HANDLERS
 from system.logger import logger
 
 class Task:
@@ -59,15 +57,6 @@ _TERMINAL_STATUSES = ("completed", "failed", "stopped")
 
 
 class TaskManager:
-    _handlers = {
-        "database_schema_analyze": SchemaAnalyzeHandler,
-        "database_schema_import": SchemaImportHandler,
-        "database_cdc_start": CdcStartHandler,
-        "document_generate_summary": DocumentSummaryHandler,
-        "document_refresh": DocumentRefreshHandler,
-        "wiki_generate": WikiGenerateHandler,
-    }
-
     def __init__(self, max_concurrent_tasks: int = 5):
         self.tasks: Dict[str, Task] = {}
         self.task_queue: List[str] = []
@@ -81,7 +70,12 @@ class TaskManager:
         self._load_tasks()
 
     def create_task(self, task_type: str, payload: Dict[str, Any]) -> str:
-        """创建新任务"""
+        """创建新任务（payload 契约在入口校验 —— 见 handlers/base.py）"""
+        handler_cls = HANDLERS.get(task_type)
+        if handler_cls is None:
+            raise ValueError(f"Unknown task type: {task_type}")
+        handler_cls.validate_payload(payload)
+
         logger.info(f"[create_task] 入参: task_type={task_type}, payload={payload.get('document_id')}")
         try:
             task_id = str(uuid.uuid4())
@@ -338,8 +332,8 @@ class TaskManager:
                 db.close()
             
             try:
-                # 通过 handler 分发执行
-                handler_class = self._handlers.get(task.task_type)
+                # 通过 handler 契约分发执行（task_type → 类，注册表单一来源）
+                handler_class = HANDLERS.get(task.task_type)
                 if handler_class is None:
                     raise ValueError(f"Unknown task type: {task.task_type}")
 

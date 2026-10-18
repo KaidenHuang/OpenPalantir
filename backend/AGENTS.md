@@ -192,8 +192,8 @@ backend/
 │   —— 详细指南见 cdc/AGENTS.md
 │
 ├── task_management/               # 异步任务管理
-│   ├── task_manager.py            # 任务调度器（_handlers 按 task_type 分发；唯一落库缝）
-│   └── handlers/                  # 任务处理器
+│   ├── task_manager.py            # 任务调度器（HANDLERS 契约注册表分发；唯一落库缝）
+│   └── handlers/                  # 任务处理器（base.py = task_type/payload 显式契约）
 │       ├── base.py                # 处理器基类
 │       ├── document_summary.py    # 文档摘要
 │       ├── document_refresh.py    # 文档失效重跑（摘要→回收→重抽取→Wiki）

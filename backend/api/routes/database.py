@@ -9,6 +9,7 @@ from models.database import DatabaseTable
 from sqlalchemy import func
 from database_management.schema_annotator import schema_annotator
 from task_management.task_manager import task_manager
+from task_management.handlers import SchemaAnalyzeHandler, SchemaImportHandler
 from typing import Dict, List, Optional
 from pydantic import BaseModel
 from system.logger import logger
@@ -210,7 +211,7 @@ def analyze_database(connection_id: str, request: Optional[AnalyzeRequest] = Non
             "database_name": request.database if request else None,
             "domain": (request.domain if request and request.domain else "general"),
         }
-        task_id = task_manager.create_task("database_schema_analyze", payload)
+        task_id = task_manager.create_task(SchemaAnalyzeHandler.TASK_TYPE, payload)
         return {"task_id": task_id, "message": "分析任务已创建"}
     except Exception as e:
         logger.error(f"创建数据库分析任务失败: {e}")
@@ -259,7 +260,7 @@ def import_to_graph(connection_id: str, batch_size: int = 5000, row_limit: int =
     """
     try:
         payload = {"connection_id": connection_id, "batch_size": batch_size, "row_limit": row_limit, "neo4j_batch_size": neo4j_batch_size, "use_merge": use_merge, "auto_start_cdc": auto_start_cdc}
-        task_id = task_manager.create_task("database_schema_import", payload)
+        task_id = task_manager.create_task(SchemaImportHandler.TASK_TYPE, payload)
         return {"task_id": task_id, "message": "导入任务已创建"}
     except Exception as e:
         logger.error(f"创建图谱导入任务失败: {e}")
