@@ -18,11 +18,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import pytest
 
 from summary_generation.document import store as summary_generator
-from wiki import entity_generator, page_generator
-import wiki.wiki_service  # noqa: F401  先执行模块导入
-from wiki.wiki_service import WikiService
-# wiki/__init__ 重导出同名单例，需经 sys.modules 取模块本体做属性 patch
-ws_module = sys.modules["wiki.wiki_service"]
+from wiki_generation.document import generator as page_generator
+from wiki_generation.entity import generator as entity_generator
+import wiki_generation.service  # noqa: F401  先执行模块导入
+from wiki_generation.service import WikiService
+# wiki_generation/__init__ 重导出同名单例，需经 sys.modules 取模块本体做属性 patch
+ws_module = sys.modules["wiki_generation.service"]
 # 确保 wiki_pages / embedding_cache 表注册进 Base.metadata（temp_db 建表用）
 from models.wiki import WikiPage  # noqa: F401
 from models.embedding import EmbeddingCache  # noqa: F401
@@ -238,7 +239,7 @@ class TestWikiServiceCrud:
 class TestAppendReferences:
 
     def test_format(self):
-        from wiki.wiki_service import _append_references
+        from wiki_generation.service import _append_references
         out = _append_references("正文", [
             {"n": 1, "datasource": "DOC://u/x.md", "node_id": "001", "title": "章节"},
             {"n": 2, "datasource": "DOC://u/y.md", "node_id": "", "title": ""},
@@ -248,7 +249,7 @@ class TestAppendReferences:
         assert "[2] " in out
 
     def test_empty_refs_noop(self):
-        from wiki.wiki_service import _append_references
+        from wiki_generation.service import _append_references
         assert _append_references("正文", []) == "正文"
 
 

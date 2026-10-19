@@ -142,7 +142,7 @@ class TestWikiGenerateHandler:
 
         service = MagicMock()
         getattr(service, expected).return_value = []
-        with patch("wiki.wiki_service.wiki_service", service):
+        with patch("wiki_generation.service.wiki_service", service):
             result = WikiGenerateHandler().execute(self._task(payload), lambda p: None)
 
         assert result["status"] == "success"

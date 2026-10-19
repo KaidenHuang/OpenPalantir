@@ -14,7 +14,7 @@ class WikiGenerateHandler(TaskHandler):
     OPTIONAL_DEFAULTS = {"datasource": None, "entity_id": None, "scope": "all"}
 
     def execute(self, task, progress_callback: Callable[[int], None]) -> Dict:
-        from wiki.wiki_service import wiki_service
+        from wiki_generation.service import wiki_service
 
         datasource = self.payload_value(task, "datasource")
         entity_id = self.payload_value(task, "entity_id")

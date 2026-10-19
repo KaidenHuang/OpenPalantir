@@ -21,9 +21,9 @@ from fastapi.testclient import TestClient
 from summary_generation.document import store as summary_generator
 from pipeline import refresh
 from task_management.handlers.document_refresh import DocumentRefreshHandler
-import wiki.wiki_service  # noqa: F401  先执行模块导入
-# wiki/__init__ 重导出同名单例，需经 sys.modules 取模块本体做属性 patch
-ws_module = sys.modules["wiki.wiki_service"]
+import wiki_generation.service  # noqa: F401  先执行模块导入
+# wiki_generation/__init__ 重导出同名单例，需经 sys.modules 取模块本体做属性 patch
+ws_module = sys.modules["wiki_generation.service"]
 
 
 def md5(text: str) -> str:

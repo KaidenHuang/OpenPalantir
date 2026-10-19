@@ -58,7 +58,7 @@ def remove_document(source_id: str, file_path: str) -> Dict[str, Any]:
     recycled = recycle_document(datasource)
     summary_generator.remove(source_id, file_path)
 
-    from wiki.wiki_service import wiki_service
+    from wiki_generation.service import wiki_service
     removed_pages = wiki_service.remove_pages_by_datasource(datasource)
     wiki_service.prune_orphans()
     logger.info(f"[refresh] 文档删除已传播: {datasource}, 页面 {removed_pages}")
@@ -74,7 +74,7 @@ def refresh_document(source_id: str, file_path: str, *, force: bool = False,
     下次成功刷新才摘除旧代），不再是「回收后抽取失败 → 图谱被清空」的丢数据顺序。
     代际佐证（URI@content_hash）保证抽取先写入的新代产出不被随后的回收误伤。
     """
-    from wiki.wiki_service import wiki_service
+    from wiki_generation.service import wiki_service
 
     db = SessionLocal()
     try:

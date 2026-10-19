@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from system.logger import logger
-from wiki.wiki_service import wiki_service
+from wiki_generation.service import wiki_service
 from task_management.task_manager import task_manager
 from task_management.handlers import WikiGenerateHandler
 

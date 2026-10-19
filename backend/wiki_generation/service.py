@@ -17,7 +17,8 @@ from config.database import SessionLocal
 from summary_generation.document import store as summary_generator
 from models.wiki import WikiPage
 from system.logger import logger
-from wiki import entity_generator, page_generator
+from wiki_generation.document import generator as page_generator
+from wiki_generation.entity import generator as entity_generator
 
 
 def _append_references(content: str, refs: List[dict]) -> str:
