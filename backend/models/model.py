@@ -19,10 +19,8 @@ class ModelInfo(Base):
     
     def to_dict(self) -> dict:
         """
-        将模型配置转换为字典格式
-        
-        Returns:
-            dict: 包含模型配置的字典，便于传递给ModelClient
+        将模型配置转换为字典格式（api_key 单向掩码：前端展示/回填用掩码值，
+        掩码原样提交时 Service 层保留既有密钥；内部真实密钥消费方一律读 ORM 属性）
         """
         return {
             'id': self.id,
@@ -32,9 +30,22 @@ class ModelInfo(Base):
             'models': self.models or [],
             'enabled': self.enabled,
             'api_url': self.api_url,
-            'api_key': self.api_key,
+            'api_key': mask_api_key(self.api_key),
             'model_name': self.models[0] if self.models else None
         }
+
+API_KEY_MASK = "****"
+
+
+def mask_api_key(key: str) -> str:
+    """api_key 展示掩码：保留首 4 尾 4，短密钥整串遮盖"""
+    if not key:
+        return ""
+    if API_KEY_MASK in key:
+        return key  # 已经是掩码值
+    if len(key) <= 8:
+        return API_KEY_MASK
+    return f"{key[:4]}{API_KEY_MASK}{key[-4:]}"
 
 # 初始化模型和配置
 def init_models():
