@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Tuple
 import yaml
 
 from .types import LinkType, ObjectType, OntologyError, OntologyPack, PropertyType
+from system.logger import logger
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PACKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "packs")
@@ -228,11 +229,20 @@ class OntologyRegistry:
             if self._loaded:
                 return
             packs: Dict[str, OntologyPack] = {}
+            # 坏包宽容：单个社区包损坏不得拖死全链 —— 跳过并记账；基底包缺失才升级为致命
             for path in self._pack_files():
-                with open(path, "r", encoding="utf-8") as f:
-                    raw = yaml.safe_load(f)
-                pack = parse_pack(raw or {})
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        raw = yaml.safe_load(f)
+                    pack = parse_pack(raw or {})
+                except Exception as e:
+                    logger.error(f"[ontology] 包加载失败，跳过 {os.path.basename(path)}: {e}")
+                    continue
+                if pack.name == BASE_PACK and BASE_PACK in packs:
+                    continue
                 packs[pack.name] = pack
+            if BASE_PACK not in packs:
+                raise OntologyError("基底包 general 缺失，本体注册表无法初始化")
             views = build_views(packs)
             self._packs = packs
             self._views = views

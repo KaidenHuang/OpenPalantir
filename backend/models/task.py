@@ -13,3 +13,4 @@ class Task(Base):
     complete_time = Column(DateTime(timezone=True), nullable=True)
     file_id = Column(String, nullable=True)
     result = Column(String, nullable=True)
+    payload = Column(String, nullable=True)  # JSON 序列化的创建 payload，重启重跑的恢复源

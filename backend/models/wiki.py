@@ -1,5 +1,5 @@
 import json
-from sqlalchemy import Column, String, Text, DateTime
+from sqlalchemy import Column, Index, String, Text, DateTime, text
 from sqlalchemy.sql import func
 from config.database import Base
 
@@ -20,6 +20,16 @@ class WikiPage(Base):
     source_hash = Column(String(32), default="")          # 生成时源摘要文件 MD5（失效检测）
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        # 并发生成防重：同一 (kind, datasource) 只允许一页。
+        # 部分索引——topic/answer 页 datasource 为空串可多行，不入约束。
+        Index(
+            "uq_wiki_pages_kind_datasource", kind, datasource,
+            unique=True,
+            sqlite_where=text("datasource != ''"),
+        ),
+    )
 
     def to_dict(self) -> dict:
         return {

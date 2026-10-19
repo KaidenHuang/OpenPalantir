@@ -369,7 +369,10 @@ class RelationshipRepository:
             written = 0
             for predicate, batch in groups.items():
                 rel_type = cypher_rel_type(predicate)
-                source_set = f", r.source = '{source_tag}'" if source_tag else ""
+                # source_tag 走参数化：虽然当前调用方全传常量， Cypher 模板本身不接受插值注入面
+                source_set = ", r.source = $source_tag" if source_tag else ""
+                extra_params = {"source_tag": source_tag} if source_tag else {}
+                batch_params = {"batch": batch}
                 neo4j_conn.execute_query(
                     f"UNWIND $batch AS item "
                     f"MERGE (s:Entity {{id: item.src_id}}) "
@@ -383,7 +386,7 @@ class RelationshipRepository:
                     f"r.description = item.description, r.attributes = item.attributes, "
                     f"r.confidence = item.confidence "
                     f"SET r.datasources = {union_sources('r', 'item.datasource')}",
-                    {"batch": batch}
+                    {**batch_params, **extra_params}
                 )
                 written += len(batch)
 

@@ -10,6 +10,7 @@ import os
 import uuid as uuid_lib
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from config.database import SessionLocal
@@ -104,6 +105,14 @@ class WikiService:
             page = db.query(WikiPage).filter_by(page_id=page_id).first() \
                 if page_id else None
             if page is None:
+                # 并发防重：同 (kind, datasource) 已存在则覆盖既有页，落数据库唯一索引兜底
+                ds = data.get("datasource", "")
+                if ds:
+                    page = db.query(WikiPage).filter(
+                        WikiPage.kind == data["kind"], WikiPage.datasource == ds).first()
+                    if page:
+                        page_id = page.page_id
+            if page is None:
                 page = WikiPage(page_id=page_id or uuid_lib.uuid4().hex)
                 db.add(page)
             page.title = data["title"][:200]
@@ -115,7 +124,27 @@ class WikiService:
             page.source_hash = data.get("source_hash", "")
             page.content_hash = hashlib.md5(page.content.encode("utf-8")).hexdigest()
             page.links = json.dumps(self._extract_links(db, page), ensure_ascii=False)
-            db.commit()
+            try:
+                db.commit()
+            except IntegrityError:
+                # 理论唯一索引兜底：并发窗口内插入撞唯一索引时回滚后按 (kind, datasource) 复查再改
+                db.rollback()
+                existing = db.query(WikiPage).filter(
+                    WikiPage.kind == data["kind"],
+                    WikiPage.datasource == data.get("datasource", "")).first()
+                if not existing:
+                    raise
+                page = existing
+                page.title = data["title"][:200]
+                page.kind = data["kind"]
+                page.status = data.get("status", "draft")
+                page.content = _append_references(data["content"], data.get("refs", []))
+                page.source_refs = json.dumps(data.get("refs", []), ensure_ascii=False)
+                page.datasource = data.get("datasource", "")
+                page.source_hash = data.get("source_hash", "")
+                page.content_hash = hashlib.md5(page.content.encode("utf-8")).hexdigest()
+                page.links = json.dumps(self._extract_links(db, page), ensure_ascii=False)
+                db.commit()
             db.refresh(page)
             return page.to_dict()
         finally:

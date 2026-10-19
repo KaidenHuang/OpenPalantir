@@ -56,6 +56,20 @@ def _apply_db_row(task: "Task", db_task) -> "Task":
 _TERMINAL_STATUSES = ("completed", "failed", "stopped")
 
 
+def _payload_from_db_row(db_task) -> Dict[str, Any]:
+    """payload 恢复唯一出口：优先持久化 JSON，兜底 file_id 记录的 document_id"""
+    try:
+        if db_task.payload:
+            data = json.loads(db_task.payload)
+            if isinstance(data, dict):
+                return data
+    except (json.JSONDecodeError, TypeError):
+        pass
+    if db_task.file_id:
+        return {"document_id": db_task.file_id}
+    return {}
+
+
 class TaskManager:
     def __init__(self, max_concurrent_tasks: int = 5):
         self.tasks: Dict[str, Task] = {}
@@ -86,7 +100,8 @@ class TaskManager:
             try:
                 # 直接从payload中获取document_id
                 document_id = payload.get("document_id")
-                db.add(TaskRow(id=task_id, type=task_type, status="pending", file_id=document_id))
+                db.add(TaskRow(id=task_id, type=task_type, status="pending",
+                               file_id=document_id, payload=json.dumps(payload, ensure_ascii=False)))
                 db.commit()
             finally:
                 db.close()
@@ -117,13 +132,9 @@ class TaskManager:
             try:
                 db_task = db.query(TaskRow).filter(TaskRow.id == task_id).first()
                 if db_task:
-                    # 创建payload，包含document_id
-                    payload = {}
-                    if db_task.file_id:
-                        payload["document_id"] = db_task.file_id
-
-                    # 创建Task对象
-                    task = _apply_db_row(Task(task_id=db_task.id, task_type=db_task.type, payload=payload), db_task)
+                    task = _apply_db_row(
+                        Task(task_id=db_task.id, task_type=db_task.type, payload=_payload_from_db_row(db_task)),
+                        db_task)
                     
                     # 保存到内存中
                     with self.lock:
@@ -290,19 +301,24 @@ class TaskManager:
     def _process_tasks(self):
         """处理任务队列 —— 锁只保护容器读写；DB 写与等待在锁外（避免 create_task 被周期阻塞）"""
         while True:
-            task_id = None
-            with self.lock:
-                if len(self.running_tasks) < self.max_concurrent_tasks and self.task_queue:
-                    task_id = self.task_queue.pop(0)
-                    self.running_tasks.append(task_id)
-                    task = self.tasks[task_id]
-                    task.status = "running"
-                    task.started_at = datetime.now().isoformat()
-            if task_id:
-                self._update_task_in_db(task_id, "running")
-                threading.Thread(target=self._execute_task, args=(task_id,)).start()
-                time.sleep(0.1)
-            else:
+            try:
+                task_id = None
+                with self.lock:
+                    if len(self.running_tasks) < self.max_concurrent_tasks and self.task_queue:
+                        task_id = self.task_queue.pop(0)
+                        self.running_tasks.append(task_id)
+                        task = self.tasks[task_id]
+                        task.status = "running"
+                        task.started_at = datetime.now().isoformat()
+                if task_id:
+                    self._update_task_in_db(task_id, "running")
+                    threading.Thread(target=self._execute_task, args=(task_id,)).start()
+                    time.sleep(0.1)
+                else:
+                    time.sleep(1)
+            except Exception as e:
+                # 调度线程是进程级单点：任何一轮的意外异常只记账，不允许带死整个循环
+                logger.error(f"[_process_tasks] 调度循环异常（继续运行）: {e}")
                 time.sleep(1)
 
     def _execute_task(self, task_id: str):
@@ -322,11 +338,9 @@ class TaskManager:
                     task = self.tasks.get(task_id)
                     if not task:
                         logger.warning(f"[_execute_task] 内存中未找到任务: task_id={task_id}")
-                        # 如果内存中没有任务，创建一个新的Task对象（payload 含 document_id）
-                        payload = {}
-                        if db_task.file_id:
-                            payload["document_id"] = db_task.file_id
-                        task = _apply_db_row(Task(task_id=db_task.id, task_type=db_task.type, payload=payload), db_task)
+                        task = _apply_db_row(
+                            Task(task_id=db_task.id, task_type=db_task.type, payload=_payload_from_db_row(db_task)),
+                            db_task)
                         self.tasks[task_id] = task
             finally:
                 db.close()
@@ -354,8 +368,10 @@ class TaskManager:
 
                 handler = handler_class()
                 result = handler.execute(task, progress_callback)
+                # 结果登记的唯一来源：handler 返回值即任务结果（handler 内部不再各自写 task.result）
 
                 # 任务完成（若已被 stop_task 置为 stopped，则保持 stopped 不覆盖）
+                task.result = result
                 with self.lock:
                     was_stopped = (task.status == "stopped")
                     if not was_stopped:
@@ -381,7 +397,20 @@ class TaskManager:
                 raise
         except Exception as e:
             logger.error(f"[_execute_task] 异常: {str(e)}")
-            raise
+        finally:
+            # 兜底清槽：任何路径（含任务行缺失早退 / 调度中断）都不允许 Running 槽永久占位
+            needs_db_fail = False
+            with self.lock:
+                if task_id in self.running_tasks:
+                    self.running_tasks.remove(task_id)
+                task = self.tasks.get(task_id)
+                if task and task.status not in _TERMINAL_STATUSES:
+                    task.status = "failed"
+                    task.error = "执行器异常退出（任务行缺失或调度被中断）"
+                    task.completed_at = datetime.now().isoformat()
+                    needs_db_fail = True
+            if needs_db_fail:
+                self._update_task_in_db(task_id, "failed", error=self.tasks[task_id].error)
 
 
     def _update_task_in_db(self, task_id: str, status: str = None,
@@ -437,7 +466,8 @@ class TaskManager:
                 loaded_count = 0
                 for db_task in tasks:
                     if db_task.status in ["pending", "running"]:
-                        task = _apply_db_row(Task(db_task.id, db_task.type, {}), db_task)
+                        task = _apply_db_row(
+                            Task(db_task.id, db_task.type, _payload_from_db_row(db_task)), db_task)
                         self.tasks[task.task_id] = task
                         
                         # 重新加入队列（如果任务未完成）

@@ -73,7 +73,9 @@ def _invalidate_cache(nodes: bool = False, edges: bool = False) -> None:
         graph_performance.clear_cache("graph:nodes:*")
     if edges:
         graph_performance.clear_cache("graph:edges:*")
-
+    if nodes or edges:
+        # 图内容变了，既有分区结果/元图快照一并过期（partition key 也是 graph: 前缀族）
+        graph_performance.clear_cache("graph:partition:*")
 
 class EntityRepository:
     """Neo4j 实体节点 CRUD"""
@@ -711,7 +713,7 @@ class EntityRepository:
     # ── 删除 ──
 
     def delete_entity(self, entity_id: str, defer_cache: bool = False) -> bool:
-        """删除实体及关联关系"""
+        """删除实体及关联关系（无来源保护：管理操作用；CDC 行删除走 delete_entity_scoped）"""
         try:
             query = "MATCH (n:Entity {id: $id}) DETACH DELETE n RETURN count(n) as deleted"
             result = neo4j_conn.execute_query(query, {"id": entity_id})
@@ -721,6 +723,43 @@ class EntityRepository:
         except Exception as e:
             logger.error(f"删除实体失败: {e}")
             return False
+
+    def delete_entity_scoped(self, entity_id: str, datasource_prefix: str,
+                             defer_cache: bool = False) -> bool:
+        """按来源摘除单个实体 —— CDC 行级删除专用（不允许绕过 source_scope 语义）
+
+        先摘本来源对该实体全部邻边的佐证（佐证被清空的边删除），
+        再摘实体佐证：其余来源佐证仍在的实体保留，清空且无剩余边时删除。
+        """
+        try:
+            strip_edges = """
+            MATCH (n:Entity {id: $id})-[r]-()
+            WHERE ANY(d IN coalesce(r.datasources, []) WHERE d STARTS WITH $prefix)
+            SET r.datasources = """ + strip_prefix('r', '$prefix') + """
+            WITH r WHERE size(coalesce(r.datasources, [])) = 0
+            DELETE r
+            """
+            neo4j_conn.execute_query(strip_edges, {"id": entity_id, "prefix": datasource_prefix})
+
+            strip_node = """
+            MATCH (n:Entity {id: $id})
+            OPTIONAL MATCH (n)-[r]-()
+            WITH n, count(r) AS rel_count, """ + strip_prefix('n', '$prefix') + """ AS remaining
+            SET n.datasources = remaining
+            SET n.datasource = coalesce(head(remaining), '')
+            WITH n, rel_count, remaining
+            WHERE size(remaining) = 0 AND rel_count = 0
+            DELETE n
+            RETURN count(n) AS deleted
+            """
+            result = neo4j_conn.execute_query(strip_node, {"id": entity_id, "prefix": datasource_prefix})
+            deleted = bool(result) and result[0].get('deleted', 0) > 0
+            if not defer_cache:
+                _invalidate_cache(nodes=True, edges=True)
+            return deleted
+        except Exception as e:
+            logger.error(f"[delete_entity_scoped] 按来源删除实体失败: {e}")
+            raise
 
     def recycle_datasource(self, datasource_prefix: str,
                            defer_cache: bool = False) -> int:

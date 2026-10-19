@@ -153,7 +153,8 @@ class CDCManager:
             try:
                 # 检查所有相关 Stream 中最旧的消息（用连接级 topic_prefix，避免检查错误的 stream）
                 from cdc.schema_cache import SchemaCache
-                schema = SchemaCache(connection_id, database_name)
+                schema = SchemaCache(connection_id, database_name,
+                                     connector_type=self._resolve_connector_type(connection_id))
                 schema.load()
                 stream_keys = schema.get_stream_keys(self._resolve_topic_prefix(connection_id))
 
