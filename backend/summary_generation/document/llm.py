@@ -63,5 +63,5 @@ def load_prompt(filename: str, fallback: str) -> str:
         with open(path, "r", encoding="utf-8") as f:
             return f.read()
     except FileNotFoundError:
-        logger.warning(f"[content_summarization] prompt 文件缺失，使用兜底模板: {path}")
+        logger.warning(f"[summary_generation] prompt 文件缺失，使用兜底模板: {path}")
         return fallback

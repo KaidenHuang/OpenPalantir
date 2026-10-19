@@ -256,7 +256,7 @@ class TestPromptInjection:
         assert "张三负责平台" in prompt
 
     def test_db_annotate_prompt_aligned_with_ontology(self):
-        from database_management.schema_annotator import SchemaAnnotator
+        from summary_generation.database.annotator import SchemaAnnotator
         from model_management.model_client import ModelConfig
         annotator = SchemaAnnotator(model_config=ModelConfig(), domain="workforce")
         prompt = annotator._build_annotate_prompt({
@@ -272,7 +272,7 @@ class TestPromptInjection:
 
     def test_both_paths_share_one_vocabulary(self):
         from entity_extraction.llm_entity_enhancer import LLMEntityEnhancer
-        from database_management.schema_annotator import SchemaAnnotator
+        from summary_generation.database.annotator import SchemaAnnotator
         from model_management.model_client import ModelConfig
 
         doc = LLMEntityEnhancer()._build_combined_prompt("文本", domain="medical")

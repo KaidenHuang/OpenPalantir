@@ -6,7 +6,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from config.database import get_db
-from document_processing import summary_generator
+from summary_generation.document import store as summary_generator
 from model_management.model_service import ModelService
 from source_registry.document.registry import document_source_registry
 from source_registry.document.scanner import browse_directory

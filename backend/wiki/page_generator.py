@@ -10,7 +10,7 @@ import re
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
-from document_processing import summary_generator
+from summary_generation.document import store as summary_generator
 from system.logger import logger
 
 PROMPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts")

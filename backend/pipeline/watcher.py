@@ -44,7 +44,7 @@ class DocumentWatcher:
 
     def poll_once(self) -> List[Dict[str, str]]:
         """扫描一次并派发刷新任务，返回派发结果（供测试与手动触发复用）"""
-        from document_processing import summary_generator
+        from summary_generation.document import store as summary_generator
         from pipeline.refresh import scan_stale
         from task_management.task_manager import task_manager
         from task_management.handlers.document_refresh import DocumentRefreshHandler

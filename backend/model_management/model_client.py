@@ -244,7 +244,7 @@ class ModelClient:
 
     def call_raw(self, prompt: str, system_prompt: str = "你是一个AI助手。",
                  temperature: float = 0, max_tokens: int = 8192) -> str:
-        """调用模型并返回原始文本（不做 JSON 解析），供 content_summarization 等模块使用。"""
+        """调用模型并返回原始文本（不做 JSON 解析），供 summary_generation 等模块使用。"""
         if self.config.type == "local":
             return self._call_local_model(prompt, "json", temperature, max_tokens)
         elif self.config.type == "opencode":

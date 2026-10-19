@@ -1,4 +1,9 @@
-"""③ 摘要生成 —— 文档/数据库分侧实现，唯一 LLM 环节"""
-from summary_generation.database import store
+"""③ 摘要生成 —— 文档/数据库分侧实现，消费来自阶段②的提取产物
 
-__all__ = ["store"]
+document/  ExtractedDocument → 摘要树（叶子 summary，父 prefix_summary）+ 落盘 store
+database/  Schema 标注（annotator）+ 库表概要组装（build）+ 落盘 store
+"""
+from summary_generation.document import store as document_store
+from summary_generation.database import store as database_store
+
+__all__ = ["document_store", "database_store"]

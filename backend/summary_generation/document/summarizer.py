@@ -59,7 +59,7 @@ async def _summarize_text(text: str, model_config: Dict[str, Any], threshold: in
         summary = (await call_llm_async(model_config, prompt)).strip()
         return summary or text
     except Exception as e:
-        logger.warning(f"[content_summarization] 节点摘要 LLM 调用失败，降级为原文: {e}")
+        logger.warning(f"[summary_generation] 节点摘要 LLM 调用失败，降级为原文: {e}")
         return text
 
 
@@ -93,7 +93,7 @@ async def _generate_doc_description(nodes: List[dict], model_config: Dict[str, A
         )
         return (await call_llm_async(model_config, prompt)).strip()
     except Exception as e:
-        logger.warning(f"[content_summarization] 文档描述生成失败，降级为空描述: {e}")
+        logger.warning(f"[summary_generation] 文档描述生成失败，降级为空描述: {e}")
         return ""
 
 

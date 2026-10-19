@@ -15,7 +15,7 @@ class DocumentSummaryHandler(TaskHandler):
 
     def execute(self, task, progress_callback: Callable[[int], None]) -> Dict:
         logger.info(f"[DocumentSummaryHandler] 入参: task_id={task.task_id}")
-        from document_processing import summary_generator
+        from summary_generation.document import store as summary_generator
 
         self.validate_payload(task.payload)
         source_id = task.payload.get("source_id")

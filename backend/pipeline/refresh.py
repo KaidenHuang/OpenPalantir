@@ -17,7 +17,7 @@ from models.source import DocumentSource
 from system.logger import logger
 
 # 各阶段组件接口（阶段间只依赖组件服务，不越层摸内部实现）
-from document_processing import summary_generator  # 阶段③文档侧 store（后续阶段替换为 summary_generation）
+from summary_generation.document import store as summary_generator
 
 
 def resolve_file(base_path: str, file_path: str) -> str:

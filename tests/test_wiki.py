@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import pytest
 
-from document_processing import summary_generator
+from summary_generation.document import store as summary_generator
 from wiki import entity_generator, page_generator
 import wiki.wiki_service  # noqa: F401  先执行模块导入
 from wiki.wiki_service import WikiService

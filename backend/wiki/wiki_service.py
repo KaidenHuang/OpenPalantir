@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from config.database import SessionLocal
-from document_processing import summary_generator
+from summary_generation.document import store as summary_generator
 from models.wiki import WikiPage
 from system.logger import logger
 from wiki import entity_generator, page_generator

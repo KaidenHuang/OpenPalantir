@@ -18,7 +18,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from document_processing import summary_generator
+from summary_generation.document import store as summary_generator
 from pipeline import refresh
 from task_management.handlers.document_refresh import DocumentRefreshHandler
 import wiki.wiki_service  # noqa: F401  先执行模块导入

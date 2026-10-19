@@ -1,5 +1,5 @@
 """
-摘要生成与存放 —— 内容提取 + LLM 摘要 + 源文件内容指纹
+文档摘要落盘 —— 生成 + 保存 + 指纹 + 来源 URI（阶段③的输出物）
 
 摘要落在 data/summaries/DOC/{source_id}/{文件相对路径}.json，
 JSON 里的 content_hash 是生成当时源文件的 MD5。
@@ -13,7 +13,7 @@ from typing import Tuple
 
 from system.logger import logger
 
-BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SUMMARY_ROOT = os.path.join(BACKEND_DIR, "data", "summaries")
 
 EXTENSIONS = (".pdf", ".md", ".txt", ".docx")
@@ -82,12 +82,12 @@ def stored_content_hash(path: str) -> str:
 
 
 def generate(full_path: str) -> dict:
-    """生成文档摘要：纯解析提取结构 → LLM 节点摘要 → 记录源文件指纹"""
+    """生成文档摘要：阶段②内容提取 → 阶段③ LLM 节点摘要 → 记录源文件指纹"""
     from content_extraction import extract_content
-    from content_summarization import summarize_document
+    from content_extraction.document.converters import supported_extensions
+    from summary_generation.document import summarize_document
 
     ext = os.path.splitext(full_path)[1].lower()
-    from content_extraction.document.converters import supported_extensions
     if ext not in supported_extensions():
         raise ValueError(f"不支持的文件类型: {ext}")
 
