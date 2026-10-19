@@ -12,6 +12,7 @@ from config.database import SessionLocal
 from models.task import Task as TaskRow
 from task_management.handlers import HANDLERS
 from system.logger import logger
+from system.metrics import TASK_DURATION
 
 class Task:
     def __init__(self, task_id: str, task_type: str, payload: Dict[str, Any]):
@@ -324,6 +325,8 @@ class TaskManager:
     def _execute_task(self, task_id: str):
         """执行具体任务"""
         logger.info(f"[_execute_task] 入参: task_id={task_id}")
+        started_at_wall = time.time()
+        task_type_label = "unknown"
         try:
             # 直接从数据库获取任务
             db = SessionLocal()
@@ -342,6 +345,7 @@ class TaskManager:
                             Task(task_id=db_task.id, task_type=db_task.type, payload=_payload_from_db_row(db_task)),
                             db_task)
                         self.tasks[task_id] = task
+                task_type_label = task.task_type or "unknown"
             finally:
                 db.close()
             
@@ -399,6 +403,7 @@ class TaskManager:
             logger.error(f"[_execute_task] 异常: {str(e)}")
         finally:
             # 兜底清槽：任何路径（含任务行缺失早退 / 调度中断）都不允许 Running 槽永久占位
+            final_status = None
             needs_db_fail = False
             with self.lock:
                 if task_id in self.running_tasks:
@@ -409,8 +414,15 @@ class TaskManager:
                     task.error = "执行器异常退出（任务行缺失或调度被中断）"
                     task.completed_at = datetime.now().isoformat()
                     needs_db_fail = True
+                if task:
+                    final_status = task.status
             if needs_db_fail:
                 self._update_task_in_db(task_id, "failed", error=self.tasks[task_id].error)
+            # 任务耗时直方图（完成/失败/停止/兜底统一，CDC 长驻任务除外——它在 stop 时刻自然收到）；
+            # 任务行缺失早退（final_status=None）不算执行耗时
+            if final_status in _TERMINAL_STATUSES and final_status != "stopped":
+                TASK_DURATION.labels(task_type=task_type_label, status=final_status) \
+                    .observe(time.time() - started_at_wall)
 
 
     def _update_task_in_db(self, task_id: str, status: str = None,

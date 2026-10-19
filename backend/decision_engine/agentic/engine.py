@@ -17,6 +17,7 @@ from decision_engine.config import get_config
 from decision_engine.contracts import DecisionAnswer
 from model_management.model_client import get_model_client
 from system.logger import logger
+from system.metrics import DECISION_TURNS
 
 
 # 简单意图关键词映射
@@ -122,6 +123,8 @@ class AgenticEngine:
 
         for turn in range(self.max_turns):
             logger.info(f"[agentic] turn {turn + 1}/{self.max_turns}")
+
+            DECISION_TURNS.labels(domain=domain or "general").inc()
 
             response = self.llm.call_with_tools(
                 messages=messages,

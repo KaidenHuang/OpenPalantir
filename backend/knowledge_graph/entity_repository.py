@@ -12,6 +12,7 @@ from knowledge_graph.source_scope import (
     match_any_prefix, match_either, match_prefix, strip_prefix, union_sources,
 )
 from system.logger import logger
+from system.metrics import GRAPH_WRITES
 from models.ids import compute_entity_id
 
 
@@ -166,6 +167,9 @@ class EntityRepository:
             SET n.datasources = """ + union_sources('n', 'e.datasource') + """
             """
             neo4j_conn.execute_query(query, {"entities": entity_list})
+
+            # 业务指标：实体写入量（op=entities）
+            GRAPH_WRITES.labels(op="entities").inc(len(entity_list))
 
             if not defer_cache:
                 _invalidate_cache(nodes=True)
@@ -383,8 +387,8 @@ class EntityRepository:
                 'id': record['id'],
                 'name': record['name'],
                 'type': record['type'],
-                'count': record.get('count'),
-                'confidence': record.get('confidence'),
+                'count': record.get('count', 1),
+                'confidence': record.get('confidence', 1.0),
                 'byname': record.get('byname'),
             } for record in result]
 
@@ -688,6 +692,9 @@ class EntityRepository:
                 "SET e.attributes = item.attrs",
                 {"batch": update_batch}
             )
+            attributes = len(update_batch)
+            if attributes:
+                GRAPH_WRITES.labels(op="attributes").inc(attributes)
             if not defer_cache:
                 _invalidate_cache(nodes=True, edges=False)
             return len(update_batch)

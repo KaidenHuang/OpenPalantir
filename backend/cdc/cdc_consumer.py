@@ -13,6 +13,7 @@ from cdc.event_processor import EventProcessor
 from config.database import SessionLocal
 from models.cdc import CdcSyncState
 from system.logger import logger
+from system.metrics import CDC_EVENTS
 
 
 class CDCConsumer:
@@ -128,13 +129,15 @@ class CDCConsumer:
             try:
                 event = self._parse_event(data)
                 if event:
-                    self.processor.process_event(event)
+                    result = self.processor.process_event(event)
                     self.events_processed += 1
                     ts_ms = event.get("ts_ms")
                     if ts_ms:
                         self.last_event_ts = ts_ms
+                    CDC_EVENTS.labels(connection=self.connection_id[:8], result=result).inc()
             except Exception as e:
                 logger.error(f"[CDC] 处理事件失败 (msg_id={msg_id}): {e}")
+                CDC_EVENTS.labels(connection=self.connection_id[:8], result="error").inc()
                 # 继续处理下一条，不阻塞整个流
 
             # 每条消息立即 ACK（操作已幂等）

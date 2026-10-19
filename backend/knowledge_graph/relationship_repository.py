@@ -20,6 +20,7 @@ from knowledge_graph.source_scope import match_prefix, strip_prefix, union_sourc
 from utils.json_utils import db_json_dumps
 from ontology.predicates import cypher_rel_type, normalize_predicate, canonical_rel_id
 from system.logger import logger
+from system.metrics import GRAPH_WRITES
 
 
 def _normalize_rel(raw: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
@@ -389,6 +390,7 @@ class RelationshipRepository:
                     {**batch_params, **extra_params}
                 )
                 written += len(batch)
+                GRAPH_WRITES.labels(op="relationships").inc(len(batch))
 
             if not defer_cache:
                 graph_performance.clear_cache("graph:edges:*")
@@ -462,6 +464,8 @@ class RelationshipRepository:
             """
             result = neo4j_conn.execute_query(query, {"id": relationship_id})
             deleted = result[0]['deleted'] if result else 0
+            if deleted:
+                GRAPH_WRITES.labels(op="relationship_deletes").inc(deleted)
             graph_performance.clear_cache("graph:edges:*")
             logger.info(f"[delete_relationship] 删除关系: {relationship_id}, 命中 {deleted} 条")
             return deleted > 0
