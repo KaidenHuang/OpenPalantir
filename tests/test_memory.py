@@ -5,50 +5,55 @@
 """
 
 import os
+import shutil
 import sys
+import tempfile
 import uuid
 from datetime import datetime, timedelta
 
+import importlib
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'backend'))
 
-from decision_engine.memory.memory_manager import MemoryManager
+_mm = importlib.import_module("decision_engine.memory.memory_manager")
+MemoryManager = _mm.MemoryManager
 from models.memory import LongTermMemory
 
 
 class TestMemoryManager:
-    """MemoryManager 单元测试"""
+    """MemoryManager 单元测试
+
+    长期记忆隔离到独立临时 SQLite（monkeypatch SessionLocal 所属模块绑定），
+    不触碰开发库 —— 并行 CI / 多进程跑测试也互不影响。
+    """
 
     @classmethod
     def setup_class(cls):
-        """备份长期记忆表现状，测试覆写后恢复（不污染开发库）；建表幂等"""
-        from config.database import SessionLocal, engine, Base
-        Base.metadata.create_all(engine, tables=[LongTermMemory.__table__])
-        db = SessionLocal()
-        try:
-            cls._backup = [
-                {"category": r.category, "content": r.content,
-                 "created_at": r.created_at}
-                for r in db.query(LongTermMemory).all()
-            ]
-        finally:
-            db.close()
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        import config.database
+        from models.memory import ShortTermMemory
+
+        cls._tmp_dir = tempfile.mkdtemp(prefix="memory_test_")
+        db_path = os.path.join(cls._tmp_dir, "memory_test.db")
+        engine = create_engine(
+            f"sqlite:///{db_path}",
+            connect_args={"check_same_thread": False, "timeout": 30},
+        )
+        config.database.Base.metadata.create_all(
+            engine, tables=[LongTermMemory.__table__, ShortTermMemory.__table__])
+        cls._orig_SessionLocal = _mm.SessionLocal
+        _mm.SessionLocal = sessionmaker(
+            autocommit=False, autoflush=False, bind=engine)
         cls.mm = MemoryManager()
 
     @classmethod
     def teardown_class(cls):
-        backup = getattr(cls, "_backup", [])
-        from config.database import SessionLocal
-        db = SessionLocal()
-        try:
-            db.query(LongTermMemory).delete()
-            db.add_all([
-                LongTermMemory(id=uuid.uuid4().hex[:12], category=b["category"],
-                               content=b["content"], created_at=b["created_at"])
-                for b in backup
-            ])
-            db.commit()
-        finally:
-            db.close()
+        original = getattr(cls, "_orig_SessionLocal", None)
+        if original is not None:
+            _mm.SessionLocal = original
+        shutil.rmtree(getattr(cls, "_tmp_dir", ""), ignore_errors=True)
 
     # ── 短期记忆 ────────────────────────────────────────
 
@@ -109,11 +114,10 @@ class TestMemoryManager:
     def test_clean_expired(self):
         """清理过期记忆"""
         # 手动插入一条已过期的记忆（通过直接操作 ORM 绕过 add_short_term 的 TTL 设置）
-        from config.database import SessionLocal
         from models.memory import ShortTermMemory
         import uuid
 
-        db = SessionLocal()
+        db = _mm.SessionLocal()
         try:
             expired = ShortTermMemory(
                 id=uuid.uuid4().hex[:12],
