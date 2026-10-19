@@ -10,7 +10,7 @@ alwaysApply: true
 
 OpenPalantir 后端是数据分析与知识图谱构建系统的服务端，基于 FastAPI 框架。核心职责包括：
 
-- **文档处理**：解析 PDF/Word/MD/图片，提取文本与结构化内容
+- **文档处理**：解析 PDF/Word/PPT/MD，提取文本与结构化内容
 - **实体关系抽取**：基于 LLM 从文档中提取实体与关系
 - **知识图谱管理**：Neo4j CRUD、分区、索引与性能优化
 - **图谱分析**：路径分析、社区发现、中心性计算、趋势分析
@@ -28,7 +28,7 @@ OpenPalantir 后端是数据分析与知识图谱构建系统的服务端，基�
 | 图数据库 | Neo4j 4.4（`neo4j` Python driver） |
 | 缓存 / 消息 | Redis（RESP2 协议，`protocol=2`） |
 | 任务队列 | 内置线程调度（`task_manager`，早期不需要独立 broker） |
-| 文档处理 | PyPDF2、python-docx、Pillow、markdown、pymupdf4llm（PDF→Markdown 结构提取） |
+| 文档处理 | PyPDF2、python-docx、python-pptx、Pillow、markdown、pymupdf4llm（PDF→Markdown 结构提取） |
 | LLM 调用 | ModelClient（Ollama API 兼容，支持本地/云端模型） |
 | 图计算 | NetworkX、scikit-learn、python-louvain |
 | OCR | pytesseract |
@@ -183,7 +183,7 @@ backend/
 │   ├── document/
 │   │   ├── models.py              # ExtractedDocument / Section 数据契约
 │   │   ├── md_parser.py           # Markdown 章节解析（PDF/MD 共用建树核心）
-│   │   └── converters/            # 格式注册表：pdf/docx/md/txt（新格式在此登记）
+│   │   └── converters/            # 格式注册表：pdf/docx/pptx/md/txt（新格式在此登记）
 │   └── database/
 │       ├── connector.py           # SQLAlchemy 引擎构建（含裸引擎，仅列举库/测连用）
 │       ├── dialects.py            # 各方言 Schema/视图 SQL + SchemaExtractor 编排
@@ -233,7 +233,7 @@ backend/
 │   ├── prompt.py                  # 类型/属性枚举注入 prompt（按 (version, domain) 缓存）
 │   ├── types.py                   # ObjectType / LinkType / PropertyType / OntologyPack
 │   └── packs/                     # 内置包 general/finance/medical/workforce
-│                                   # 社区包在 data/ontology_packs/（同名覆盖内置；可 extends 内置域只写增量）
+│                                   # 社区包在 data/ontology_packs/（域包同名覆盖内置、基底包 general 除外；可 extends 内置域只写增量）
 │
 ├── cdc/                           # CDC 增量同步
 │   ├── cdc_manager.py             # CDC 管理器（生命周期）
@@ -378,7 +378,7 @@ CREATE CONSTRAINT IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE
 - **资源 ID**：URI 统一为 `{TYPE}://{UUID}/{路径}`（`DOC://`、`DBS://`），由 `models/resource_identifier.py` 管理
 - **实体/关系 ID**：`entity_id = MD5(name)`，`relationship_id = MD5({subject}_{predicate}_{object})`，由 `models/ids.py` 生成
 - **单一存储**：实体与关系写入 Neo4j，通过全文索引实现搜索
-- **受控本体**：边类型取自 `ontology/packs/` 的 LinkType 词表；谓词归一化**先于** `relationship_id` 计算，未命中兜底为「其他」并记 `raw_predicate`。域视图 = `general ⊕ extends 链 ⊕ 本包`，社区包可 `extends: workforce` 只写增量（校验相对父视图，故可引用父包类型）。社区包在 `backend/data/ontology_packs/`（同名覆盖内置），导入即校验，`registry.version` 变更即令 prompt 缓存失效
+- **受控本体**：边类型取自 `ontology/packs/` 的 LinkType 词表；谓词归一化**先于** `relationship_id` 计算，未命中兜底为「其他」并记 `raw_predicate`。域视图 = `general ⊕ extends 链 ⊕ 本包`，社区包可 `extends: workforce` 只写增量（校验相对父视图，故可引用父包类型）。社区包在 `backend/data/ontology_packs/`（域包同名覆盖内置，基底包 general 不可覆盖），导入即校验，`registry.version` 变更即令 prompt 缓存失效
 - **两级来源**：节点/边同时带 `datasource`（主来源，展示与检索用，纯 URI）与 `datasources`（全部佐证条目，代际场景为 `URI@content_hash`）；按来源过滤与回收必须走 `knowledge_graph/source_scope.py` 的片段，`recycle_datasource` 只摘本来源佐证、清空才删；`keep_hash`（代际回收）保留本来源新代佐证
 - **内容失效传播**：摘要 JSON 的 `content_hash`（源文件 MD5）是文档指纹；刷新顺序是先生成摘要 → **抽取（新代佐证 `URI@content_hash`）** → 旧代回收（`keep_hash` 保留新代）→ 再刷新 Wiki —— 抽取/落库失败时旧图谱数据完好，成功才摘除旧代
 - **Wiki 页面**：`wiki_pages` 存 Markdown 正文 + `source_refs`（node_id 锚点），kind 为 document/topic/entity/answer；按 `source_hash` 幂等，LLM 不可用降级为确定性拼装

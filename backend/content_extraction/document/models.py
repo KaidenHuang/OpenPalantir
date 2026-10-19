@@ -27,6 +27,6 @@ class Section:
 class ExtractedDocument:
     """统一提取结果：文档级元信息 + 章节 forest"""
     doc_name: str                    # 文件名（不含扩展名）
-    format: str                      # pdf | docx | md | txt
+    format: str                      # pdf | docx | pptx | md | txt
     page_count: Optional[int] = None # 分页文档的页数，其他格式为 None
     sections: List[Section] = field(default_factory=list)

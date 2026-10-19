@@ -68,6 +68,18 @@ def list_sources(include_deleted: bool = False, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@router.get("/sources/formats")
+def list_document_formats():
+    """文档侧可解析的扩展名 —— 取自内容提取注册表，前端与外部脚本据此筛选文件"""
+    try:
+        from content_extraction.document.converters import supported_extensions
+
+        return {"status": "success", "formats": list(supported_extensions())}
+    except Exception as e:
+        logger.error(f"获取支持的文件类型失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 @router.delete("/sources/{source_id}")
 def delete_source(source_id: str, db: Session = Depends(get_db)):
     """删除文档源。无提取数据时直接删除，有数据时标记删除"""

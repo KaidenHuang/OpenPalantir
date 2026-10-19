@@ -18,7 +18,7 @@ LLM Wiki + 受控本体 + 知识图谱 | 把企业文档与数据库变成可编
 - **LLM Wiki**：不是把摘要树换个皮。跨文档同主题的内容由 LLM **聚合改写**成一页，页面是可编辑的一等内容资产，问答的高质量回答可一键**发布为页面**，每处结论带 `node_id` 引用锚点可回跳原文。
 - **受控本体（Ontology）**：实体类型、关系谓词、定义域/值域全部来自可插拔的 YAML 本体包。任意 LLM 输出先归一化到受控 key 再算 ID，`MATCH ()-[r:任职于]->()` 这类查询才成立；内置 general/workforce/finance/medical 四包，社区包用 `extends` 挂在它们之上只写增量。
 - **图谱分析**：路径、社区发现、中心性、趋势，写入与查询共用同一套类型化边。
-- **多源接入与增量运营**：PDF/Word/Markdown/图片（MinerU + OCR）、MySQL/PostgreSQL/SQLite 全量导入，Debezium CDC 管数据库行级变更，内容 hash 管文档变更——改一篇文档，相关摘要节点、图谱实体与 Wiki 页面自动标记失效并重生成。
+- **多源接入与增量运营**：PDF/Word/PPT/Markdown、MySQL/PostgreSQL/SQLite 全量导入，Debezium CDC 管数据库行级变更，内容 hash 管文档变更——改一篇文档，相关摘要节点、图谱实体与 Wiki 页面自动标记失效并重生成。
 
 <p align="center">
   <img src="docs/图谱可视化页面.png" alt="图谱可视化" width="800"/>

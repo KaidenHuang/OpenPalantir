@@ -89,7 +89,7 @@ main.py (FastAPI 应用入口)
   │   ├─ prompt.py                    ← 实体/关系枚举注入 prompt（抽取与标注共用，按注册表版本缓存）
   │   ├─ types.py                     ← ObjectType/LinkType/OntologyPack 数据类
   │   └─ packs/                       ← 内置 YAML 本体包（general/finance/medical/workforce）
-  │                                     社区/自定义包在 data/ontology_packs/（同名覆盖内置）
+  │                                     社区/自定义包在 data/ontology_packs/（域包同名覆盖内置，基底包除外）
   ├─ wiki/                            ← LLM Wiki 内容层
   │   ├─ wiki_service.py              ← 页面 CRUD + 生成编排 + 答案发布（SQLite）
   │   ├─ page_generator.py            ← 文档页 / 跨文档主题页生成
@@ -180,7 +180,7 @@ main.py (FastAPI 应用入口)
 | `ontology/` | 受控本体注册表、谓词归一化与治理 | YAML 本体包、词表校验、prompt 注入、只读聚合治理报告、包导入导出 |
 | `decision_engine/` | 智能决策 | 统一 Agentic RAG（ReAct 循环）、种子检索、双层记忆、Skill+MCP 工具管理 |
 | `source_registry/` | ① 数据源注册与生命周期 | 文档源注册/软删/恢复/目录浏览；连接 CRUD/测连/库列表 |
-| `content_extraction/` | ② 按格式提取结构/正文/页码 + 库表 Schema | pymupdf4llm、python-docx、Markdown 章节解析、SQLAlchemy dialects（无 LLM） |
+| `content_extraction/` | ② 按格式提取结构/正文/页码 + 库表 Schema | pymupdf4llm、python-docx、python-pptx、Markdown 章节解析、SQLAlchemy dialects（无 LLM） |
 | `summary_generation/` | ③ 摘要树生成（叶子 summary / 父 prefix_summary + 页码区间）+ 文档摘要落盘与指纹；库表业务标注与概要 | LLM 节点摘要、内容指纹（DOC:// 来源 URI） |
 | `entity_extraction/` | ④ 实体/关系/属性抽取 | 文档侧 LLM prompt 工程 + JSON 修复；数据库侧行实体/属性表/外键关系 |
 | `wiki_generation/` | ⑤ LLM Wiki 页面生成与编辑（文档页 / 主题页 / 实体页 / 答案沉淀） | 摘要树聚合、实体档案拼装、`source_hash` 幂等 |
@@ -353,9 +353,9 @@ App.tsx (标签导航)
 
 ```
 backend/ontology/packs/*.yaml     ← 内置包（general 为基底，其余域包在其上扩展）
-backend/data/ontology_packs/*.yaml ← 社区/自定义包（运行时数据，同名覆盖内置）
+backend/data/ontology_packs/*.yaml ← 社区/自定义包（运行时数据，域包同名覆盖内置；基底包 general 只认内置目录）
         │
-        ▼  OntologyRegistry._pack_files()：同名以用户包为准，加载即 build_views()
+        ▼  OntologyRegistry._pack_files()：域包同名以用户包为准、基底包剔除，加载即 build_views()
    域视图 = general ⊕ extends 链 ⊕ 本包（同 key 覆盖，新 key 追加）
         │
         ▼

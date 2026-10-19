@@ -80,6 +80,16 @@ def check_model(base_url: str) -> None:
     print(f"    使用模型: {usable[0].get('name')} ({usable[0].get('model_name')})")
 
 
+def fetch_document_formats(base_url: str) -> tuple:
+    """可解析的扩展名以内容提取注册表为准，不在脚本里重复一份清单"""
+    resp = http_call(base_url, "GET", "/api/sources/formats")
+    formats = tuple(ext.lower() for ext in resp.get("formats", []))
+    if not formats:
+        raise DemoError("GET /api/sources/formats 未返回可用扩展名")
+    print(f"    后端支持的文件类型: {', '.join(formats)}")
+    return formats
+
+
 def import_pack(base_url: str, pack_path: Path, persist: bool) -> None:
     if not pack_path.is_file():
         raise DemoError(f"本体包不存在: {pack_path}")
@@ -200,11 +210,6 @@ def main() -> int:
     docs_dir = docs_dir.resolve()
     if not docs_dir.is_dir():
         raise DemoError(f"文档目录不存在: {docs_dir}")
-    files = sorted(p.name for p in docs_dir.iterdir()
-                   if p.is_file() and p.suffix.lower() in (".md", ".txt", ".pdf", ".docx"))
-    if not files:
-        raise DemoError(f"{docs_dir} 下没有可解析的文档")
-
     pack_path = Path(args.pack).resolve() if args.pack else \
         REPO_ROOT / "examples" / "ontology" / "rd_efficiency.yaml"
     total = 6 + (1 if not args.no_pack else 0)
@@ -214,6 +219,12 @@ def main() -> int:
     step(index, total, "检查后端与模型")
     check_backend(args.base_url)
     check_model(args.base_url)
+
+    formats = fetch_document_formats(args.base_url)
+    files = sorted(p.name for p in docs_dir.iterdir()
+                   if p.is_file() and p.suffix.lower() in formats)
+    if not files:
+        raise DemoError(f"{docs_dir} 下没有可解析的文档（后端支持 {'、'.join(formats)}）")
 
     if not args.no_pack:
         index += 1

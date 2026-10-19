@@ -19,15 +19,14 @@ from content_extraction.document.md_parser import parse_markdown_sections, singl
 def test_supported_extensions():
     from content_extraction.document.converters import supported_extensions
     exts = supported_extensions()
-    for ext in (".pdf", ".docx", ".md", ".txt"):
+    for ext in (".pdf", ".docx", ".pptx", ".md", ".txt"):
         assert ext in exts
         assert get_converter(ext) is not None
 
 def test_unsupported_extension():
-    converter = get_converter(".pptx")
-    assert converter is None
+    assert get_converter(".ppt") is None
     with pytest.raises(ValueError):
-        extract_content("不存在路径.pptx")
+        extract_content("不存在路径.ppt")
 
 
 # ── Markdown 章节解析 ───────────────────────────────────────
@@ -138,6 +137,227 @@ def test_docx_empty_raises(tmp_path):
     Document().save(str(p))
     with pytest.raises(ValueError):
         extract_content(str(p))
+
+
+# ── PPTX ───────────────────────────────────────────────────
+
+
+def _make_pptx(tmp_path, name: str = "sample.pptx") -> str:
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    prs = Presentation()
+
+    content = prs.slides.add_slide(prs.slide_layouts[1])
+    content.shapes.title.text = "季度营收回顾"
+    body = content.placeholders[1].text_frame
+    body.text = "总体增长"
+    bullet = body.add_paragraph()
+    bullet.text = "华东区同比增长 18%"
+    bullet.level = 1
+
+    title_only = prs.slides.add_slide(prs.slide_layouts[5])
+    title_only.shapes.title.text = "结语"
+
+    blank = prs.slides.add_slide(prs.slide_layouts[6])
+    table = blank.shapes.add_table(2, 2, Inches(1), Inches(2), Inches(6), Inches(1)).table
+    table.cell(0, 0).text = "姓名"
+    table.cell(0, 1).text = "部门"
+    table.cell(1, 0).text = "张三"
+    table.cell(1, 1).text = "研发"
+
+    with_notes = prs.slides.add_slide(prs.slide_layouts[5])
+    with_notes.shapes.title.text = "交付计划"
+    with_notes.notes_slide.notes_text_frame.text = "李四负责交付。"
+
+    path = tmp_path / name
+    prs.save(str(path))
+    return str(path)
+
+
+def test_pptx_converter(tmp_path):
+    ex = extract_content(_make_pptx(tmp_path))
+    assert ex.format == "pptx"
+    assert ex.page_count == 4
+    # 无标题占位符的表格页退化为「第 N 页」
+    assert [s.title for s in ex.sections] == ["季度营收回顾", "结语", "第 3 页", "交付计划"]
+    assert [(s.page_start, s.page_end) for s in ex.sections] == [(1, 1), (2, 2), (3, 3), (4, 4)]
+
+    first = ex.sections[0]
+    assert "总体增长" in first.text
+    assert "  - 华东区同比增长 18%" in first.text
+    # 纯标题页正文回填标题，否则该章节在摘要树与抽取批次中都会消失
+    assert ex.sections[1].text == "结语"
+    assert "| 姓名 | 部门 |" in ex.sections[2].text
+    assert "（备注）李四负责交付。" in ex.sections[3].text
+
+
+def test_pptx_uppercase_extension(tmp_path):
+    """真实文件常见全大写扩展名（.PPTX），注册表按小写查找"""
+    ex = extract_content(_make_pptx(tmp_path, name="SAMPLE.PPTX"))
+    assert ex.format == "pptx"
+
+
+def test_pptx_title_from_first_line(tmp_path):
+    """企业模板常把标题画成普通文本框：无标题占位符时取第一行文本作章节标题"""
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    for offset, content in enumerate(["数据可用性战略", "围绕数据的有用性管理展开"], start=1):
+        box = slide.shapes.add_textbox(Inches(1), Inches(offset), Inches(6), Inches(1))
+        box.text_frame.text = content
+    path = tmp_path / "template.pptx"
+    prs.save(str(path))
+
+    ex = extract_content(str(path))
+    assert ex.sections[0].title == "数据可用性战略"
+    assert "数据可用性战略" not in ex.sections[0].text
+    assert "围绕数据的有用性管理展开" in ex.sections[0].text
+
+
+def test_pptx_table_only_slide_keeps_page_fallback(tmp_path):
+    """表格行不能当标题，仍退化为页码"""
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    table = slide.shapes.add_table(1, 1, Inches(1), Inches(1), Inches(3), Inches(1)).table
+    table.cell(0, 0).text = "仅表格"
+    path = tmp_path / "table_only.pptx"
+    prs.save(str(path))
+
+    ex = extract_content(str(path))
+    assert ex.sections[0].title == "第 1 页"
+    assert "| 仅表格 |" in ex.sections[0].text
+
+
+def test_pptx_group_shape_text(tmp_path):
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    group = slide.shapes.add_group_shape()
+    box = group.shapes.add_textbox(Inches(1), Inches(1), Inches(3), Inches(1))
+    box.text_frame.text = "组合图形内的文本"
+    path = tmp_path / "group.pptx"
+    prs.save(str(path))
+
+    ex = extract_content(str(path))
+    assert "组合图形内的文本" in ex.sections[0].text
+
+
+def test_pptx_empty_raises(tmp_path):
+    from pptx import Presentation
+
+    path = tmp_path / "empty.pptx"
+    Presentation().save(str(path))
+    with pytest.raises(ValueError):
+        extract_content(str(path))
+
+
+def test_pptx_corrupt_file_raises_value_error(tmp_path):
+    """损坏文件与旧版 .ppt 二进制都会被 python-pptx 拒为 PackageNotFoundError，须转成 ValueError"""
+    path = tmp_path / "broken.pptx"
+    path.write_bytes(b"not an office open xml package")
+    with pytest.raises(ValueError):
+        extract_content(str(path))
+
+
+def test_pptx_chart_text(tmp_path):
+    """图表文字进正文：类别 × 系列表格，数值原样输出不做单位推断"""
+    from pptx import Presentation
+    from pptx.chart.data import CategoryChartData
+    from pptx.enum.chart import XL_CHART_TYPE
+    from pptx.util import Inches
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    data = CategoryChartData()
+    data.categories = ["第一季度", "第二季度"]
+    data.add_series("销售额", (0.48, 0.25))
+    slide.shapes.add_chart(XL_CHART_TYPE.BAR_CLUSTERED,
+                           Inches(1), Inches(1), Inches(5), Inches(4), data)
+    path = tmp_path / "chart.pptx"
+    prs.save(str(path))
+
+    text = extract_content(str(path)).sections[0].text
+    assert "【图表】" in text
+    assert "| 类别 | 销售额 |" in text
+    assert "| 第一季度 | 0.48 |" in text
+
+
+def test_pptx_scatter_chart_without_categories(tmp_path):
+    """XY/散点图没有类别轴，退化为「系列名: 数值」行而不是空表"""
+    from pptx import Presentation
+    from pptx.chart.data import XyChartData
+    from pptx.enum.chart import XL_CHART_TYPE
+    from pptx.util import Inches
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    data = XyChartData()
+    series = data.add_series("性能点位")
+    series.add_data_point(1.1, 2.2)
+    series.add_data_point(1.5, 2.8)
+    slide.shapes.add_chart(XL_CHART_TYPE.XY_SCATTER,
+                           Inches(1), Inches(1), Inches(5), Inches(4), data)
+    path = tmp_path / "scatter.pptx"
+    prs.save(str(path))
+
+    text = extract_content(str(path)).sections[0].text
+    assert "| 类别 |" not in text
+    assert "性能点位: 2.2, 2.8" in text
+
+
+def test_pptx_chart_block_not_used_as_title(tmp_path):
+    """表格/图表块不能当章节标题，仍退化为页码"""
+    from pptx import Presentation
+    from pptx.chart.data import CategoryChartData
+    from pptx.enum.chart import XL_CHART_TYPE
+    from pptx.util import Inches
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    data = CategoryChartData()
+    data.categories = ["Q1"]
+    data.add_series("S", (1,))
+    slide.shapes.add_chart(XL_CHART_TYPE.PIE, Inches(1), Inches(1), Inches(5), Inches(4), data)
+    path = tmp_path / "chart_only.pptx"
+    prs.save(str(path))
+
+    assert extract_content(str(path)).sections[0].title == "第 1 页"
+
+
+DIAGRAM_SAMPLE = r"E:\产品资料\产品资料\AnyBackup\AnyBackup Family 7 安可市场产品规划V2.pptx"
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not os.path.isfile(DIAGRAM_SAMPLE), reason="本地含 SmartArt 的样例胶片不存在")
+def test_pptx_smartart_text():
+    """SmartArt 图示的文字在 /ppt/diagrams/dataN.xml 里，不在形状文本框中"""
+    ex = extract_content(DIAGRAM_SAMPLE)
+    blocks = [s.text for s in ex.sections if "【图示】" in s.text]
+    assert blocks, "图示文本未提取"
+    assert any("AnyBackup Family 7" in text for text in blocks)
+
+
+def test_formats_endpoint_exposes_registry():
+    """GET /api/sources/formats 是注册表的对外出口，前端与 demo 脚本据此筛选文件"""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from api.routes.source import router
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api")
+    resp = TestClient(app).get("/api/sources/formats")
+
+    assert resp.status_code == 200
+    assert resp.json()["formats"] == list(supported_extensions())
 
 
 # ── PDF（需要样例文件，找不到则跳过）──────────────────────

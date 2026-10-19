@@ -1,12 +1,14 @@
-"""格式转换器注册表 —— 新格式（图片/PPT/音频/视频）在此注册自己的提取函数"""
+"""格式转换器注册表 —— 新格式（图片/音频/视频）在此注册自己的提取函数"""
 from .docx_converter import extract_docx
 from .pdf_converter import extract_pdf
 from .plain_converter import extract_md, extract_txt
+from .pptx_converter import extract_pptx
 
 
 _CONVERTERS = {
     ".pdf": extract_pdf,
     ".docx": extract_docx,
+    ".pptx": extract_pptx,
     ".md": extract_md,
     ".txt": extract_txt,
 }

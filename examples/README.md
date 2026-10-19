@@ -48,6 +48,6 @@ python scripts/demo/run_demo.py --help
 
 ## 换成自己的文档
 
-把 `--docs` 指向任何本地目录即可（支持 `.md/.txt/.pdf/.docx`，PDF/Word 需要 MinerU 或对应解析依赖，见 [INSTALL.md](../INSTALL.md)）。文档主题与本体域越贴近，`fallback_ratio` 越低——这正是 `GET /api/ontology/report` 里 `alias_candidates` 要回答的问题：哪些原始谓词高频掉进兜底，该补进哪个 LinkType 的 `aliases`。
+把 `--docs` 指向任何本地目录即可（支持 `.md/.txt/.pdf/.docx/.pptx`，PDF/Word 需要 MinerU 或对应解析依赖，见 [INSTALL.md](../INSTALL.md)）。文档主题与本体域越贴近，`fallback_ratio` 越低——这正是 `GET /api/ontology/report` 里 `alias_candidates` 要回答的问题：哪些原始谓词高频掉进兜底，该补进哪个 LinkType 的 `aliases`。
 
 写自己的领域包见 [docs/ontology-guide.md](../docs/ontology-guide.md) 第 6 节。

@@ -16,7 +16,6 @@ from system.logger import logger
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SUMMARY_ROOT = os.path.join(BACKEND_DIR, "data", "summaries")
 
-EXTENSIONS = (".pdf", ".md", ".txt", ".docx")
 DOC_SCHEME = "DOC://"
 
 
@@ -46,7 +45,10 @@ def datasource_from_summary_path(path: str) -> str:
 
 
 def is_supported(path: str) -> bool:
-    return os.path.splitext(path)[1].lower() in EXTENSIONS
+    """能否提取该文件 —— 扩展名以 content_extraction 的转换器注册表为唯一事实源"""
+    from content_extraction.document.converters import supported_extensions
+
+    return os.path.splitext(path)[1].lower() in supported_extensions()
 
 
 def file_content_hash(path: str) -> str:
@@ -82,14 +84,12 @@ def stored_content_hash(path: str) -> str:
 
 
 def generate(full_path: str) -> dict:
-    """生成文档摘要：阶段②内容提取 → 阶段③ LLM 节点摘要 → 记录源文件指纹"""
-    from content_extraction import extract_content
-    from content_extraction.document.converters import supported_extensions
-    from summary_generation.document import summarize_document
+    """生成文档摘要：阶段②内容提取 → 阶段③ LLM 节点摘要 → 记录源文件指纹
 
-    ext = os.path.splitext(full_path)[1].lower()
-    if ext not in supported_extensions():
-        raise ValueError(f"不支持的文件类型: {ext}")
+    文件类型是否支持由 extract_content 判定（不支持时抛 ValueError）。
+    """
+    from content_extraction import extract_content
+    from summary_generation.document import summarize_document
 
     # 指纹先行：先取 hash 再做耗时的摘要生成。若生成期间源文件被改，
     # 落盘的是新摘要+旧指纹 → 下轮刷新判 stale 重跑（安全的误报方向）；

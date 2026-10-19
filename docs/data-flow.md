@@ -29,6 +29,7 @@
   │ 先纯解析提取结构（content_extraction，无 LLM）：                  │
   │  ├─ .pdf  → pymupdf4llm 按页转 Markdown（页码锚点）              │
   │  ├─ .docx → python-docx 标题样式 → 章节层级                      │
+  │  ├─ .pptx → python-pptx 每页幻灯片一节（幻灯片序号=页码）          │
   │  ├─ .md   → Markdown 章节解析（与 PDF 共用 md_parser）           │
   │  └─ .txt  → 单章节兜底                                          │
   │ 再由 summary_generation/document 做 LLM 摘要（唯一的 LLM 环节）： │

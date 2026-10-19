@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-OpenPalantir 是基于 AI 的数据分析与知识图谱构建系统：支持文档（PDF/Word/MD/图片）与数据库（MySQL/PostgreSQL/SQLite）数据源，通过规则引擎和 LLM 构建摘要、提取实体与关系存入 Neo4j，提供图谱分析（路径/社区/中心性/趋势）与问答型智能决策。UI 为中文。
+OpenPalantir 是基于 AI 的数据分析与知识图谱构建系统：支持文档（PDF/Word/PPT/MD）与数据库（MySQL/PostgreSQL/SQLite）数据源，通过规则引擎和 LLM 构建摘要、提取实体与关系存入 Neo4j，提供图谱分析（路径/社区/中心性/趋势）与问答型智能决策。UI 为中文。
 
 **早期开发阶段**——**不要实现数据迁移脚本或向后兼容处理**。Schema 变更直接删除 `backend/data/sqlite/database.db` 重启即可；进程锁 DB 时执行 `taskkill /F /IM python.exe` 后重启。后端报错先查 `./logs/backend.log`。
 
@@ -81,7 +81,7 @@ OpenPalantir 是基于 AI 的数据分析与知识图谱构建系统：支持文
 - **Wiki 页面**：`wiki_pages` 表存 Markdown 正文 + `source_refs` 引用锚点，kind 为 document/topic/entity/answer；实体页 datasource 为 `ENT://{entity_id}/{name}`；生成按 `source_hash` 幂等跳过，LLM 不可用降级为确定性拼装。
 - **来源归属**：实体节点与关系边都带两级来源——`datasource`（主来源，展示与检索用）与 `datasources`（全部佐证来源）。按来源过滤/回收必须走 `knowledge_graph/source_scope.py` 的 Cypher 片段（以 `datasources` 判定），否则重跑一个来源会连带删掉其他来源的佐证。来源 URI 出口：文档 `DOC://{source_id}/{文件相对路径}`、实体页 `ENT://{entity_id}/{name}`、数据库 `DBS://{conn}/{db}[/{table}]`。
 - **内容失效传播**：摘要 JSON 内的 `content_hash`（源文件 MD5）是文档指纹，`pipeline/refresh.py` 据此判定 changed/removed/未变更；刷新顺序是**先生成摘要 → 抽取（代际佐证 `URI@content_hash`）→ 旧代回收（`keep_hash` 保留新代，`recycle_datasource` 只摘本来源佐证，清空才删）→ Wiki**，抽取/落库失败时旧图谱数据完好。文档级监听 `pipeline/watcher.py` 轮询派发 `document_refresh` 任务，与只管数据库的 CDC 对称。**详见 `docs/data-flow.md`。**
-- **本体治理与社区包**：内置包在 `ontology/packs/`，社区/自定义包在 `backend/data/ontology_packs/`（同名以后者为准，运行时数据、不入库）；导入即走与内置包相同的校验链（`validate_pack`），导出 YAML 可原样回读。注册表 `version` 每次包注册/reload 自增，`ontology/prompt.py` 以 `(version, domain)` 为缓存键——社区包导入后新词表立刻进 prompt，无需重启。治理查询只读聚合，统一入口 `ontology/governance.py`（兜底占比、词表外谓词、定义域值域违规、游离/占位实体、无来源产出、别名候选），经 `/api/ontology/report` 暴露。
+- **本体治理与社区包**：内置包在 `ontology/packs/`，社区/自定义包在 `backend/data/ontology_packs/`（域包同名以后者为准、**基底包 `general` 只认内置目录**，运行时数据、不入库）；导入即走与内置包相同的校验链（`validate_pack`），导出 YAML 可原样回读。注册表 `version` 每次包注册/reload 自增，`ontology/prompt.py` 以 `(version, domain)` 为缓存键——社区包导入后新词表立刻进 prompt，无需重启。治理查询只读聚合，统一入口 `ontology/governance.py`（兜底占比、词表外谓词、定义域值域违规、游离/占位实体、无来源产出、别名候选），经 `/api/ontology/report` 暴露。
 - **配置来源**：`backend/.env`（后端）、`frontend/src/config/apiConfig.ts`（前端 API 端点）。
 - **MCP 工具**：通过 `config/mcp_servers.json` 配置外部 MCP Server，工具自动纳入 AgenticEngine ReAct 循环。
 - **CDC 增量同步**：基于 Debezium Server + Redis Streams。`snapshot.mode=no_data`（首次只做 schema 快照建 history + 记位点，不重放历史，避免 OOM），**位点由 Debezium 自管、Python 不写 `offsets.dat`**；全量导入捕获的位点只存 `CdcSyncState` 作参考；实体 ID 与全量导入一致（确保更新命中同一节点）；启动前断流检测（`check_stream_continuity()`）；`auto_start_cdc` 全量导入后自动启动。clear 旧位点必须夹在 stop/start 之间，否则运行中的 Debezium 会周期 flush 写回。**配置与启动顺序见 `docs/cdc-setup.md`，数据流转见 `docs/data-flow.md`，模块设计见 `backend/cdc/AGENTS.md`。**

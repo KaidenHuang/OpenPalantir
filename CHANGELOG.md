@@ -24,6 +24,8 @@ LLM Wiki + 受控本体演进路线的三个里程碑（M1 Wiki 与检索、M2 �
 - **本体 API**：域列表、包导入导出（YAML 回读等价）、reload，导入即让 prompt 缓存失效，无需重启
 - **内容失效传播**：摘要 JSON 记录源文件 `content_hash`，变更即标记受影响摘要/实体/Wiki 页为 stale 并重跑「摘要 → 图谱回收 → 重抽取 → Wiki 刷新」；`pipeline/watcher.py` 可选轮询监听
 - **示例与一键 demo**：`examples/docs`（三篇同主题文档）+ `examples/ontology/rd_efficiency.yaml` + `scripts/demo/run_demo.py`
+- **PPT 内容提取**（`content_extraction/document/converters/pptx_converter.py`）：`.pptx` 经 python-pptx 提取，每页幻灯片一个章节、幻灯片序号作为页码锚点；标题占位符缺失时（企业模板把标题画成文本框）退化为页面第一行文本，表格、组合图形、图表（类别×系列）与 SmartArt 图示文字（读 `diagrams/dataN.xml` 的 `dgm:pt`）都进正文，演讲者备注并入同页章节，旧版 `.ppt` 二进制明确拒绝
+- **`GET /api/sources/formats`**：对外暴露可解析的文档扩展名（取自转换器注册表），`scripts/demo/run_demo.py` 改用该接口取代脚本内硬编码清单
 
 ### 变更
 

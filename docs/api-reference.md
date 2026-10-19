@@ -403,6 +403,10 @@ Prometheus 格式的监控指标。
 ### `GET /api/sources`
 获取所有文档源列表。
 
+### `GET /api/sources/formats`
+文档侧可解析的扩展名，取自内容提取（`content_extraction/document/converters`）注册表：
+`{"status": "success", "formats": [".docx", ".md", ".pdf", ".pptx", ".txt"]}`。前端文件树与外部脚本据此筛选，不再各自维护一份清单。
+
 ### `GET /api/sources/{source_id}`
 获取文档源详情。
 
