@@ -35,14 +35,22 @@ def _render(domain: str) -> Dict[str, str]:
             line += f"（{'; '.join(hints)}）"
         link_lines.append(line)
 
+    # 属性词表：来自各 ObjectType 声明的 properties（key 限定在实体类型内）
+    prop_lines = []
+    for o in ontology_registry.object_types(domain):
+        for p in o.properties:
+            desc = p.description or p.data_type
+            prop_lines.append(f"- {o.key}.{p.key}: {desc}")
+
     return {
         "entity_types": "\n".join(obj_lines),
         "link_types": "\n".join(link_lines),
+        "property_types": "\n".join(prop_lines) or "（无预声明属性）",
     }
 
 
 def prompt_sections(domain: str = "general") -> Dict[str, str]:
-    """返回 {'entity_types': ..., 'link_types': ...} 提示词片段（按注册表版本 + 域缓存）"""
+    """返回 {'entity_types', 'link_types', 'property_types'} 提示词片段（按注册表版本 + 域缓存）"""
     domain = domain or "general"
     key = (ontology_registry.version, domain)
     cached = _cache.get(key)

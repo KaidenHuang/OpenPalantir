@@ -20,8 +20,8 @@ class SchemaAnalyzeHandler(TaskHandler):
         )
         try:
             from config.database import SessionLocal
+            from content_extraction.database.store import schema_store
             from content_extraction.database.schema_reader import extract_schema_for_connection
-            from database_management.database_service import db_service
             from source_registry.database.registry import database_source_registry
             from summary_generation.database import store
             from summary_generation.database.build import build_db_summary_file
@@ -49,7 +49,7 @@ class SchemaAnalyzeHandler(TaskHandler):
             logger.info("步骤2: 使用LLM进行业务标注")
             db = SessionLocal()
             try:
-                from database_management.schema_annotator import SchemaAnnotator
+                from summary_generation.database.annotator import SchemaAnnotator
                 annotator = SchemaAnnotator(db_session=db, domain=domain)
                 annotated_schema = annotator.batch_annotate(schema)
             finally:
@@ -67,19 +67,19 @@ class SchemaAnalyzeHandler(TaskHandler):
             analyzed_db_name = None
             sess = SessionLocal()
             try:
-                db_service.save_schema(sess, connection_id, annotated_schema)
+                schema_store.save_schema(sess, connection_id, annotated_schema)
 
                 conn = database_source_registry.get(sess, connection_id)
                 analyzed_db_name = database_name or (conn.database if conn else None)
                 if analyzed_db_name:
-                    db_service.save_analyzed_database(sess, connection_id, analyzed_db_name)
+                    schema_store.save_analyzed_database(sess, connection_id, analyzed_db_name)
                     logger.info(f"已分析数据库已记录: {analyzed_db_name}")
 
                 table_list = [
                     {k.lower(): v for k, v in t.items()}
                     for t in annotated_schema.get("tables", [])
                 ]
-                db_service.save_analyzed_tables(sess, connection_id, analyzed_db_name, table_list)
+                schema_store.save_analyzed_tables(sess, connection_id, analyzed_db_name, table_list)
                 logger.info(f"已为 {len(table_list)} 个表创建 AnalyzedTable 记录")
             finally:
                 sess.close()

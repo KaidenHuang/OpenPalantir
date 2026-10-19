@@ -37,7 +37,7 @@ class LLMEntityEnhancer:
     def _load_template(cls, filename: str, fallback: str) -> str:
         """从磁盘加载 prompt 模板并缓存"""
         if filename not in cls._prompt_template_cache:
-            path = os.path.join(os.path.dirname(__file__), filename)
+            path = os.path.join(os.path.dirname(__file__), "prompts", filename)
             try:
                 with open(path, 'r', encoding='utf-8') as f:
                     cls._prompt_template_cache[filename] = f.read()
@@ -208,6 +208,7 @@ class LLMEntityEnhancer:
         return (template
                 .replace('{entity_types}', sections['entity_types'])
                 .replace('{link_types}', sections['link_types'])
+                .replace('{property_types}', sections.get('property_types', '（无预声明属性）'))
                 .replace('{text}', text))
     
     def _extract_combined_with_chunking(self, text: str, max_chunk_length: int = 50000,

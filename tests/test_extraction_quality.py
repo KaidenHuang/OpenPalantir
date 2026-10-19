@@ -88,7 +88,7 @@ def enhancer():
     if not config:
         pytest.skip("模型管理中没有可用模型，跳过抽取质量评测")
 
-    from entity_extraction.llm_entity_enhancer import LLMEntityEnhancer
+    from entity_extraction.document.extractor import LLMEntityEnhancer
 
     instance = LLMEntityEnhancer(model_config=config)
     probe = instance.model_client.call_json(

@@ -1,7 +1,7 @@
 """
 谓词归一化 + Cypher 关系类型安全插值 — 图谱写路径共用
 
-所有关系写入点（relationship_repository / data_store / cdc / schema_import）
+所有关系写入点（relationship_repository / entity_data_store / cdc / schema_import）
 必须先经 normalize_predicate 归一为受控 LinkType key，再计算 relationship_id，
 保证 relationship_id = MD5(subject_受控谓词_object) 全链一致。
 """

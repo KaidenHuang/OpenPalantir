@@ -242,15 +242,19 @@ class TestPromptInjection:
         assert "person 的子类型" in sections["entity_types"]
         assert "- 任职于: " in sections["link_types"]
         assert "- 包含: " in sections["link_types"]
+        # 属性词表：无声明时回落提示语，保证 prompt 占位符永远可替换
+        assert "property_types" in sections
+        assert sections["property_types"]
 
     def test_sections_are_cached(self):
         assert ontology_prompt.prompt_sections("general") is \
                ontology_prompt.prompt_sections("general")
 
     def test_document_extraction_prompt_aligned_with_ontology(self):
-        from entity_extraction.llm_entity_enhancer import LLMEntityEnhancer
+        from entity_extraction.document.extractor import LLMEntityEnhancer
         prompt = LLMEntityEnhancer()._build_combined_prompt("张三负责平台", domain="workforce")
         assert "{entity_types}" not in prompt and "{link_types}" not in prompt
+        assert "{property_types}" not in prompt
         assert "- 任职于: " in prompt
         assert "- person: " in prompt
         assert "张三负责平台" in prompt
@@ -271,7 +275,7 @@ class TestPromptInjection:
         assert "- 任职于: " in prompt and "- employee: " in prompt
 
     def test_both_paths_share_one_vocabulary(self):
-        from entity_extraction.llm_entity_enhancer import LLMEntityEnhancer
+        from entity_extraction.document.extractor import LLMEntityEnhancer
         from summary_generation.database.annotator import SchemaAnnotator
         from model_management.model_client import ModelConfig
 

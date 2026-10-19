@@ -1,4 +1,4 @@
-﻿"""
+"""
 Wiki 模块单元测试
 
 测试 page_generator（文档页/主题页）、entity_generator（实体页）、WikiService（CRUD、发布、互链）。

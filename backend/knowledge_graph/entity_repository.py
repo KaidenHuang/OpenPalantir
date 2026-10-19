@@ -112,7 +112,11 @@ class EntityRepository:
             ON CREATE SET e.created_at = datetime(), e.datasource = $datasource
             SET e.name = $name, e.type = $type, e.count = $count,
                 e.confidence = $confidence, e.byname = $byname,
-                e.description = $description, e.attributes = $attributes
+                e.description = $description
+            SET e.attributes = CASE
+                WHEN $attributes IS NULL OR $attributes = '{}'
+                THEN coalesce(e.attributes, '{}')
+                ELSE $attributes END
             SET e.datasources = """ + union_sources('e', '$evidence') + """
             RETURN e.id as id, e.name as name
             """
@@ -130,7 +134,7 @@ class EntityRepository:
     def add_entities(self, entities: List[Dict[str, Any]], defer_cache: bool = False) -> Dict[str, Any]:
         """批量添加实体（UNWIND + MERGE，按 id 幂等）。
 
-        ids 与入参实体一一对应（含空列表）；词表外类型过滤不属于 repo 职责（在 data_store 进料缝拦截）。
+        ids 与入参实体一一对应（含空列表）；词表外类型过滤不属于 repo 职责（在 entity_data_store 进料缝拦截）。
         """
         try:
             logger.info(f"[add_entities] 开始批量添加实体，数量: {len(entities)}")
@@ -166,7 +170,11 @@ class EntityRepository:
             ON CREATE SET n.created_at = datetime(), n.datasource = e.datasource
             SET n.name = e.name, n.type = e.type, n.count = e.count,
                 n.confidence = e.confidence, n.byname = e.byname,
-                n.description = e.description, n.attributes = e.attributes
+                n.description = e.description
+            SET n.attributes = CASE
+                WHEN e.attributes IS NULL OR e.attributes = '{}'
+                THEN coalesce(n.attributes, '{}')
+                ELSE e.attributes END
             SET n.datasources = """ + union_sources('n', 'e.evidence') + """
             """
             neo4j_conn.execute_query(query, {"entities": entity_list})

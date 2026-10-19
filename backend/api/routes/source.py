@@ -239,10 +239,10 @@ def extract_from_summary(source_id: str, data: dict = Body(...), db: Session = D
         if not model_config:
             raise HTTPException(status_code=503, detail="没有可用的模型，请先在模型管理中启用一个模型")
 
-        from source_management.source_service import SourceService
+        from entity_extraction.document.service import DocumentExtractionService
 
         datasource = summary_generator.datasource_for(source_id, file_path)
-        service = SourceService(model_config)
+        service = DocumentExtractionService(model_config)
         result = service.extract_from_summary(
             summary_path=summary_abs_path,
             datasource=datasource,

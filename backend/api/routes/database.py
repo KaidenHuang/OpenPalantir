@@ -1,6 +1,6 @@
 """数据库源路由 —— HTTP 薄壳
 
-注册/生命周期在 source_registry，Schema 读取在 database_management（阶段②提取结果），
+注册/生命周期在 source_registry，Schema 读取在 content_extraction（阶段②提取结果），
 概要读取在 summary_generation。
 """
 from typing import Dict, List, Optional
@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from config.database import get_db
-from database_management.database_service import db_service
+from content_extraction.database.store import schema_store
 from source_registry.database import registry as db_registry
 from system.logger import logger
 from task_management.handlers import SchemaAnalyzeHandler, SchemaImportHandler
@@ -82,7 +82,7 @@ def list_databases(connection_id: str, db: Session = Depends(get_db)):
     try:
         reg = db_registry.database_source_registry
         live_databases = reg.list_databases(db, connection_id)
-        analyzed_records = db_service.get_analyzed_databases(db, connection_id)
+        analyzed_records = schema_store.get_analyzed_databases(db, connection_id)
         analyzed_dicts = [r.to_dict() for r in analyzed_records]
         merged = reg.merge_databases_with_status(live_databases, analyzed_dicts)
         return {"databases": merged}
@@ -222,8 +222,8 @@ def analyze_database(connection_id: str, request: Optional[AnalyzeRequest] = Non
 def get_analysis_result(connection_id: str, db: Session = Depends(get_db)):
     """获取数据库分析结果（未分析时返回空结构）"""
     try:
-        schema = db_service.get_schema(db, connection_id)
-        analyzed = db_service.get_analyzed_databases(db, connection_id)
+        schema = schema_store.get_schema(db, connection_id)
+        analyzed = schema_store.get_analyzed_databases(db, connection_id)
         schema["analyzed_databases"] = [ad.database_name for ad in analyzed if ad.status == "extracted"]
         return schema
     except Exception as e:

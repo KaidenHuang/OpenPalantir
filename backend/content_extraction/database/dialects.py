@@ -1,24 +1,12 @@
 """数据库方言与 Schema 提取（阶段②数据库侧提取核心）
 
-连接 CRUD 已归 source_registry/database/registry.py，引擎构建已归
-content_extraction/database/connector.py；行级批量读取阶段归 entity_extraction/database。
+连接 CRUD 归 source_registry/database/registry.py，引擎构建归
+content_extraction/database/connector.py，行级批量读取归 entity_extraction/database/row_reader.py。
 """
-import re
 from typing import Dict, List, Optional
 
-from sqlalchemy import select, table, column, text
-from sqlalchemy import inspect as sa_inspect
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import text
 from system.logger import logger
-
-_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
-
-
-def safe_identifier(name: str) -> str:
-    """literal_column 没有参数化能力：凡是会插进 SQL 的标识符（列/主键）必须过字符白名单。"""
-    if not _IDENTIFIER_RE.fullmatch(str(name)):
-        raise SQLAlchemyError(f"非法标识符: {name!r}")
-    return str(name)
 
 
 class DatabaseDialect:
@@ -61,113 +49,6 @@ class DatabaseDialect:
         except Exception as e:
             logger.error(f"{type(self).__name__} 查询执行失败: {e}")
             return []
-
-    def get_primary_key_columns(self, connection, table_name: str) -> List[str]:
-        """使用SQLAlchemy inspect检测主键列，跨方言兼容"""
-        try:
-            inspector = sa_inspect(connection)
-            pk_constraint = inspector.get_pk_constraint(table_name)
-            return pk_constraint.get("constrained_columns", [])
-        except SQLAlchemyError as e:
-            logger.warning(f"检测表 {table_name} 的主键时出错: {e}")
-            return []
-
-    def fetch_table_rows_batched(self, connection, table_name: str, columns: List[str],
-                                 batch_size: int = 5000, max_rows: int = 0,
-                                 order_keys: Optional[List[str]] = None):
-        """生成器：分批获取表行数据（基于 LIMIT/OFFSET），每批 yield List[Dict]
-        :param max_rows: 最大返回行数（0=不限制）
-        :param order_keys: 稳定排序列（给定页数据才可复现，无主键回退时必传，否则并发写入会丢行/重复行）
-        大表请使用 fetch_table_rows_keyset() 以避免 OFFSET 性能退化。
-        """
-        try:
-            from sqlalchemy import literal_column
-            order_cols = [safe_identifier(c) for c in (order_keys or [])]
-            t = table(table_name, *[column(c) for c in columns])
-            offset = 0
-            total_yielded = 0
-            while True:
-                if max_rows > 0 and total_yielded >= max_rows:
-                    break
-                limit = min(batch_size, max_rows - total_yielded) if max_rows > 0 else batch_size
-                stmt = select(t).limit(limit).offset(offset)
-                if order_cols:
-                    stmt = stmt.order_by(*[literal_column(c) for c in order_cols])
-                result = connection.execute(stmt)
-                db_columns = result.keys()
-                rows = result.fetchall()
-                if not rows:
-                    break
-                batch = [dict(zip(db_columns, row)) for row in rows]
-                yield batch
-                total_yielded += len(batch)
-                offset += len(batch)
-        except SQLAlchemyError as e:
-            logger.error(f"分批查询表 {table_name} 的行数据时出错: {e}")
-            return
-
-    def fetch_table_rows_keyset(self, connection, table_name: str, columns: List[str],
-                                pk_columns: List[str], batch_size: int = 5000, max_rows: int = 0):
-        """生成器：基于主键游标分页，每页仅 O(1)，避免大偏移量性能退化
-        使用 WHERE pk > ? ORDER BY pk LIMIT n，首次查询无 WHERE。
-        :param pk_columns: 主键列名列表（单个或多个）
-        :param max_rows: 最大返回行数（0=不限制）
-        """
-        if not pk_columns:
-            logger.warning(f"表 {table_name} 无主键，回退 LIMIT/OFFSET 分页")
-            yield from self.fetch_table_rows_batched(
-                connection, table_name, columns, batch_size, max_rows, order_keys=columns)
-            return
-
-        try:
-            from sqlalchemy import literal_column
-            t = table(table_name, *[column(c) for c in columns])
-            pk_cols_sa = [literal_column(safe_identifier(c)) for c in pk_columns]
-            total_yielded = 0
-            last_values = None  # List of pk values from the last row of previous batch
-
-            while True:
-                if max_rows > 0 and total_yielded >= max_rows:
-                    break
-                limit = min(batch_size, max_rows - total_yielded) if max_rows > 0 else batch_size
-
-                stmt = select(t).limit(limit).order_by(*pk_cols_sa)
-                if last_values is not None:
-                    if len(pk_columns) == 1:
-                        stmt = stmt.where(literal_column(safe_identifier(pk_columns[0])) > last_values[0])
-                    else:
-                        # Composite key: (pk1 > v1) OR (pk1 = v1 AND pk2 > v2) OR ...
-                        from sqlalchemy import or_, and_
-                        clauses = []
-                        for i in range(len(pk_columns)):
-                            eq_clauses = [literal_column(safe_identifier(pk_columns[j])) == last_values[j] for j in range(i)]
-                            gt_clause = literal_column(safe_identifier(pk_columns[i])) > last_values[i]
-                            if eq_clauses:
-                                clauses.append(and_(*eq_clauses, gt_clause))
-                            else:
-                                clauses.append(gt_clause)
-                        stmt = stmt.where(or_(*clauses))
-
-                result = connection.execute(stmt)
-                db_columns = list(result.keys())
-                rows = result.fetchall()
-                if not rows:
-                    break
-
-                batch = [dict(zip(db_columns, row)) for row in rows]
-                yield batch
-                total_yielded += len(batch)
-
-                # 更新游标：取最后一条记录的各主键值
-                last_row = rows[-1]
-                col_index = {name: idx for idx, name in enumerate(db_columns)}
-                last_values = [last_row[col_index[pk]] for pk in pk_columns]
-
-        except Exception as e:
-            logger.error(f"游标分页查询表 {table_name} 时出错: {e}，回退 LIMIT/OFFSET")
-            yield from self.fetch_table_rows_batched(
-                connection, table_name, columns, batch_size, max_rows, order_keys=pk_columns)
-
 
 class MySQLDialect(DatabaseDialect):
     """MySQL方言"""

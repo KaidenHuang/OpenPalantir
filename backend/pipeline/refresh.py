@@ -177,7 +177,7 @@ def _source_base_path(source_id: str, quiet: bool = False) -> str:
 def _extract(summary_path: str, datasource: str, domain: str,
              parallelism: int, evidence_hash: str = None) -> Dict[str, Any]:
     """按可用模型重新抽取实体关系（evidence_hash → 佐证代际标记）"""
-    from source_management.source_service import SourceService
+    from entity_extraction.document.service import DocumentExtractionService
 
     db = SessionLocal()
     try:
@@ -187,7 +187,7 @@ def _extract(summary_path: str, datasource: str, domain: str,
     if not model_config:
         raise RuntimeError("没有可用的模型，无法重新抽取实体关系")
 
-    service = SourceService(model_config)
+    service = DocumentExtractionService(model_config)
     result = service.extract_from_summary(
         summary_path=summary_path, datasource=datasource,
         parallelism=parallelism, domain=domain, evidence_hash=evidence_hash,

@@ -1,7 +1,7 @@
 import time
 from typing import Callable, Dict, List, Tuple
 
-from database_management.import_helpers import (
+from entity_extraction.database.importer import (
     _DEFAULT_ENTITY_TYPE,
     _MAX_CROSS_PRODUCT_PAIRS,
     build_entities_batch,
@@ -34,9 +34,11 @@ class SchemaImportHandler(TaskHandler):
             f"[SchemaImportHandler] 入参: task_id={task.task_id}, task_type={task.task_type}"
         )
         try:
-            from database_management.database_manager import DIALECT_MAP
-            from utils.data_store import EntityDataStore
+            from content_extraction.database.dialects import DIALECT_MAP
+            from knowledge_graph.entity_data_store import EntityDataStore
             from config.database import SessionLocal
+
+            from entity_extraction.database.row_reader import read_rows_keyset
 
             connection_id = task.payload.get("connection_id")
             batch_size = self.payload_value(task, "batch_size")
@@ -58,16 +60,16 @@ class SchemaImportHandler(TaskHandler):
             logger.info("步骤1: 从本地数据库获取Schema和连接信息")
             db = SessionLocal()
             try:
-                from database_management.database_service import db_service
+                from content_extraction.database.store import schema_store
                 from source_registry.database.registry import (
                     database_source_registry,
                     dict_from_connection,
                 )
 
-                schema = db_service.get_schema(db, connection_id)
+                schema = schema_store.get_schema(db, connection_id)
                 conn = database_source_registry.get(db, connection_id)
                 conn_config = dict_from_connection(conn) if conn else None
-                analyzed_dbs = db_service.get_analyzed_databases(db, connection_id)
+                analyzed_dbs = schema_store.get_analyzed_databases(db, connection_id)
                 analyzed_db_names = [ad.database_name for ad in analyzed_dbs]
             finally:
                 db.close()
@@ -129,7 +131,7 @@ class SchemaImportHandler(TaskHandler):
             conn = engine.connect()
 
             refine_pks_via_dialect(
-                pk_columns, columns_by_table, dialect, conn,
+                pk_columns, columns_by_table, conn,
                 [t["table_name"] for t in schema["tables"]],
             )
 
@@ -196,7 +198,7 @@ class SchemaImportHandler(TaskHandler):
                     total_rows_for_table = 0
                     entity_buffer: List[Dict] = []
 
-                    for batch in dialect.fetch_table_rows_keyset(
+                    for batch in read_rows_keyset(
                         conn, full_table_name, col_names, table_pks, batch_size, max_rows=row_limit
                     ):
                         batch_count += 1
@@ -288,7 +290,7 @@ class SchemaImportHandler(TaskHandler):
                         record_count = 0
                         total_rows_for_table = 0
 
-                        for batch in dialect.fetch_table_rows_keyset(
+                        for batch in read_rows_keyset(
                             conn, attr_table, col_names, table_pks, batch_size, max_rows=row_limit
                         ):
                             total_rows_for_table += len(batch)
@@ -348,7 +350,7 @@ class SchemaImportHandler(TaskHandler):
                         total_rows_for_table = 0
                         total_rels = 0
 
-                        for batch in dialect.fetch_table_rows_keyset(
+                        for batch in read_rows_keyset(
                             conn, jt_name, col_names, table_pks, batch_size, max_rows=row_limit
                         ):
                             total_rows_for_table += len(batch)

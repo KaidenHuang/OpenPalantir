@@ -39,13 +39,15 @@ def detect_primary_keys(columns_by_table: Dict[str, List[Dict]]) -> Dict[str, Li
 
 
 def refine_pks_via_dialect(pk_columns: Dict[str, List[str]], columns_by_table: Dict[str, List[Dict]],
-                            dialect, connection, table_names: List[str]):
-    """对于使用代理键的表，通过数据库 dialect 检测真实主键"""
+                            connection, table_names: List[str]):
+    """对于使用代理键的表，通过数据库 inspect 检测真实主键"""
+    from entity_extraction.database.row_reader import get_primary_key_columns
+
     for full_name in table_names:
         if len(pk_columns.get(full_name, [])) != 1:
             continue
         try:
-            real_pks = dialect.get_primary_key_columns(connection, full_name)
+            real_pks = get_primary_key_columns(connection, full_name)
             if real_pks:
                 pk_columns[full_name] = real_pks
                 logger.info(f"表 {full_name} 通过 dialect 检测到主键: {real_pks}")

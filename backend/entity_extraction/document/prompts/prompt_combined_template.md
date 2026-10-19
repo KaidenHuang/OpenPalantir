@@ -7,6 +7,10 @@
 关系 `p` 必须从以下类型中选择（选最贴切的一个，禁止自造词）：
 {link_types}
 
+## 实体属性词表
+实体 `a` 优先使用下列已声明属性键；无预声明属性的实体按第 4 条自行归纳：
+{property_types}
+
 ## 输出JSON格式
 最外层用entities和relationships作为key:
 ```json

@@ -1,23 +1,22 @@
-"""数据库 Schema 分析结果的 SQLite 持久化（阶段②提取结果 / 阶段③标注产物）
+"""② 内容提取（数据库侧）—— Schema 分析产物的 SQLite 持久化
 
-连接配置的 CRUD 已归 source_registry/database/registry.py；
-本模块只管分析产物的存取：Schema（表/字段/外键/推断关系）与已分析库记录。
+连接配置的 CRUD 归 source_registry/database/registry.py；
+提取结果（表/字段/外键/推断关系）与「已分析库」记录在这里落库，
+供阶段④行级导入与前端结果展示读取。
 """
-import json
-import os
 import uuid
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from models.database import (DB_STATUS_EXTRACTED, AnalyzedDatabase, DatabaseColumn,
-                             DatabaseConnection, DatabaseForeignKey,
-                             DatabaseTable, InferredRelationship)
+from models.database import (DB_STATUS_EXTRACTED, AnalyzedDatabase, AnalyzedTable,
+                             DatabaseColumn, DatabaseForeignKey, DatabaseTable,
+                             InferredRelationship)
 from system.logger import logger
 
 
-class SchemaRepository:
+class SchemaStore:
     """Schema 分析产物仓储（save/get/删除 + 已分析库记录）"""
 
     def save_schema(self, db: Session, connection_id: str, schema: Dict) -> bool:
@@ -207,4 +206,4 @@ class SchemaRepository:
             ))
 
 
-db_service = SchemaRepository()
+schema_store = SchemaStore()

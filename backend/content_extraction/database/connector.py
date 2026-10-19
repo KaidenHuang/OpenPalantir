@@ -1,4 +1,4 @@
-"""数据库连接执行器 —— SQLAlchemy 引擎构建（自 database_manager 抽出的可复用缝）
+"""数据库连接执行器 —— SQLAlchemy 引擎构建（自原 DatabaseManager 抽出的可复用缝）
 
 只负责「按连接配置造 engine」，不做任何业务判定；
 extract_schema 的编排在 schema_reader，行级读取在 entity_extraction.database。
