@@ -151,8 +151,12 @@ class ModelService:
             
             # 更新允许修改的字段
             updatable_fields = ['name', 'type', 'status', 'models', 'enabled', 'api_url', 'api_key']
+            from models.model import API_KEY_MASK
             for key, value in model_data.items():
                 if key in updatable_fields:
+                    if key == 'api_key' and isinstance(value, str) and API_KEY_MASK in value:
+                        # 前端原样回传的掩码值不落库：保留既有密钥
+                        value = db_model.api_key or ''
                     setattr(db_model, key, value)
             
             db_model.update_time = datetime.now()
@@ -365,6 +369,11 @@ class ModelService:
         model_info = ModelService.get_model(db, model_id)
         if not model_info:
             raise ValueError("模型不存在")
+
+        from models.model import API_KEY_MASK
+        if not api_key or API_KEY_MASK in api_key:
+            # 掩码回显 / 空密钥 → 用库里的真实密钥测试
+            api_key = model_info.api_key or ''
 
         test_config = {
             "type": model_info.type,
