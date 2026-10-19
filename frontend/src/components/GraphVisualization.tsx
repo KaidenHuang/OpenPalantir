@@ -4,6 +4,7 @@ import { SearchOutlined } from '@ant-design/icons';
 import ForceGraph3D from 'react-force-graph-3d';
 import { useNavigate } from 'react-router-dom';
 import { useGraphStore } from '../stores/graphStore';
+import { useOntologyLabels } from '../stores/ontologyStore';
 import { useAbortController } from '../hooks/useAbortController';
 import type { GraphNode } from '../stores/types';
 
@@ -29,6 +30,8 @@ const GraphVisualization: React.FC = () => {
     fetchGraphData, setSelectedEntityTypes, setMinEdgeCount, setSelectedNode,
     expandNeighbors,
   } = useGraphStore();
+
+  const { labelType, labelPredicate } = useOntologyLabels();
 
   const { getLatestSignal } = useAbortController();
   const navigate = useNavigate();
@@ -141,7 +144,7 @@ const GraphVisualization: React.FC = () => {
               {Object.entries(availableTypes).sort(([a], [b]) => {
                 if (a === 'other') return 1;
                 if (b === 'other') return -1;
-                return a.localeCompare(b);
+                return labelType(a).localeCompare(labelType(b));
               }).map(([type, count]) => (
                 <label key={type} className="filter-checkbox" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                   <input type="checkbox" checked={selectedEntityTypes.includes(type)}
@@ -149,8 +152,9 @@ const GraphVisualization: React.FC = () => {
                       const next = e.target.checked ? [...selectedEntityTypes, type] : selectedEntityTypes.filter(t => t !== type);
                       setSelectedEntityTypes(next);
                     }} />
-                  <span className="filter-label" style={{ color: entityTypeColors[type] || '#95A5A6', fontSize: '13px' }}>
-                    {type} ({count})
+                  <span className="filter-label" title={type}
+                    style={{ color: entityTypeColors[type] || '#95A5A6', fontSize: '13px' }}>
+                    {labelType(type)} ({count})
                   </span>
                 </label>
               ))}
@@ -188,7 +192,7 @@ const GraphVisualization: React.FC = () => {
           nodeLabel={(node: Record<string, unknown>) => {
             const nid = String(node.id || '');
             const degree = nodeDegreeMap.get(nid) || 0;
-            return `<b>${node.name}</b><br/>类型: ${node.type}<br/>连接数: ${degree}`;
+            return `<b>${node.name}</b><br/>类型: ${labelType(String(node.type))}<br/>连接数: ${degree}`;
           }}
           nodeVal={(node: Record<string, unknown>) => {
             const nid = String(node.id || '');
@@ -212,7 +216,7 @@ const GraphVisualization: React.FC = () => {
           linkLabel={(link: Record<string, unknown>) => {
             const count = link._count as number | undefined;
             const countStr = count && count > 1 ? `<br/>合并: ${count} 条` : '';
-            return `关系类型: ${link.type as string}<br/>置信度: ${(link.confidence as number).toFixed(2)}<br/>时间: ${link.occurrence_time as string || '-'}${link.description ? '<br/>描述: ' + (link.description as string) : ''}${countStr}`;
+            return `关系类型: ${labelPredicate(link.type as string)}<br/>置信度: ${(link.confidence as number).toFixed(2)}<br/>时间: ${link.occurrence_time as string || '-'}${link.description ? '<br/>描述: ' + (link.description as string) : ''}${countStr}`;
           }}
           linkDirectionalArrowLength={3.5}
           linkDirectionalArrowRelPos={0.8}
@@ -233,7 +237,7 @@ const GraphVisualization: React.FC = () => {
           <div style={{ marginBottom: '15px', paddingBottom: '15px', borderBottom: '1px solid #eee' }}>
             <p style={{ margin: '5px 0', fontSize: '14px' }}><strong>名称:</strong> {selectedNode.name}</p>
             <p style={{ margin: '5px 0', fontSize: '14px' }}><strong>类型:</strong>
-              <span style={{ color: entityTypeColors[selectedNode.type] }}> {selectedNode.type}</span>
+              <span style={{ color: entityTypeColors[selectedNode.type] }} title={selectedNode.type}> {labelType(selectedNode.type)}</span>
             </p>
             <p style={{ margin: '5px 0', fontSize: '14px' }}><strong>出现次数:</strong> {selectedNode.count}</p>
           </div>
@@ -288,11 +292,11 @@ const GraphVisualization: React.FC = () => {
                     <div key={index} style={{ marginBottom: '10px', padding: '10px', backgroundColor: '#f9f9f9', borderRadius: '4px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                         <span style={{ fontWeight: 'bold', fontSize: '14px' }}>{selectedNode.name}</span>
-                        <span style={{ color: '#999', fontSize: '12px' }}>-{link.type}-&gt;</span>
+                        <span style={{ color: '#999', fontSize: '12px' }} title={link.type}>-{labelPredicate(link.type)}-&gt;</span>
                         <span style={{ fontWeight: 'bold', fontSize: '14px', color: entityTypeColors[link.targetType] || '#95A5A6' }}>{link.targetName}</span>
                       </div>
                       <div style={{ fontSize: '12px', color: '#666', marginLeft: '5px' }}>
-                        <div style={{ marginBottom: '3px' }}>关系类型: {link.type}</div>
+                        <div style={{ marginBottom: '3px' }}>关系类型: {labelPredicate(link.type)}</div>
                         <div style={{ marginBottom: '3px' }}>置信度: {link.confidence.toFixed(2)}</div>
                         <div style={{ marginBottom: '3px' }}>时间: {link.occurrence_time || '-'}</div>
                         {link.description && <div style={{ fontStyle: 'italic', color: '#555' }}>描述: {link.description}</div>}

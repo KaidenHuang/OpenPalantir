@@ -13,6 +13,7 @@
 #            -H 'Content-Type: application/json' -d @-
 
 name: rd_efficiency
+display_name: 研发效能
 description: 研发效能领域本体（示例包，与 examples/docs 的样例文档配套）
 extends: workforce
 

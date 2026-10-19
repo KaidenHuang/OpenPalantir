@@ -670,7 +670,10 @@ Prometheus 格式的监控指标。
 所有接口前缀：`/api/ontology`。本体包是 YAML 文本，`domain` 参数即包名。
 
 ### `GET /domains`
-列出全部域包及规模：`{name, description, object_type_count, link_type_count}`。
+列出全部域包及规模：`{name, display_name, description, object_type_count, link_type_count}`。`name` 是标识（`domain` 参数取值），`display_name` 是包里的中文名，未写时等于 `name`。
+
+### `GET /vocabulary`
+界面翻译用的词表并集：`{object_types: [{key, display_name}], link_types: [...], domains: [{name, display_name}]}`，覆盖全部域视图。同一 key 在多个域出现时以基底包 `general` 的显示名为准，避免同一类型在不同域读成两个名字。前端据此把 `person` 显示成「人物」，存储与查询仍用 key。
 
 ### `GET /packs/{domain}`
 导出该域包 YAML（`{"domain", "yaml"}`），导出的文本可原样回导入。域不存在 → 404。

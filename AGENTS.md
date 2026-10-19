@@ -77,7 +77,7 @@ OpenPalantir 是基于 AI 的数据分析与知识图谱构建系统：支持文
 - **实体命名**：数据库行级导入用 `{表名}:{主键值}`（如 `db.users:42`）。
 - **资源 ID**：URI 统一为 `{TYPE}://{UUID}/{路径}`（`DOC://` 文档源、`DBS://` 数据库），由 `ResourceIdentifier` 类（`models/resource_identifier.py`）管理；`entity_id` = MD5(`name`)，`relationship_id` = MD5(`{subject}_{predicate}_{object}`)，统一由 `models/ids.py` 生成。完整规范见 `docs/architecture.md` §4.2。
 - **单一存储**：实体/关系写入 Neo4j，通过全文索引实现搜索。
-- **受控本体**：Neo4j 边类型取自 `ontology/packs/*.yaml` 的 LinkType 词表（谓词归一化**先于** `relationship_id` 计算，公式不变）；未命中词表兜底为「其他」，原始谓词存 `r.raw_predicate`。实体/关系枚举由 `ontology/prompt.py` 动态注入 prompt，文档抽取与 DB Schema 标注共用同一词表。
+- **受控本体**：Neo4j 边类型取自 `ontology/packs/*.yaml` 的 LinkType 词表（谓词归一化**先于** `relationship_id` 计算，公式不变）；未命中词表兜底为「其他」，原始谓词存 `r.raw_predicate`。实体/关系枚举由 `ontology/prompt.py` 动态注入 prompt，文档抽取与 DB Schema 标注共用同一词表。包与类型各有独立的 `display_name`（中文名）：存储与查询永远用 key，界面经 `GET /api/ontology/vocabulary`、Wiki 实体页经 `registry.object_type_label()` 只在**显示时**翻译，改显示名不影响 ID 与页指纹。
 - **Wiki 页面**：`wiki_pages` 表存 Markdown 正文 + `source_refs` 引用锚点，kind 为 document/topic/entity/answer；实体页 datasource 为 `ENT://{entity_id}/{name}`；生成按 `source_hash` 幂等跳过，LLM 不可用降级为确定性拼装。
 - **来源归属**：实体节点与关系边都带两级来源——`datasource`（主来源，展示与检索用）与 `datasources`（全部佐证来源）。按来源过滤/回收必须走 `knowledge_graph/source_scope.py` 的 Cypher 片段（以 `datasources` 判定），否则重跑一个来源会连带删掉其他来源的佐证。来源 URI 出口：文档 `DOC://{source_id}/{文件相对路径}`、实体页 `ENT://{entity_id}/{name}`、数据库 `DBS://{conn}/{db}[/{table}]`。
 - **内容失效传播**：摘要 JSON 内的 `content_hash`（源文件 MD5）是文档指纹，`pipeline/refresh.py` 据此判定 changed/removed/未变更；刷新顺序是**先生成摘要 → 抽取（代际佐证 `URI@content_hash`）→ 旧代回收（`keep_hash` 保留新代，`recycle_datasource` 只摘本来源佐证，清空才删）→ Wiki**，抽取/落库失败时旧图谱数据完好。文档级监听 `pipeline/watcher.py` 轮询派发 `document_refresh` 任务，与只管数据库的 CDC 对称。**详见 `docs/data-flow.md`。**

@@ -12,6 +12,7 @@ from typing import Dict, List, Optional
 
 from system.logger import logger
 from config.neo4j_config import neo4j_conn
+from ontology.registry import ontology_registry
 
 PROMPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts")
 
@@ -202,7 +203,7 @@ def _relationships_lines(profile: dict) -> List[str]:
 def _fallback_content(profile: dict, rel_lines: List[str]) -> str:
     name = profile["name"]
     lines = [f"# {name}", ""]
-    meta = [f"类型：{profile['type']}"]
+    meta = [f"类型：{ontology_registry.object_type_label(profile['type'])}"]
     if profile["byname"]:
         meta.append(f"又称：{profile['byname']}")
     meta.append(f"关联数：{profile['degree']}")
@@ -257,7 +258,7 @@ def generate_entity_page(profile: dict) -> Optional[dict]:
     prompt = _load_prompt(
         "prompt_entity_page.md",
         entity_name=name,
-        entity_type=profile["type"],
+        entity_type=ontology_registry.object_type_label(profile["type"]),
         byname=profile["byname"] or "无",
         description=profile["description"] or "无",
         attributes="\n".join(f"- {k}：{v}" for k, v in attrs.items()) or "无",

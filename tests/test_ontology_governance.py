@@ -487,9 +487,46 @@ class TestOntologyRoutes:
         resp = client.get("/api/ontology/domains")
 
         assert resp.status_code == 200
+        # 基底包 fixture 未写 display_name，界面显示名回退包名
         assert resp.json()["domains"] == [
-            {"name": "general", "description": "基底包",
+            {"name": "general", "display_name": "general", "description": "基底包",
              "object_type_count": 3, "link_type_count": 2}]
+
+    def test_domains_exposes_pack_display_name(self, client):
+        client.post("/api/ontology/packs",
+                    json={"yaml": COMMUNITY_PACK_YAML.replace(
+                        "name: logistics", "name: logistics\ndisplay_name: 物流")})
+
+        items = client.get("/api/ontology/domains").json()["domains"]
+        assert {"name": "logistics", "display_name": "物流"} in \
+               [{"name": d["name"], "display_name": d["display_name"]} for d in items]
+
+    def test_vocabulary_returns_label_maps(self, client):
+        client.post("/api/ontology/packs", json={"yaml": COMMUNITY_PACK_YAML})
+
+        data = client.get("/api/ontology/vocabulary").json()
+
+        assert {"key": "person", "display_name": "人物"} in data["object_types"]
+        assert {"key": "warehouse", "display_name": "仓库"} in data["object_types"]
+        assert {"key": "管理", "display_name": "管理"} in data["link_types"]
+        assert {"key": "存放于", "display_name": "存放于"} in data["link_types"]
+        assert {"name": "general", "display_name": "general"} in data["domains"]
+
+    def test_vocabulary_base_label_wins_across_domains(self, registry, monkeypatch):
+        """同一类型在两个域里有不同显示名时，基底包的写法为准（否则界面同名异读）"""
+        from api.routes.ontology import router
+
+        registry.import_pack(COMMUNITY_PACK_YAML.replace(
+            "- key: warehouse\n    display_name: 仓库",
+            "- key: person\n    display_name: 自然人\n  - key: warehouse\n    display_name: 仓库"))
+        app = FastAPI()
+        app.include_router(router, prefix="/api/ontology")
+        monkeypatch.setattr("api.routes.ontology.ontology_registry", registry)
+
+        types = TestClient(app).get("/api/ontology/vocabulary").json()["object_types"]
+
+        assert [t for t in types if t["key"] == "person"] == [
+            {"key": "person", "display_name": "人物"}]
 
     def test_export_pack(self, client):
         resp = client.get("/api/ontology/packs/general")

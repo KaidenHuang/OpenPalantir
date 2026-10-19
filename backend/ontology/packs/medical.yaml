@@ -1,5 +1,6 @@
 # 医疗知识领域本体包（在 general 之上扩展）
 name: medical
+display_name: 医疗知识
 description: 医疗知识实体与关系
 
 object_types:

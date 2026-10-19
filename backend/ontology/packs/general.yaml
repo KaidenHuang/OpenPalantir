@@ -1,5 +1,6 @@
 # 通用本体包（基底）：所有领域包在此之上扩展
 name: general
+display_name: 通用本体
 description: 通用实体与受控关系词表
 
 object_types:

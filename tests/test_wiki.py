@@ -35,10 +35,12 @@ class StubClient:
     def __init__(self, reply=None):
         self.reply = reply
         self.calls = 0
+        self.prompts = []
         self.config = SimpleNamespace(embedding_model="bge-m3")
 
     def call_text(self, prompt, **kwargs):
         self.calls += 1
+        self.prompts.append(prompt)
         if self.reply is None:
             raise ConnectionError("LLM 不可用")
         return self.reply
@@ -337,6 +339,30 @@ class TestEntityPage:
         assert "研发中心负责人" in page["content"]
         assert "张三 → 管理 → 研发平台（原文：负责）" in page["content"]
         assert "工号：A001" in page["content"]
+        assert "类型：人物" in page["content"]
+        assert "person" not in page["content"]
+
+    def test_llm_prompt_uses_chinese_type_label(self, graph_env):
+        """喂给模型的档案也要中文：否则生成页会把 person 这类标识抄进正文"""
+        env = graph_env
+        env.service.generate_entity_pages(min_degree=2)
+        joined = "\n".join(env.stub.prompts)
+
+        assert "- 类型：人物" in joined and "- 类型：概念" in joined
+        assert "- 类型：person" not in joined and "- 类型：concept" not in joined
+
+    def test_type_outside_ontology_shown_verbatim(self, graph_env):
+        """词表外的历史 key 不硬翻：宁可露出标识，也不显示空白或错名字"""
+        env = graph_env
+        env.stub.reply = None
+        env.graph.entities = [
+            entity_row("id_zs", "张三", etype="ghost_type"),
+            next(e for e in env.graph.entities if e["entity_id"] == "id_pf"),
+        ]
+        page = next(p for p in env.service.generate_entity_pages(min_degree=2)
+                    if p["title"] == "张三")
+
+        assert "类型：ghost_type" in page["content"]
 
     def test_regenerate_unchanged_skips(self, graph_env):
         env = graph_env

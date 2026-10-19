@@ -1,5 +1,6 @@
 # 金融风控领域本体包（在 general 之上扩展）
 name: finance
+display_name: 金融风控
 description: 金融风控实体与关系
 
 object_types:

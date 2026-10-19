@@ -23,9 +23,9 @@ OpenPalantir 的图谱不是「自由文本关系」的堆砌，而是由**受�
 | ObjectType | `ontology/types.py:ObjectType` | 实体类型，支持单继承（`parent` 指向另一个 key），带 `color` / `sort_order` 供前端着色 |
 | LinkType | `ontology/types.py:LinkType` | 受控谓词。`domain`/`range` 是合法主语/宾语类型列表（**空列表 = 不限**），`symmetric` 表示无向，`inverse` 指向反向谓词，`aliases` 是归一化同义词 |
 | PropertyType | `ontology/types.py:PropertyType` | 类型级属性声明（`key` / `data_type` / `description`） |
-| OntologyPack | `ontology/types.py:OntologyPack` | 一个领域的包：`name` + `description` + 两类类型集合 + 可选 `extends` |
+| OntologyPack | `ontology/types.py:OntologyPack` | 一个领域的包：`name` + 可选 `display_name` + `description` + 两类类型集合 + 可选 `extends` |
 
-`name` 即 `domain` 参数取值。`general` 是**基底包**，其余域包在它之上扩展（同 key 覆盖、新 key 追加）。
+`name` 即 `domain` 参数取值，也是落盘文件名；`display_name` 只给人看（界面、Wiki 页头把英文标识翻译成中文），不写时界面直接显示 `name`。存储里永远只有 `name`/key，翻译一律发生在读出显示的那一刻——改了中文名不会动图、不会改 ID、不会让 Wiki 页重新生成。`general` 是**基底包**，其余域包在它之上扩展（同 key 覆盖、新 key 追加）。
 
 包还可以声明 `extends: <另一个包名>` 挂在某个域包之上，形成扩展链：
 
@@ -98,6 +98,9 @@ Neo4j 边类型 = `受控key`                              ← 白名单校验�
 # 有哪些域包
 curl http://localhost:8000/api/ontology/domains
 
+# 界面翻译用的词表：全部域的 key → 中文显示名（实体类型 / 谓词 / 域名）
+curl http://localhost:8000/api/ontology/vocabulary
+
 # 导出某包（导出的 YAML 可原样再导入）
 curl http://localhost:8000/api/ontology/packs/medical
 
@@ -137,6 +140,7 @@ curl 'http://localhost:8000/api/ontology/report?domain=workforce&limit=50'
 
 ```yaml
 name: logistics
+display_name: 物流领域           # 界面显示名，不写则显示 logistics
 description: 物流领域实体与受控关系
 
 object_types:
@@ -169,11 +173,13 @@ link_types:
 3. **别名比新谓词便宜**。同一语义的多种说法应写进 `aliases`，而不是开新 key——否则词表膨胀、边被拆散。
 4. **定义域别写太死**。`domain`/`range` 只列实际会出现的类型，或干脆留空表示不限；写窄了会让合法数据在治理报告里全是违规。
 5. **成对谓词要互指 `inverse`**（如 `包含 ↔ 属于`），否则查询时得手写两遍方向。
+6. **中文标识写进 `display_name`，不要写进 `key`**。key 是 Neo4j 边类型和 ID 公式的输入，改名等于换数据；`display_name` 才是可以随时改的显示层，界面与 Wiki 都从这里取中文。
 
 挂在工作力域上的扩展包示例（与仓库里的 `examples/ontology/rd_efficiency.yaml` 同构）：
 
 ```yaml
 name: rd_efficiency
+display_name: 研发效能
 description: 研发效能领域本体
 extends: workforce            # 继承 employee/department + 任职于/管理 等词表
 
@@ -220,11 +226,15 @@ link_types:
 
 ## 8. 与 Wiki 的关系
 
-Wiki 实体页按本体类型组织实体档案，关系段落的谓词就是 LinkType key，兜底关系会附上原始谓词（`（原文：…）`）。因此本体越准，实体页越像「百科条目」；词表散乱时页面会退化成同义关系罗列——治理报告正是为了把它拉回来。
+Wiki 实体页按本体类型组织实体档案，关系段落的谓词就是 LinkType key，兜底关系会附上原始谓词（`（原文：…）`）。页面上显示的实体类型是 `display_name`（`person` → 人物），由 `ontology_registry.object_type_label()` 在写出时翻译；词表里没有的 key 原样露出，不硬翻成空白或错名字。喂给 LLM 的档案同样用中文名，避免生成页把标识抄进正文。但页的指纹 `source_hash` 仍按原始 key 计算——只改显示名不会让全部实体页重新生成。因此本体越准，实体页越像「百科条目」；词表散乱时页面会退化成同义关系罗列——治理报告正是为了把它拉回来。
 
 ---
 
 ## 9. 常见问题
+
+**界面上为什么还是英文 key？** 界面不硬编码词表，中文名来自 `GET /api/ontology/vocabulary`（实体类型、谓词、域名三张 key→显示名映射，前端 `stores/ontologyStore.ts` 启动时取一次）。显示不出来只有两种原因：包里没写 `display_name`（此时回退显示 key 本身），或后端接口没通。补齐办法是在对应 `packs/*.yaml` 加 `display_name` 后 `POST /api/ontology/reload`。
+
+**改了 `display_name` 会重跑数据吗？** 不会。存储层保存的仍是 key，翻译只发生在显示环节；实体页指纹也按 key 计算，所以改中文名既不重写 Neo4j，也不会让全部 Wiki 页失效。
 
 **改了 packs 里的 YAML 但没生效？** 内置包改动需 `POST /api/ontology/reload`；`backend/data/ontology_packs/` 下的同名**域包**会覆盖内置包，先确认没有-shadow。
 

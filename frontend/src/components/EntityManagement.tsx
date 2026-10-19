@@ -3,6 +3,7 @@ import { Table, Input, Select, Button, Tag, Space, Popconfirm, message, Tooltip 
 import { ReloadOutlined, DeleteOutlined, EditOutlined, PlusOutlined, CloseOutlined, CheckOutlined } from '@ant-design/icons';
 import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
 import { useEntityStore } from '../stores/entityStore';
+import { useOntologyLabels } from '../stores/ontologyStore';
 import { useAbortController } from '../hooks/useAbortController';
 import { entityService } from '../services/entityService';
 import type { Entity, Relationship } from '../stores/types';
@@ -128,6 +129,7 @@ const RelationshipList: React.FC<{
   onNavigateToEntity: (entityId: string) => void;
   onRelationshipChanged: () => void;
 }> = ({ relationships, currentEntityName, onNavigateToEntity, onRelationshipChanged }) => {
+  const { labelPredicate } = useOntologyLabels();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editPredicate, setEditPredicate] = useState('');
   const [editDesc, setEditDesc] = useState('');
@@ -169,6 +171,8 @@ const RelationshipList: React.FC<{
       {relationships.map((rel) => {
         const relId = rel.relationship_id || rel.id || '';
         const isEditing = editingId === relId;
+        const rawPredicate = rel.predicate || rel.type || '';
+        const predicateLabel = labelPredicate(rawPredicate) || '关联';
 
         return (
           <li key={relId || Math.random()} style={{ marginBottom: 6, paddingBottom: 6, borderBottom: '1px dashed #ddd' }}>
@@ -187,9 +191,9 @@ const RelationshipList: React.FC<{
               <>
                 <div style={{ fontSize: 12, display: 'flex', alignItems: 'center' }}>
                   <span style={{ fontWeight: 'bold' }}>{rel.subject || '未知'}</span>
-                  <Tooltip title={rel.description || ''}>
+                  <Tooltip title={rel.description || (rawPredicate !== predicateLabel ? `词表 key: ${rawPredicate}` : '')}>
                     <span style={{ margin: '0 6px', color: '#1890ff', fontWeight: 'bold' }}>
-                      {rel.predicate || rel.type || '关联'}
+                      {predicateLabel}
                     </span>
                   </Tooltip>
                   <span style={{ fontWeight: 'bold' }}>{rel.object || '未知'}</span>
@@ -203,7 +207,7 @@ const RelationshipList: React.FC<{
                     <Button size="small" type="text" icon={<EditOutlined />} style={{ fontSize: 11 }}
                       onClick={() => {
                         setEditingId(relId);
-                        setEditPredicate(rel.predicate || rel.type || '');
+                        setEditPredicate(rawPredicate);
                         setEditDesc(rel.description || '');
                       }} />
                     {relId && (
@@ -234,6 +238,8 @@ const EntityManagement: React.FC = () => {
     entities, selectedEntity, pagination, loading,
     fetchEntities, selectEntity, setPagination,
   } = useEntityStore();
+
+  const { labelType, objectTypes } = useOntologyLabels();
 
   const { getComponentSignal, getLatestSignal } = useAbortController();
   const [searchTerm, setSearchTerm] = useState('');
@@ -297,7 +303,9 @@ const EntityManagement: React.FC = () => {
     {
       title: '类型', dataIndex: 'type', key: 'type', width: '25%',
       render: (type: string) => (
-        <Tag color={entityTypeColors[type] || entityTypeColors.default}>{type}</Tag>
+        <Tag color={entityTypeColors[type] || entityTypeColors.default} title={type}>
+          {labelType(type)}
+        </Tag>
       ),
     },
     {
@@ -321,11 +329,9 @@ const EntityManagement: React.FC = () => {
           <Input.Search placeholder="搜索实体..." allowClear onSearch={handleSearch} style={{ width: 280 }} />
           <Select value={filterType} onChange={handleTypeChange} style={{ width: 130 }}>
             <Select.Option value="all">所有类型</Select.Option>
-            <Select.Option value="person">人物</Select.Option>
-            <Select.Option value="organization">组织</Select.Option>
-            <Select.Option value="location">地点</Select.Option>
-            <Select.Option value="event">事件</Select.Option>
-            <Select.Option value="concept">概念</Select.Option>
+            {objectTypes.map(t => (
+              <Select.Option key={t.key} value={t.key} title={t.key}>{t.display_name}</Select.Option>
+            ))}
           </Select>
         </div>
       </div>
@@ -360,7 +366,8 @@ const EntityManagement: React.FC = () => {
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, paddingBottom: 6, borderBottom: '1px solid #e0e0e0' }}>
                 <h3 style={{ margin: 0, fontSize: 16 }}>{selectedEntity.name}</h3>
-                <Tag color={entityTypeColors[selectedEntity.type] || entityTypeColors.default}>{selectedEntity.type}</Tag>
+                <Tag color={entityTypeColors[selectedEntity.type] || entityTypeColors.default}
+                  title={selectedEntity.type}>{labelType(selectedEntity.type)}</Tag>
               </div>
 
               {/* 基础属性 */}

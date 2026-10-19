@@ -26,6 +26,7 @@ LLM Wiki + 受控本体演进路线的三个里程碑（M1 Wiki 与检索、M2 �
 - **示例与一键 demo**：`examples/docs`（三篇同主题文档）+ `examples/ontology/rd_efficiency.yaml` + `scripts/demo/run_demo.py`
 - **PPT 内容提取**（`content_extraction/document/converters/pptx_converter.py`）：`.pptx` 经 python-pptx 提取，每页幻灯片一个章节、幻灯片序号作为页码锚点；标题占位符缺失时（企业模板把标题画成文本框）退化为页面第一行文本，表格、组合图形、图表（类别×系列）与 SmartArt 图示文字（读 `diagrams/dataN.xml` 的 `dgm:pt`）都进正文，演讲者备注并入同页章节，旧版 `.ppt` 二进制明确拒绝
 - **`GET /api/sources/formats`**：对外暴露可解析的文档扩展名（取自转换器注册表），`scripts/demo/run_demo.py` 改用该接口取代脚本内硬编码清单
+- **本体中文显示名**：`OntologyPack` 新增可选 `display_name`（内置四包与示例包补齐），`GET /api/ontology/vocabulary` 一次返回全部域的实体类型/谓词/域名 key→中文名，前端 `stores/ontologyStore.ts` 取一次后统一翻译（实体管理、图谱可视化、文档查看、智能决策的域选择与类型筛选都不再硬编码词表）；Wiki 实体页的类型标签经 `registry.object_type_label()` 在写出时翻译，未命中词表的 key 原样露出。存储仍保存英文 key，`entity_id`/`relationship_id`/`source_hash` 公式不变，改中文名不会让 Wiki 页重新生成
 
 ### 变更
 

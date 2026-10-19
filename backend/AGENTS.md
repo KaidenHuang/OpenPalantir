@@ -113,7 +113,7 @@ backend/
 │   │   ├── cdc.py                 # CDC 配置与启停
 │   │   ├── source.py              # 数据源管理 + summarize/refresh/stale
 │   │   ├── wiki.py                # Wiki 页面 CRUD / 生成 / 答案发布
-│   │   ├── ontology.py            # 本体包导入导出 + 治理报告
+│   │   ├── ontology.py            # 本体包导入导出 + 治理报告 + 中文词表接口
 │   │   ├── model.py               # LLM 模型配置
 │   │   ├── entity_types.py        # 实体类型
 │   │   └── filesystem.py          # 文件系统操作
@@ -366,7 +366,7 @@ CREATE CONSTRAINT IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE
 | `/api/filesystem` | `api/routes/filesystem.py` | 文件系统操作 |
 | `/api/entity-types` | `api/routes/entity_types.py` | 实体类型管理 |
 | `/api/wiki` | `api/routes/wiki.py` | Wiki 页面 CRUD / 生成 / 答案发布 |
-| `/api/ontology` | `api/routes/ontology.py` | 本体包查询与导入导出、治理报告 |
+| `/api/ontology` | `api/routes/ontology.py` | 本体包查询与导入导出、中文词表（`/vocabulary`）、治理报告 |
 | `/api` | `api/routes/source.py` | 数据源管理（含 `summarize` / `refresh` / `stale`） |
 | — | `api/routes/database.py` | 数据库连接与导入 |
 | — | `api/routes/cdc.py` | CDC 增量同步配置 |
@@ -379,6 +379,7 @@ CREATE CONSTRAINT IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE
 - **实体/关系 ID**：`entity_id = MD5(name)`，`relationship_id = MD5({subject}_{predicate}_{object})`，由 `models/ids.py` 生成
 - **单一存储**：实体与关系写入 Neo4j，通过全文索引实现搜索
 - **受控本体**：边类型取自 `ontology/packs/` 的 LinkType 词表；谓词归一化**先于** `relationship_id` 计算，未命中兜底为「其他」并记 `raw_predicate`。域视图 = `general ⊕ extends 链 ⊕ 本包`，社区包可 `extends: workforce` 只写增量（校验相对父视图，故可引用父包类型）。社区包在 `backend/data/ontology_packs/`（域包同名覆盖内置，基底包 general 不可覆盖），导入即校验，`registry.version` 变更即令 prompt 缓存失效
+- **本体显示名分层**：包与类型各有可选 `display_name`（中文名），存储与 Cypher 永远用 key；界面经 `GET /api/ontology/vocabulary`（`registry.vocabulary()`，同 key 以基底包显示名为准）、Wiki 实体页经 `registry.object_type_label()` 只在**显示时**翻译，未知 key 原样返回。`source_hash`/ID 仍按 key 计算，改中文名不触发重生成
 - **两级来源**：节点/边同时带 `datasource`（主来源，展示与检索用，纯 URI）与 `datasources`（全部佐证条目，代际场景为 `URI@content_hash`）；按来源过滤与回收必须走 `knowledge_graph/source_scope.py` 的片段，`recycle_datasource` 只摘本来源佐证、清空才删；`keep_hash`（代际回收）保留本来源新代佐证
 - **内容失效传播**：摘要 JSON 的 `content_hash`（源文件 MD5）是文档指纹；刷新顺序是先生成摘要 → **抽取（新代佐证 `URI@content_hash`）** → 旧代回收（`keep_hash` 保留新代）→ 再刷新 Wiki —— 抽取/落库失败时旧图谱数据完好，成功才摘除旧代
 - **Wiki 页面**：`wiki_pages` 存 Markdown 正文 + `source_refs`（node_id 锚点），kind 为 document/topic/entity/answer；按 `source_hash` 幂等，LLM 不可用降级为确定性拼装

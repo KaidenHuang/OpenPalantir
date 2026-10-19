@@ -60,8 +60,11 @@ class OntologyPack:
     general 为基底；其余包的域视图 = 基底 ⊕ 自己的增量。
     extends 指定挂在哪个域包之上（缺省挂基底），社区包据此复用内置域词表，
     只声明增量，不必整包 fork。
+    name 是标识（domain 参数取值、落盘文件名），display_name 是界面显示的中文名，
+    未写时界面回退显示 name。
     """
     name: str
+    display_name: str = ""
     description: str = ""
     object_types: List[ObjectType] = field(default_factory=list)
     link_types: List[LinkType] = field(default_factory=list)

@@ -63,6 +63,7 @@ def parse_pack(raw: dict) -> OntologyPack:
         raise OntologyError("本体包缺少 name")
     return OntologyPack(
         name=raw["name"],
+        display_name=raw.get("display_name", ""),
         description=raw.get("description", ""),
         object_types=[_parse_object_type(t) for t in raw.get("object_types", []) or []],
         link_types=[_parse_link_type(t) for t in raw.get("link_types", []) or []],
@@ -113,6 +114,7 @@ def merge_packs(base: OntologyPack, pack: OntologyPack) -> OntologyPack:
     links.update({l.key: l for l in pack.link_types})
     return OntologyPack(
         name=pack.name,
+        display_name=pack.display_name,
         description=pack.description,
         object_types=sorted(objects.values(), key=lambda o: (o.sort_order, o.key)),
         link_types=list(links.values()),
@@ -185,7 +187,9 @@ def pack_to_dict(pack: OntologyPack) -> dict:
             item["aliases"] = list(l.aliases)
         links.append(item)
 
-    return {"name": pack.name, "description": pack.description,
+    return {"name": pack.name,
+            **({"display_name": pack.display_name} if pack.display_name else {}),
+            "description": pack.description,
             "object_types": objects, "link_types": links,
             **({"extends": pack.extends} if pack.extends else {})}
 
@@ -353,6 +357,53 @@ class OntologyRegistry:
             if self.get_link_type(key, d):
                 return True
         return False
+
+    def display_name(self, domain: str) -> str:
+        """域的中文显示名；包未写 display_name 时回退包名，界面不留空
+
+        不能走 pack()：未知域会回落基底视图，把陌生域名翻译成本体基底的名字。
+        """
+        self.load()
+        with self._lock:
+            found = self._packs.get(domain) or self._views.get(domain)
+        return (found.display_name or domain) if found else domain
+
+    def object_type_label(self, key: str) -> str:
+        """实体类型 key → 中文显示名；基底包优先，未知 key 原样返回
+
+        图谱节点只存 key，页面正文与界面都要在展示时翻译，指纹仍用 key
+        （否则改一次显示名会让全部实体页判定为内容变化）。
+        """
+        if not key:
+            return key
+        for domain in (BASE_PACK, *self.domains()):
+            obj = self.get_object_type(key, domain)
+            if obj:
+                return obj.display_name or key
+        return key
+
+    def vocabulary(self) -> Dict[str, List[dict]]:
+        """全部域视图的 key → 中文显示名，供界面统一翻译实体类型/谓词/域名
+
+        图谱节点只存类型 key，翻译必须跨域做并集：实体类型先出基底包（按
+        sort_order），其余域按域名顺序追加新 key；同 key 以基底包的显示名为准，
+        否则同一类型在不同域被读成两个名字。
+        """
+        objects: Dict[str, str] = {o.key: o.display_name or o.key
+                                   for o in self.object_types(BASE_PACK)}
+        links: Dict[str, str] = {}
+        for name in self.domains():
+            view = self.pack(name)
+            for o in view.object_types:
+                objects.setdefault(o.key, o.display_name or o.key)
+            for l in view.link_types:
+                links.setdefault(l.key, l.display_name or l.key)
+        return {
+            "object_types": [{"key": k, "display_name": v} for k, v in objects.items()],
+            "link_types": [{"key": k, "display_name": v} for k, v in links.items()],
+            "domains": [{"name": n, "display_name": self.display_name(n)}
+                         for n in self.domains()],
+        }
 
     # ── 谓词归一化 ──
 

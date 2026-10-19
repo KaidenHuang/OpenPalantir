@@ -65,6 +65,50 @@ class TestPackLoading:
             ))
 
 
+class TestDisplayNames:
+    """界面显示中文、存储仍是英文 key：翻译只发生在读出的一侧"""
+
+    def test_builtin_packs_have_chinese_display_names(self):
+        assert ontology_registry.display_name("general") == "通用本体"
+        assert ontology_registry.display_name("workforce") == "人力资源"
+
+    def test_missing_display_name_falls_back_to_pack_name(self):
+        from ontology.registry import parse_pack
+        assert parse_pack({"name": "acme"}).display_name == ""
+
+        registry = OntologyRegistry(packs_dir=ontology_registry._packs_dir,
+                                   user_packs_dir="/nonexistent-dir")
+        assert registry.display_name("general") == "通用本体"
+        assert registry.display_name("不存在的域") == "不存在的域"
+
+    def test_object_type_label_translates_key(self):
+        assert ontology_registry.object_type_label("person") == "人物"
+        # 只存在于域包里的类型也要翻得到（跨域视图查找）
+        assert ontology_registry.object_type_label("employee") == "员工"
+        assert ontology_registry.object_type_label("ghost_type") == "ghost_type"
+        assert ontology_registry.object_type_label("") == ""
+
+    def test_vocabulary_covers_every_domain(self):
+        vocab = ontology_registry.vocabulary()
+        types = {t["key"]: t["display_name"] for t in vocab["object_types"]}
+        links = {t["key"]: t["display_name"] for t in vocab["link_types"]}
+
+        assert {"person": "人物", "other": "其他", "employee": "员工"} == \
+               {k: types[k] for k in ("person", "other", "employee")}
+        assert "任职于" in links and "其他" in links
+        assert {d["name"] for d in vocab["domains"]} == set(ontology_registry.domains())
+
+    def test_export_keeps_pack_display_name(self):
+        """导出即回读：显示名跟着 YAML 走，不能导一遍就丢"""
+        import yaml
+
+        from ontology.registry import parse_pack
+        text = ontology_registry.export_pack("workforce")
+
+        assert "display_name: 人力资源" in text
+        assert parse_pack(yaml.safe_load(text)).display_name == "人力资源"
+
+
 class TestPredicateNormalization:
 
     @pytest.mark.parametrize("raw,expected", [

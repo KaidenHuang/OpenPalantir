@@ -108,6 +108,7 @@ export const API_CONFIG = {
     },
     ontology: {
       domains: `${API_BASE_URL}/api/ontology/domains`,
+      vocabulary: `${API_BASE_URL}/api/ontology/vocabulary`,
       report: `${API_BASE_URL}/api/ontology/report`,
     }
   }

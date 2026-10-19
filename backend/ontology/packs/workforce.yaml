@@ -1,5 +1,6 @@
 # 人力资源领域本体包（在 general 之上扩展）
 name: workforce
+display_name: 人力资源
 description: 人力资源领域实体与关系
 
 object_types:

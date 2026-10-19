@@ -8,6 +8,7 @@ import { logger } from '../services/logger';
 import { API_CONFIG } from '../config/apiConfig';
 import { httpGet, httpPost } from '../services/httpClient';
 import { useSourceStore } from '../stores/sourceStore';
+import { useOntologyLabels } from '../stores/ontologyStore';
 import { useAbortController } from '../hooks/useAbortController';
 import { useSafePolling } from '../hooks/useSafePolling';
 
@@ -62,6 +63,7 @@ const DocumentViewer: React.FC = () => {
   const currentPath = useSourceStore((s) => s.currentPath);
 
   const { getComponentSignal, getLatestSignal } = useAbortController();
+  const { labelType, labelDomain } = useOntologyLabels();
 
   // UI state
   const [sourcesLoading, setSourcesLoading] = useState(false);
@@ -550,8 +552,8 @@ const DocumentViewer: React.FC = () => {
                       : [{ name: extractDomain, description: '', object_type_count: 0, link_type_count: 0 }]
                     ).map(d => ({
                       value: d.name,
-                      label: d.name,
-                      title: `${d.description}（${d.object_type_count} 类型 / ${d.link_type_count} 谓词）`,
+                      label: labelDomain(d.name),
+                      title: `${d.name}：${d.description}（${d.object_type_count} 类型 / ${d.link_type_count} 谓词）`,
                     }))}
                   />
                   <Button
@@ -627,7 +629,7 @@ const DocumentViewer: React.FC = () => {
                           marginBottom: 4,
                         }}
                       >
-                        {entity.name} ({entity.type})
+                        {entity.name} ({labelType(entity.type)})
                       </Tag>
                     ))}
                   </div>

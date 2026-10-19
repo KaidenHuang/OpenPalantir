@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { message } from 'antd';
 import API_CONFIG from '../config/apiConfig';
 import { useAbortController } from '../hooks/useAbortController';
+import { useOntologyLabels } from '../stores/ontologyStore';
 
 interface WorkOrder {
   title: string;
@@ -152,6 +153,7 @@ function DecisionAssistant() {
   });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { getLatestSignal } = useAbortController();
+  const { labelDomain } = useOntologyLabels();
 
   const toggleSection = (key: string) => {
     setExpandedSections(prev => ({ ...prev, [key]: !prev[key] }));
@@ -368,8 +370,8 @@ function DecisionAssistant() {
           >
             {(domains.length > 0 ? domains : [{ name: domain, description: '', object_type_count: 0, link_type_count: 0 }])
               .map(d => (
-                <option key={d.name} value={d.name} title={d.description}>
-                  {d.name}{d.link_type_count ? ` (${d.link_type_count})` : ''}
+                <option key={d.name} value={d.name} title={`${d.name}：${d.description}`}>
+                  {labelDomain(d.name)}{d.link_type_count ? ` (${d.link_type_count})` : ''}
                 </option>
               ))}
           </select>

@@ -17,17 +17,28 @@ router = APIRouter()
 
 @router.get("/domains")
 def list_domains():
-    """全部域包及其规模（域包名即 domain 参数取值）"""
+    """全部域包及其规模（域包名即 domain 参数取值，display_name 供界面显示）"""
     try:
         items = []
         for name in ontology_registry.domains():
             pack = ontology_registry.pack(name)
-            items.append({"name": name, "description": pack.description,
+            items.append({"name": name, "display_name": pack.display_name or name,
+                          "description": pack.description,
                           "object_type_count": len(pack.object_types),
                           "link_type_count": len(pack.link_types)})
         return {"status": "success", "domains": items}
     except Exception as e:
         logger.error(f"获取本体域列表失败: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/vocabulary")
+def list_vocabulary():
+    """跨全部域的 key → 中文显示名并集（实体类型/谓词/域名），界面据此翻译标识"""
+    try:
+        return {"status": "success", **ontology_registry.vocabulary()}
+    except Exception as e:
+        logger.error(f"获取本体词表失败: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
