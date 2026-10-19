@@ -271,7 +271,6 @@ class CDCManager:
         写 application.properties → 停止 Debezium → 清理旧库残留位点 → 启动 Debezium。
         任一致命步骤失败即停止并返回 failed，便于前端定位。
         """
-        from database_management.database_service import DatabaseService
         from cdc.debezium_config import (
             CDC_PASSWORD,
             CDC_USER,
@@ -282,13 +281,19 @@ class CDCManager:
             write_application_properties,
         )
 
+        from content_extraction.database.connector import (
+            create_bare_engine_for,
+            create_engine_for,
+        )
+
         steps = []
 
         # 1. 读取连接配置
+        from source_registry.database.registry import database_source_registry
+
         db = SessionLocal()
         try:
-            db_service = DatabaseService()
-            conn = db_service.get_connection(db, connection_id)
+            conn = database_source_registry.get(db, connection_id)
         finally:
             db.close()
 

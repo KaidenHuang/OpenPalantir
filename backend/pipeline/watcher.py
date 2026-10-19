@@ -45,14 +45,14 @@ class DocumentWatcher:
     def poll_once(self) -> List[Dict[str, str]]:
         """扫描一次并派发刷新任务，返回派发结果（供测试与手动触发复用）"""
         from document_processing import summary_generator
-        from source_management import refresh_service
+        from pipeline.refresh import scan_stale
         from task_management.task_manager import task_manager
         from task_management.handlers.document_refresh import DocumentRefreshHandler
 
         self._prune(task_manager)
 
         dispatched = []
-        for item in refresh_service.scan_stale():
+        for item in scan_stale():
             datasource = summary_generator.datasource_for(item["source_id"], item["file_path"])
             if datasource in self._inflight:
                 continue

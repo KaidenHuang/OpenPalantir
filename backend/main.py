@@ -87,7 +87,7 @@ from websocket.task_ws import task_ws_manager
 async def startup_ws_loop():
     task_ws_manager.set_main_loop(asyncio.get_running_loop())
     if os.getenv("DOC_WATCH_ENABLED") == "1":
-        from file_sources.watcher import document_watcher
+        from pipeline.watcher import document_watcher
         document_watcher.start()
 
 @app.websocket("/ws/tasks")
@@ -117,7 +117,7 @@ async def shutdown_event():
     from cdc.cdc_manager import cdc_manager
     cdc_manager.shutdown_all()
     if os.getenv("DOC_WATCH_ENABLED") == "1":
-        from file_sources.watcher import document_watcher
+        from pipeline.watcher import document_watcher
         document_watcher.stop()
 
 if __name__ == "__main__":

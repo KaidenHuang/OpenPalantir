@@ -13,7 +13,7 @@ class DocumentRefreshHandler(TaskHandler):
     OPTIONAL_DEFAULTS = {"force": False, "domain": "general", "parallelism": 8}
 
     def execute(self, task, progress_callback: Callable[[int], None]) -> Dict:
-        from source_management import refresh_service
+        from pipeline import refresh
 
         self.validate_payload(task.payload)
         source_id = task.payload.get("source_id")
@@ -22,7 +22,7 @@ class DocumentRefreshHandler(TaskHandler):
         logger.info(f"[DocumentRefreshHandler] 入参: source_id={source_id}, file={file_path}")
         progress_callback(10)
 
-        result = refresh_service.refresh_document(
+        result = refresh.refresh_document(
             source_id,
             file_path,
             force=self.payload_value(task, "force"),

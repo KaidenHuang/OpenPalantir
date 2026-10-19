@@ -34,8 +34,7 @@ class SchemaImportHandler(TaskHandler):
             f"[SchemaImportHandler] 入参: task_id={task.task_id}, task_type={task.task_type}"
         )
         try:
-            from database_management.database_service import DatabaseService
-            from database_management.database_manager import database_manager, DIALECT_MAP
+            from database_management.database_manager import DIALECT_MAP
             from utils.data_store import EntityDataStore
             from config.database import SessionLocal
 
@@ -59,21 +58,17 @@ class SchemaImportHandler(TaskHandler):
             logger.info("步骤1: 从本地数据库获取Schema和连接信息")
             db = SessionLocal()
             try:
-                db_service = DatabaseService()
+                from database_management.database_service import db_service
+                from source_registry.database.registry import (
+                    database_source_registry,
+                    dict_from_connection,
+                )
+
                 schema = db_service.get_schema(db, connection_id)
-                conn_config = db_service.get_connection(db, connection_id)
+                conn = database_source_registry.get(db, connection_id)
+                conn_config = dict_from_connection(conn) if conn else None
                 analyzed_dbs = db_service.get_analyzed_databases(db, connection_id)
                 analyzed_db_names = [ad.database_name for ad in analyzed_dbs]
-                if conn_config:
-                    conn_config = {
-                        "type": conn_config.type,
-                        "host": conn_config.host,
-                        "port": conn_config.port,
-                        "database": conn_config.database,
-                        "username": conn_config.username,
-                        "password": conn_config.password,
-                        "service_name": getattr(conn_config, "service_name", None),
-                    }
             finally:
                 db.close()
 
@@ -121,7 +116,8 @@ class SchemaImportHandler(TaskHandler):
             if not conn_config:
                 raise ValueError("未找到数据库连接配置")
 
-            engine = database_manager._create_engine(conn_config)
+            from content_extraction.database.connector import create_engine_for
+            engine = create_engine_for(conn_config)
             if not engine:
                 raise ValueError("无法创建数据库引擎")
 

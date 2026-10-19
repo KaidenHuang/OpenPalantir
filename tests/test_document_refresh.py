@@ -19,7 +19,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from document_processing import summary_generator
-from source_management import refresh_service
+from pipeline import refresh
 from task_management.handlers.document_refresh import DocumentRefreshHandler
 import wiki.wiki_service  # noqa: F401  先执行模块导入
 # wiki/__init__ 重导出同名单例，需经 sys.modules 取模块本体做属性 patch
@@ -58,7 +58,7 @@ def env(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def source_db(temp_db, env):
-    """注册一个本地文档源，并把 refresh_service / 路由指向临时库"""
+    """注册一个本地文档源，并把 refresh / 路由指向临时库"""
     from models.source import DocumentSource
 
     db = temp_db()
@@ -70,7 +70,7 @@ def source_db(temp_db, env):
         db.close()
 
     monkey = pytest.MonkeyPatch()
-    monkey.setattr(refresh_service, "SessionLocal", temp_db)
+    monkey.setattr(refresh, "SessionLocal", temp_db)
     yield temp_db
     monkey.undo()
 
@@ -79,22 +79,22 @@ class TestStaleReason:
 
     def test_no_summary_is_not_stale(self, env):
         doc = write_doc(env, "a.md", "内容")
-        assert refresh_service.stale_reason("s1", "a.md", doc) == ""
+        assert refresh.stale_reason("s1", "a.md", doc) == ""
 
     def test_same_hash_is_not_stale(self, env):
         doc = write_doc(env, "a.md", "内容")
         write_summary(env, "s1", "a.md", md5("内容"))
-        assert refresh_service.stale_reason("s1", "a.md", doc) == ""
+        assert refresh.stale_reason("s1", "a.md", doc) == ""
 
     def test_changed_content(self, env):
         doc = write_doc(env, "a.md", "新内容")
         write_summary(env, "s1", "a.md", md5("旧内容"))
-        assert refresh_service.stale_reason("s1", "a.md", doc) == "changed"
+        assert refresh.stale_reason("s1", "a.md", doc) == "changed"
 
     def test_deleted_file(self, env):
         write_summary(env, "s1", "a.md", md5("内容"))
         missing = os.path.join(env["src"], "a.md")
-        assert refresh_service.stale_reason("s1", "a.md", missing) == "removed"
+        assert refresh.stale_reason("s1", "a.md", missing) == "removed"
 
     def test_broken_summary_is_not_stale(self, env):
         doc = write_doc(env, "a.md", "内容")
@@ -102,7 +102,7 @@ class TestStaleReason:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write("{损坏的 json")
-        assert refresh_service.stale_reason("s1", "a.md", doc) == ""
+        assert refresh.stale_reason("s1", "a.md", doc) == ""
 
 
 class TestGraphRecycle:
@@ -202,11 +202,11 @@ class TestGraphRecycle:
 class TestRefreshDocument:
 
     def _stub_pipeline(self, mp, env, order, recycle_result=None):
-        mp.setattr(refresh_service, "_source_base_path", lambda sid, quiet=False: env["src"])
-        mp.setattr(refresh_service, "recycle_document",
+        mp.setattr(refresh, "_source_base_path", lambda sid, quiet=False: env["src"])
+        mp.setattr(refresh, "recycle_document",
                    lambda ds, keep_hash=None: (order.append(("recycle", keep_hash)),
                                                recycle_result or {"edges": 1, "entities": 1})[1])
-        mp.setattr(refresh_service, "_extract",
+        mp.setattr(refresh, "_extract",
                    lambda path, ds, domain, parallelism, evidence_hash=None:
                       (order.append(("extract", evidence_hash)),
                        {"entity_count": 4, "relationship_count": 2})[1])
@@ -221,7 +221,7 @@ class TestRefreshDocument:
     def test_unchanged_without_force_is_skipped(self, env, source_db):
         doc = write_doc(env, "a.md", "内容")
         write_summary(env, "s1", "a.md", md5("内容"))
-        result = refresh_service.refresh_document("s1", "a.md")
+        result = refresh.refresh_document("s1", "a.md")
         assert result["status"] == "skipped"
         assert result["datasource"] == "DOC://s1/a.md"
 
@@ -245,7 +245,7 @@ class TestRefreshDocument:
             mp.setattr(summary_generator, "generate", fake_generate)
             mp.setattr(summary_generator, "save", fake_save)
 
-            result = refresh_service.refresh_document("s1", "a.md")
+            result = refresh.refresh_document("s1", "a.md")
 
         assert [item[0] for item in order] == ["generate", "save", "extract", "recycle"]
         assert result["status"] == "refreshed"
@@ -268,7 +268,7 @@ class TestRefreshDocument:
             mp.setattr(summary_generator, "generate",
                        MagicMock(side_effect=ConnectionError("LLM 不可用")))
             with pytest.raises(ConnectionError):
-                refresh_service.refresh_document("s1", "a.md")
+                refresh.refresh_document("s1", "a.md")
 
         assert order == []
         assert os.path.isfile(old_summary)
@@ -281,10 +281,10 @@ class TestRefreshDocument:
         wiki.prune_orphans.return_value = 0
         recycled = MagicMock(return_value={"edges": 3, "entities": 1})
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(refresh_service, "_source_base_path", lambda sid, quiet=False: env["src"])
-            mp.setattr(refresh_service, "recycle_document", recycled)
+            mp.setattr(refresh, "_source_base_path", lambda sid, quiet=False: env["src"])
+            mp.setattr(refresh, "recycle_document", recycled)
             mp.setattr(ws_module, "wiki_service", wiki)
-            result = refresh_service.refresh_document("s1", "a.md")
+            result = refresh.refresh_document("s1", "a.md")
 
         assert result["status"] == "removed"
         recycled.assert_called_once_with("DOC://s1/a.md")
@@ -302,7 +302,7 @@ class TestRefreshDocument:
                        lambda p: {"doc_name": "a.md", "structure": [], "content_hash": md5("内容")})
             mp.setattr(summary_generator, "save",
                        lambda sid, rel, data: summary_generator.summary_path(sid, rel))
-            result = refresh_service.refresh_document("s1", "a.md", force=True)
+            result = refresh.refresh_document("s1", "a.md", force=True)
 
         assert result["status"] == "refreshed"
         assert result["reason"] == "forced"
@@ -317,19 +317,19 @@ class TestScanStale:
         write_summary(env, "s1", "edit.md", md5("旧"))
         write_summary(env, "s1", "gone.md", md5("内容"))
 
-        items = refresh_service.scan_stale()
+        items = refresh.scan_stale()
         assert [(i["file_path"], i["reason"]) for i in items] == [
             ("edit.md", "changed"), ("gone.md", "removed")]
 
     def test_summary_of_deleted_source_is_ignored(self, env, temp_db):
         write_summary(env, "ghost", "a.md", md5("内容"))
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(refresh_service, "SessionLocal", temp_db)
-            assert refresh_service.scan_stale() == []
+            mp.setattr(refresh, "SessionLocal", temp_db)
+            assert refresh.scan_stale() == []
 
     def test_resolve_file_rejects_escape(self, env):
         with pytest.raises(ValueError):
-            refresh_service.resolve_file(env["src"], "../外部的.md")
+            refresh.resolve_file(env["src"], "../外部的.md")
 
 
 class TestRefreshHandler:
@@ -347,7 +347,7 @@ class TestRefreshHandler:
         progress = []
         with pytest.MonkeyPatch.context() as mp:
             fake = MagicMock(return_value={"status": "refreshed"})
-            mp.setattr(refresh_service, "refresh_document", fake)
+            mp.setattr(refresh, "refresh_document", fake)
             result = DocumentRefreshHandler().execute(task, progress.append)
 
         assert result == {"status": "refreshed"}
@@ -358,13 +358,13 @@ class TestRefreshHandler:
 class TestDocumentWatcher:
 
     def _watcher_env(self, mp, items, status="running"):
-        from file_sources.watcher import DocumentWatcher
+        from pipeline.watcher import DocumentWatcher
 
         counter = itertools.count(1)
         task_manager = MagicMock()
         task_manager.create_task.side_effect = lambda t, p: f"task-{next(counter)}"
         task_manager.get_task.return_value = SimpleNamespace(status=status)
-        mp.setattr(refresh_service, "scan_stale", lambda *a, **kw: list(items))
+        mp.setattr(refresh, "scan_stale", lambda *a, **kw: list(items))
         mp.setattr("task_management.task_manager.task_manager", task_manager)
         return DocumentWatcher(interval=5), task_manager
 
@@ -435,7 +435,7 @@ class TestRefreshRoutes:
         write_doc(env, "edit.md", "新")
         write_summary(env, "s1", "edit.md", md5("旧"))
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(refresh_service, "SessionLocal", temp_db)
+            mp.setattr(refresh, "SessionLocal", temp_db)
             resp = client.get("/api/sources/s1/stale")
 
         assert resp.status_code == 200

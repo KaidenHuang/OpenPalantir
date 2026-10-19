@@ -4,6 +4,11 @@ from datetime import datetime
 from typing import Dict
 import uuid
 
+# 已分析数据库状态
+DB_STATUS_EXTRACTED = "extracted"
+DB_STATUS_DELETED = "deleted"
+
+
 class DatabaseConnection(Base):
     __tablename__ = "database_connections"
     

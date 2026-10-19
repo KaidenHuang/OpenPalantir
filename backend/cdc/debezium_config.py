@@ -246,9 +246,9 @@ def ensure_cdc_user(
 def _ensure_cdc_user_mysql(conn_config: Dict, cdc_user: str, cdc_password: str) -> Dict:
     """MySQL：创建/赋权 cdc_user（REPLICATION SLAVE/CLIENT）+ binlog 前置检测。"""
     # 延迟导入避免循环依赖
-    from database_management.database_manager import database_manager
+    from content_extraction.database.connector import create_bare_engine_for
 
-    engine = database_manager._create_bare_engine(conn_config)
+    engine = create_bare_engine_for(conn_config)
     if engine is None:
         raise ValueError("无法连接源 MySQL，请检查连接配置（host/port/账号密码）")
 
@@ -295,10 +295,10 @@ def _ensure_cdc_user_mysql(conn_config: Dict, cdc_user: str, cdc_password: str) 
 
 def _ensure_cdc_user_pg(conn_config: Dict, cdc_user: str, cdc_password: str) -> Dict:
     """PG：创建 cdc_user（REPLICATION 角色 + SELECT）+ wal_level=logical 前置检测。"""
-    from database_management.database_manager import database_manager
+    from content_extraction.database.connector import create_engine_for
 
     # PG 建号需连具体 dbname（GRANT 在库级）；conn_config.database 是目标库
-    engine = database_manager._create_engine(conn_config)
+    engine = create_engine_for(conn_config)
     if engine is None:
         raise ValueError("无法连接源 PostgreSQL，请检查连接配置（host/port/dbname/账号密码）")
 

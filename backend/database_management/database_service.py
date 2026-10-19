@@ -1,127 +1,25 @@
+"""数据库 Schema 分析结果的 SQLite 持久化（阶段②提取结果 / 阶段③标注产物）
+
+连接配置的 CRUD 已归 source_registry/database/registry.py；
+本模块只管分析产物的存取：Schema（表/字段/外键/推断关系）与已分析库记录。
+"""
+import json
 import os
 import uuid
-from sqlalchemy.orm import Session
-from models.database import DatabaseConnection, DatabaseTable, DatabaseColumn, DatabaseForeignKey, InferredRelationship, AnalyzedDatabase
-from database_management.database_manager import DB_STATUS_EXTRACTED
-from typing import Dict, List, Optional
-from system.logger import logger
 from datetime import datetime
+from typing import Dict, Optional
 
-class DatabaseService:
-    """数据库连接配置和Schema信息的持久化服务"""
-    
-    def create_connection(self, db: Session, config: Dict) -> DatabaseConnection:
-        """创建数据库连接配置"""
-        try:
-            connection = DatabaseConnection(
-                id=config["id"],
-                name=config["name"],
-                type=config["type"],
-                host=config.get("host"),
-                port=config.get("port"),
-                database=config.get("database"),
-                username=config.get("username"),
-                password=config.get("password"),
-                service_name=config.get("service_name"),
-                description=config.get("description"),
-                created_at=datetime.now()
-            )
-            db.add(connection)
-            db.commit()
-            db.refresh(connection)
-            logger.info(f"数据库连接配置已保存: {connection.id}")
-            return connection
-        except Exception as e:
-            db.rollback()
-            logger.error(f"创建数据库连接配置失败: {e}")
-            raise
-    
-    def get_connection(self, db: Session, connection_id: str) -> Optional[DatabaseConnection]:
-        """获取连接配置"""
-        try:
-            return db.query(DatabaseConnection).filter(DatabaseConnection.id == connection_id).first()
-        except Exception as e:
-            logger.error(f"获取数据库连接配置失败: {e}")
-            return None
-    
-    def get_connection_by_name(self, db: Session, name: str) -> Optional[DatabaseConnection]:
-        """根据名称获取连接配置"""
-        try:
-            return db.query(DatabaseConnection).filter(
-                DatabaseConnection.name == name,
-                DatabaseConnection.is_deleted == False
-            ).first()
-        except Exception as e:
-            logger.error(f"根据名称获取数据库连接配置失败: {e}")
-            return None
-    
-    def get_all_connections(self, db: Session, include_deleted: bool = False) -> List[DatabaseConnection]:
-        """获取所有连接配置"""
-        try:
-            query = db.query(DatabaseConnection)
-            if not include_deleted:
-                query = query.filter(DatabaseConnection.is_deleted == False)
-            return query.all()
-        except Exception as e:
-            logger.error(f"获取所有数据库连接配置失败: {e}")
-            return []
-    
-    def update_connection(self, db: Session, connection_id: str, config: Dict) -> bool:
-        """更新连接配置"""
-        try:
-            connection = db.query(DatabaseConnection).filter(DatabaseConnection.id == connection_id).first()
-            if not connection:
-                return False
-            
-            if "name" in config:
-                connection.name = config["name"]
-            if "type" in config:
-                connection.type = config["type"]
-            if "host" in config:
-                connection.host = config["host"]
-            if "port" in config:
-                connection.port = config["port"]
-            if "database" in config:
-                connection.database = config["database"]
-            if "username" in config:
-                connection.username = config["username"]
-            if "password" in config:
-                connection.password = config["password"]
-            if "service_name" in config:
-                connection.service_name = config["service_name"]
-            if "description" in config:
-                connection.description = config["description"]
-            
-            connection.updated_at = datetime.now()
-            db.commit()
-            logger.info(f"数据库连接配置已更新: {connection_id}")
-            return True
-        except Exception as e:
-            db.rollback()
-            logger.error(f"更新数据库连接配置失败: {e}")
-            return False
-    
-    def delete_connection(self, db: Session, connection_id: str) -> bool:
-        """删除连接配置及相关Schema信息"""
-        try:
-            connection = db.query(DatabaseConnection).filter(DatabaseConnection.id == connection_id).first()
-            if not connection:
-                return False
-            
-            db.query(InferredRelationship).filter(InferredRelationship.connection_id == connection_id).delete()
-            db.query(DatabaseForeignKey).filter(DatabaseForeignKey.connection_id == connection_id).delete()
-            db.query(DatabaseColumn).filter(DatabaseColumn.connection_id == connection_id).delete()
-            db.query(DatabaseTable).filter(DatabaseTable.connection_id == connection_id).delete()
-            db.query(AnalyzedDatabase).filter(AnalyzedDatabase.connection_id == connection_id).delete()
-            db.delete(connection)
-            db.commit()
-            logger.info(f"数据库连接配置已删除: {connection_id}")
-            return True
-        except Exception as e:
-            db.rollback()
-            logger.error(f"删除数据库连接配置失败: {e}")
-            return False
-    
+from sqlalchemy.orm import Session
+
+from models.database import (DB_STATUS_EXTRACTED, AnalyzedDatabase, DatabaseColumn,
+                             DatabaseConnection, DatabaseForeignKey,
+                             DatabaseTable, InferredRelationship)
+from system.logger import logger
+
+
+class SchemaRepository:
+    """Schema 分析产物仓储（save/get/删除 + 已分析库记录）"""
+
     def save_schema(self, db: Session, connection_id: str, schema: Dict) -> bool:
         """保存Schema信息到数据库"""
         try:
@@ -213,7 +111,7 @@ class DatabaseService:
             db.rollback()
             logger.error(f"保存Schema信息失败: {e}")
             return False
-    
+
     def delete_schema(self, db: Session, connection_id: str) -> bool:
         """删除指定连接的Schema信息"""
         try:
@@ -227,7 +125,25 @@ class DatabaseService:
             db.rollback()
             logger.error(f"删除Schema信息失败: {e}")
             return False
-    
+
+    def get_schema(self, db: Session, connection_id: str) -> Dict:
+        """获取Schema信息"""
+        try:
+            tables = db.query(DatabaseTable).filter(DatabaseTable.connection_id == connection_id).all()
+            columns = db.query(DatabaseColumn).filter(DatabaseColumn.connection_id == connection_id).all()
+            foreign_keys = db.query(DatabaseForeignKey).filter(DatabaseForeignKey.connection_id == connection_id).all()
+            inferred = db.query(InferredRelationship).filter(InferredRelationship.connection_id == connection_id).all()
+
+            return {
+                "tables": [t.to_dict() for t in tables],
+                "columns": [c.to_dict() for c in columns],
+                "foreign_keys": [fk.to_dict() for fk in foreign_keys],
+                "inferred_relationships": [r.to_dict() for r in inferred]
+            }
+        except Exception as e:
+            logger.error(f"获取Schema信息失败: {e}")
+            return {"tables": [], "columns": [], "foreign_keys": [], "inferred_relationships": []}
+
     def save_analyzed_database(self, db: Session, connection_id: str, database_name: str) -> AnalyzedDatabase:
         """保存或更新已分析的数据库记录（幂等）"""
         try:
@@ -271,74 +187,24 @@ class DatabaseService:
             logger.error(f"获取已分析的数据库记录失败: {e}")
             return []
 
-    def get_schema(self, db: Session, connection_id: str) -> Dict:
-        """获取Schema信息"""
-        try:
-            tables = db.query(DatabaseTable).filter(DatabaseTable.connection_id == connection_id).all()
-            columns = db.query(DatabaseColumn).filter(DatabaseColumn.connection_id == connection_id).all()
-            foreign_keys = db.query(DatabaseForeignKey).filter(DatabaseForeignKey.connection_id == connection_id).all()
-            inferred = db.query(InferredRelationship).filter(InferredRelationship.connection_id == connection_id).all()
+    def save_analyzed_tables(self, db: Session, connection_id: str,
+                             database_name: Optional[str], tables: list) -> None:
+        """为每个表创建 AnalyzedTable 记录（幂等，已存在跳过）"""
+        for tbl in tables:
+            table_uri = f"DBS://{connection_id}/{database_name or ''}/{tbl['table_name']}"
+            existing = db.query(AnalyzedTable).filter(
+                AnalyzedTable.connection_id == connection_id,
+                AnalyzedTable.table_name == tbl["table_name"],
+            ).first()
+            if existing:
+                continue
+            db.add(AnalyzedTable(
+                id=str(uuid.uuid4()),
+                connection_id=connection_id,
+                database_name=database_name or "",
+                table_name=tbl["table_name"],
+                uri=table_uri,
+            ))
 
-            return {
-                "tables": [t.to_dict() for t in tables],
-                "columns": [c.to_dict() for c in columns],
-                "foreign_keys": [fk.to_dict() for fk in foreign_keys],
-                "inferred_relationships": [r.to_dict() for r in inferred]
-            }
-        except Exception as e:
-            logger.error(f"获取Schema信息失败: {e}")
-            return {"tables": [], "columns": [], "foreign_keys": [], "inferred_relationships": []}
 
-    def delete_connection_with_data_check(self, db: Session, connection_id: str) -> Dict:
-        """删除连接，自动判断软/硬删除。
-
-        无关联数据时硬删除，有数据时软删除（标记 is_deleted）。
-        """
-        import os
-
-        connection = db.query(DatabaseConnection).filter(
-            DatabaseConnection.id == connection_id,
-            DatabaseConnection.is_deleted == False
-        ).first()
-        if not connection:
-            raise ValueError("连接不存在")
-
-        # 检查是否有已提取的 Schema 或概要数据
-        has_data = db.query(DatabaseTable).filter(
-            DatabaseTable.connection_id == connection_id
-        ).first() is not None
-        if not has_data:
-            summary_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                   "data", "summaries", "DBS", connection_id)
-            has_data = os.path.isdir(summary_dir) and bool(os.listdir(summary_dir))
-
-        if not has_data:
-            db.delete(connection)
-            db.commit()
-            logger.info(f"直接删除数据库连接成功（无数据）: id={connection_id}")
-            return {"message": "连接删除成功", "deleted": True}
-        else:
-            connection.is_deleted = True
-            connection.deleted_at = datetime.now()
-            connection.updated_at = datetime.now()
-            db.commit()
-            logger.info(f"软删除数据库连接成功: id={connection_id}")
-            return {"message": "连接删除成功", "deleted": False}
-
-    def get_database_summary(self, db: Session, connection_id: str) -> Optional[Dict]:
-        """获取数据库概要 JSON 内容。封装文件读取逻辑。"""
-        import os
-        import json
-
-        conn = self.get_connection(db, connection_id)
-        db_name = conn.database if conn else None
-        if not db_name:
-            return None
-
-        _backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        summary_path = os.path.join(_backend_dir, "data", "summaries", "DBS", connection_id, f"{db_name}.json")
-        if not os.path.isfile(summary_path):
-            return None
-
-        with open(summary_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+db_service = SchemaRepository()

@@ -3,7 +3,7 @@ CDC Schema 缓存 — 从 SQLite 加载数据库 Schema 信息供事件处理使
 """
 from typing import Dict, List, Optional, Any
 from config.database import SessionLocal
-from database_management.database_service import DatabaseService
+from database_management.database_service import db_service
 from system.logger import logger
 
 
@@ -27,7 +27,7 @@ class SchemaCache:
         """从 SQLite 加载 Schema 信息"""
         db = SessionLocal()
         try:
-            service = DatabaseService()
+            service = db_service
             schema = service.get_schema(db, self.connection_id)
 
             if not schema["tables"]:

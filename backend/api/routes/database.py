@@ -1,20 +1,23 @@
-import json
-import os
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from config.database import get_db
-from database_management.database_manager import database_manager
-from database_management.database_service import DatabaseService
-from models.database import DatabaseTable
-from sqlalchemy import func
-from database_management.schema_annotator import schema_annotator
-from task_management.task_manager import task_manager
-from task_management.handlers import SchemaAnalyzeHandler, SchemaImportHandler
+"""数据库源路由 —— HTTP 薄壳
+
+注册/生命周期在 source_registry，Schema 读取在 database_management（阶段②提取结果），
+概要读取在 summary_generation。
+"""
 from typing import Dict, List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from config.database import get_db
+from database_management.database_service import db_service
+from source_registry.database import registry as db_registry
 from system.logger import logger
+from task_management.handlers import SchemaAnalyzeHandler, SchemaImportHandler
+from task_management.task_manager import task_manager
 
 router = APIRouter(prefix="/api/database", tags=["database"])
+
 
 class ConnectionConfig(BaseModel):
     name: str
@@ -26,6 +29,7 @@ class ConnectionConfig(BaseModel):
     password: Optional[str] = None
     service_name: Optional[str] = None
     description: Optional[str] = None
+
 
 class ConnectionUpdate(BaseModel):
     """Partial update model — all fields optional"""
@@ -39,62 +43,63 @@ class ConnectionUpdate(BaseModel):
     service_name: Optional[str] = None
     description: Optional[str] = None
 
+
 class AnalyzeRequest(BaseModel):
     tables: Optional[List[str]] = None
     ignore_tables: Optional[List[str]] = None
     database: Optional[str] = None
     domain: Optional[str] = None   # 本体域包名，决定标注用的实体/关系词表
 
+
 @router.post("/test-connection", response_model=Dict)
 def test_connection_config(config: ConnectionConfig):
     """测试数据库连接配置（不保存，用于创建前的测试）"""
     try:
-        from database_management.database_manager import DatabaseManager
-        dm = DatabaseManager()
-        success = dm.test_connection_config(config.dict())
-        if success:
+        if db_registry.database_source_registry.test_config(config.dict()):
             return {"success": True, "message": "连接测试成功"}
-        else:
-            return {"success": False, "message": "连接测试失败"}
+        return {"success": False, "message": "连接测试失败"}
     except Exception as e:
         logger.error(f"测试数据库连接配置失败: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+
 @router.post("/connections", response_model=Dict)
 def create_connection(config: ConnectionConfig, db: Session = Depends(get_db)):
     """创建数据库连接配置"""
-    if not config.name.strip():
-        raise HTTPException(status_code=400, detail="连接名称不能为空")
     try:
-        logger.info(f"创建数据库连接: {config.name}")
-        connection_id = database_manager.create_connection(config.dict())
-        return {"connection_id": connection_id, "message": "连接创建成功"}
+        conn = db_registry.database_source_registry.create(db, config.dict())
+        return {"connection_id": conn.id, "message": "连接创建成功"}
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         logger.error(f"创建数据库连接失败: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+
 @router.get("/connections/{connection_id}/databases", response_model=Dict)
 def list_databases(connection_id: str, db: Session = Depends(get_db)):
     """获取数据库服务器上的所有数据库列表，包含分析状态"""
     try:
-        live_databases = database_manager.list_databases(connection_id)
-        db_service = DatabaseService()
+        reg = db_registry.database_source_registry
+        live_databases = reg.list_databases(db, connection_id)
         analyzed_records = db_service.get_analyzed_databases(db, connection_id)
         analyzed_dicts = [r.to_dict() for r in analyzed_records]
-        merged = database_manager.merge_databases_with_status(live_databases, analyzed_dicts)
+        merged = reg.merge_databases_with_status(live_databases, analyzed_dicts)
         return {"databases": merged}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"获取数据库列表失败: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
 
 @router.get("/connections", response_model=Dict)
 def get_all_connections(show_deleted: bool = False, db: Session = Depends(get_db)):
     """获取所有数据库连接配置"""
     try:
-        connections = database_manager.get_all_connections(include_deleted=show_deleted)
+        connections = db_registry.database_source_registry.list(db, include_deleted=show_deleted)
         # Single query: find all connection_ids that have tables
+        from models.database import DatabaseTable
         conn_with_tables = set(
             row[0] for row in db.query(DatabaseTable.connection_id).distinct().all()
         )
@@ -108,15 +113,18 @@ def get_all_connections(show_deleted: bool = False, db: Session = Depends(get_db
         logger.error(f"获取数据库连接列表失败: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+
 @router.get("/connections/{connection_id}", response_model=Dict)
 def get_connection(connection_id: str, db: Session = Depends(get_db)):
     """获取数据库连接配置"""
     try:
-        connection = database_manager.get_connection(connection_id)
-        if not connection:
+        conn = db_registry.database_source_registry.get(db, connection_id)
+        if not conn:
             raise HTTPException(status_code=404, detail="连接不存在")
-        d = connection.to_dict()
-        has_schema = db.query(DatabaseTable).filter(DatabaseTable.connection_id == connection_id).first()
+        d = conn.to_dict()
+        from models.database import DatabaseTable
+        has_schema = db.query(DatabaseTable).filter(
+            DatabaseTable.connection_id == connection_id).first()
         d["has_schema"] = has_schema is not None
         return d
     except HTTPException:
@@ -125,31 +133,31 @@ def get_connection(connection_id: str, db: Session = Depends(get_db)):
         logger.error(f"获取数据库连接失败: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+
 @router.put("/connections/{connection_id}", response_model=Dict)
 def update_connection(connection_id: str, config: ConnectionUpdate, db: Session = Depends(get_db)):
     """更新数据库连接配置（支持部分更新）"""
     try:
-        success = database_manager.update_connection(connection_id, config.dict(exclude_unset=True))
-        if not success:
-            raise HTTPException(status_code=404, detail="连接不存在")
+        db_registry.database_source_registry.update(db, connection_id, config.dict(exclude_unset=True))
         return {"message": "连接更新成功"}
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"更新数据库连接失败: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
 
 @router.delete("/connections/{connection_id}", response_model=Dict)
 def delete_connection(connection_id: str, db: Session = Depends(get_db)):
     """删除数据库连接。无提取数据时直接删除，有数据时标记删除"""
     try:
-        from database_management.database_service import DatabaseService
-        svc = DatabaseService()
-        return svc.delete_connection_with_data_check(db, connection_id)
+        deleted = db_registry.database_source_registry.delete(db, connection_id)
+        return {"status": "success", "deleted": deleted,
+                "message": "连接删除成功"}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"删除数据库连接失败: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -159,47 +167,39 @@ def delete_connection(connection_id: str, db: Session = Depends(get_db)):
 def restore_connection(connection_id: str, db: Session = Depends(get_db)):
     """恢复已删除的数据库连接"""
     try:
-        from datetime import datetime
-        from models.database import DatabaseConnection
-
-        connection = db.query(DatabaseConnection).filter(
-            DatabaseConnection.id == connection_id,
-            DatabaseConnection.is_deleted == True
-        ).first()
-        if not connection:
-            raise HTTPException(status_code=404, detail="已删除的连接不存在")
-
-        connection.is_deleted = False
-        connection.deleted_at = None
-        connection.updated_at = datetime.now()
-        db.commit()
-
-        logger.info(f"恢复数据库连接成功: id={connection_id}")
+        db_registry.database_source_registry.restore(db, connection_id)
         return {"message": "连接恢复成功"}
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"恢复数据库连接失败: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+
 @router.post("/connections/{connection_id}/test", response_model=Dict)
-def test_connection(connection_id: str):
+def test_connection(connection_id: str, db: Session = Depends(get_db)):
     """测试数据库连接"""
     try:
-        success = database_manager.test_connection(connection_id)
+        success = db_registry.database_source_registry.test(db, connection_id)
         if success:
             return {"success": True, "message": "连接测试成功"}
-        else:
-            return {"success": False, "message": "连接测试失败"}
+        return {"success": False, "message": "连接测试失败"}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"测试数据库连接失败: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
 
 @router.post("/{connection_id}/analyze", response_model=Dict)
 def analyze_database(connection_id: str, request: Optional[AnalyzeRequest] = None):
     """
     批量分析数据库Schema（阶段1）
-    - 提取所有表的表名、字段、主外键关联
+    - 提取所有表的表名、字段、主外键关联、视图
     - 使用LLM为所有表和字段添加业务标注
     - 推断表之间的业务关联关系
     """
@@ -217,29 +217,27 @@ def analyze_database(connection_id: str, request: Optional[AnalyzeRequest] = Non
         logger.error(f"创建数据库分析任务失败: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+
 @router.get("/{connection_id}/analysis-result", response_model=Dict)
 def get_analysis_result(connection_id: str, db: Session = Depends(get_db)):
     """获取数据库分析结果（未分析时返回空结构）"""
     try:
-        db_service = DatabaseService()
         schema = db_service.get_schema(db, connection_id)
         analyzed = db_service.get_analyzed_databases(db, connection_id)
         schema["analyzed_databases"] = [ad.database_name for ad in analyzed if ad.status == "extracted"]
         return schema
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"获取数据库分析结果失败: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
 
 @router.get("/{connection_id}/summary")
 def get_database_summary(connection_id: str, db: Session = Depends(get_db)):
     """获取数据库概要信息（从本地概要文件读取）"""
     try:
-        from database_management.database_service import DatabaseService
-        svc = DatabaseService()
-        data = svc.get_database_summary(db, connection_id)
-        if data is None:
+        from summary_generation.database import store
+        data = store.load(connection_id)
+        if not data:
             raise HTTPException(status_code=404, detail="数据库概要不存在，请先执行分析任务")
         return {"status": "success", "summary": data}
     except HTTPException:
@@ -247,6 +245,7 @@ def get_database_summary(connection_id: str, db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"获取数据库概要失败: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
 
 @router.post("/{connection_id}/import", response_model=Dict)
 def import_to_graph(connection_id: str, batch_size: int = 5000, row_limit: int = 0, neo4j_batch_size: int = 20000, use_merge: bool = False, auto_start_cdc: bool = False):

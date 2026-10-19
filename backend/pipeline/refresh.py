@@ -12,10 +12,12 @@ import os
 from typing import Any, Dict, List, Optional
 
 from config.database import SessionLocal
-from document_processing import summary_generator
 from model_management.model_service import ModelService
 from models.source import DocumentSource
 from system.logger import logger
+
+# 各阶段组件接口（阶段间只依赖组件服务，不越层摸内部实现）
+from document_processing import summary_generator  # 阶段③文档侧 store（后续阶段替换为 summary_generation）
 
 
 def resolve_file(base_path: str, file_path: str) -> str:
@@ -68,13 +70,20 @@ def refresh_document(source_id: str, file_path: str, *, force: bool = False,
                      domain: str = "general", parallelism: int = 8) -> Dict[str, Any]:
     """重跑一篇文档：摘要 → 抽取（新代佐证）→ 旧代回收 → Wiki 刷新
 
-    回收后置于抽取：LLM/落库失败时旧图谱数据完好（失败即任务失败，
+    回收后立于抽取：LLM/落库失败时旧图谱数据完好（失败即任务失败，
     下次成功刷新才摘除旧代），不再是「回收后抽取失败 → 图谱被清空」的丢数据顺序。
     代际佐证（URI@content_hash）保证抽取先写入的新代产出不被随后的回收误伤。
     """
     from wiki.wiki_service import wiki_service
 
-    base_path = _source_base_path(source_id)
+    db = SessionLocal()
+    try:
+        from source_registry.document.registry import document_source_registry
+        base_path = document_source_registry.root_path(db, source_id, quiet=True)
+    finally:
+        db.close()
+    if not base_path:
+        raise FileNotFoundError(f"文档源不存在或已删除: {source_id}")
     full_path = resolve_file(base_path, file_path)
     datasource = summary_generator.datasource_for(source_id, file_path)
 
@@ -146,17 +155,20 @@ def scan_stale(limit: Optional[int] = None) -> List[Dict[str, str]]:
 
 def _source_base_path(source_id: str, quiet: bool = False) -> str:
     """文档源的本地根路径；源不存在或已删除时返回空串"""
+    from source_registry.document.registry import document_source_registry
+
     db = SessionLocal()
     try:
-        source = db.query(DocumentSource).filter_by(id=source_id).first()
-        if not source or source.is_deleted:
-            if not quiet:
-                raise FileNotFoundError(f"文档源不存在或已删除: {source_id}")
-            return ""
+        try:
+            source = document_source_registry.require_alive(db, source_id)
+        except ValueError:
+            if quiet:
+                return ""
+            raise
         if source.source_type != "local":
-            if not quiet:
-                raise ValueError(f"仅本地文档源支持自动刷新: {source_id}")
-            return ""
+            if quiet:
+                return ""
+            raise ValueError(f"仅本地文档源支持自动刷新: {source_id}")
         return source.path
     finally:
         db.close()
