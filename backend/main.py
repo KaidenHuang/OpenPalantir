@@ -28,10 +28,6 @@ except Exception as e:
 from models.model import init_models
 init_models()
 
-# 初始化默认实体类型
-from models.database import init_entity_types
-init_entity_types()
-
 from system.system_integration import init_system_integration
 
 app = FastAPI(
@@ -64,7 +60,7 @@ async def root():
     return {"message": "分析决策系统API服务运行中"}
 
 # 导入路由
-from api.routes import graph, analysis, model, database, decision, filesystem, source, cdc as cdc_routes, entity_types, wiki as wiki_routes, ontology as ontology_routes
+from api.routes import graph, analysis, model, database, decision, filesystem, source, cdc as cdc_routes, wiki as wiki_routes, ontology as ontology_routes
 from api import task
 
 app.include_router(graph.router, prefix="/api/graph", tags=["graph"])
@@ -76,7 +72,6 @@ app.include_router(decision.router, prefix="/api/decision", tags=["decision"])
 app.include_router(filesystem.router, prefix="/api/filesystem", tags=["filesystem"])
 app.include_router(source.router, prefix="/api", tags=["source"])
 app.include_router(cdc_routes.router, tags=["cdc"])
-app.include_router(entity_types.router, prefix="/api/entity-types", tags=["entity-types"])
 app.include_router(wiki_routes.router, prefix="/api/wiki", tags=["wiki"])
 app.include_router(ontology_routes.router, prefix="/api/ontology", tags=["ontology"])
 

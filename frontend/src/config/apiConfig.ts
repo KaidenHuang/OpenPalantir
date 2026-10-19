@@ -93,12 +93,6 @@ export const API_CONFIG = {
       extract: (sourceId: string) => `${API_BASE_URL}/api/sources/${sourceId}/extract`,
       entities: (sourceId: string) => `${API_BASE_URL}/api/sources/${sourceId}/entities`,
     },
-    entityTypes: {
-      list: `${API_BASE_URL}/api/entity-types`,
-      create: `${API_BASE_URL}/api/entity-types`,
-      update: (typeKey: string) => `${API_BASE_URL}/api/entity-types/${typeKey}`,
-      delete: (typeKey: string) => `${API_BASE_URL}/api/entity-types/${typeKey}`,
-    },
     wiki: {
       pages: `${API_BASE_URL}/api/wiki/pages`,
       page: (pageId: string) => `${API_BASE_URL}/api/wiki/pages/${pageId}`,

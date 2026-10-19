@@ -42,9 +42,9 @@ OpenPalantir 后端是数据分析与知识图谱构建系统的服务端，基�
 │  main.py                                           │
 │    ├─ 创建 SQLite 表（Base.metadata.create_all）    │
 │    ├─ 初始化 Neo4j Schema（约束 + 索引）            │
-│    ├─ 初始化默认模型记录 & 实体类型                  │
+│    ├─ 初始化默认模型记录                           │
 │    ├─ 系统集成（日志/错误/指标/中间件/路由）        │
-│    └─ 注册路由（/api/ 下 12 个 router）           │
+│    └─ 注册路由（/api/ 下 11 个 router）           │
 │                                                    │
 │  WebSocket（/ws/tasks）                             │
 │    ↕ 任务进度实时推送                               │
@@ -54,7 +54,7 @@ OpenPalantir 后端是数据分析与知识图谱构建系统的服务端，基�
          ↕
 ┌─ 存储 ────────────────────────────────────────────┐
 │  SQLite（backend/data/sqlite/database.db）         │
-│    ├─ 任务状态 / 模型记录 / 数据源 / 实体类型      │
+│    ├─ 任务状态 / 模型记录 / 数据源                 │
 │    ├─ CDC 同步状态 / 数据库连接信息                │
 │    └─ 对话记忆                                     │
 │  Neo4j（图数据）                                    │
@@ -75,11 +75,10 @@ OpenPalantir 后端是数据分析与知识图谱构建系统的服务端，基�
 1. 创建 SQLite 表（ORM 自动建表）
 2. 初始化 Neo4j Schema（`CREATE CONSTRAINT IF NOT EXISTS`）
 3. 初始化默认模型记录（`init_models()`）
-4. 初始化默认实体类型（`init_entity_types()`）
-5. 初始化系统集成（日志、错误处理器、中间件、指标、路由）
-6. 后台线程：byname 回填（`backfill_byname()`）
-7. 注册 12 个路由组（含 `/api/wiki`、`/api/ontology`）
-8. `DOC_WATCH_ENABLED=1` 时启动文档轮询监听（`pipeline/watcher.py`），shutdown 时与 CDC Consumer 一同停止
+4. 初始化系统集成（日志、错误处理器、中间件、指标、路由）
+5. 后台线程：byname 回填（`backfill_byname()`）
+6. 注册 11 个路由组（含 `/api/wiki`、`/api/ontology`）
+7. `DOC_WATCH_ENABLED=1` 时启动文档轮询监听（`pipeline/watcher.py`），shutdown 时与 CDC Consumer 一同停止
 
 ## 五阶段组件
 
@@ -115,7 +114,6 @@ backend/
 │   │   ├── wiki.py                # Wiki 页面 CRUD / 生成 / 答案发布
 │   │   ├── ontology.py            # 本体包导入导出 + 治理报告 + 中文词表接口
 │   │   ├── model.py               # LLM 模型配置
-│   │   ├── entity_types.py        # 实体类型
 │   │   └── filesystem.py          # 文件系统操作
 │   └── task.py                    # 异步任务状态查询
 │
@@ -262,7 +260,7 @@ backend/
 ├── models/                        # ORM / 数据模型
 │   ├── model.py                   # 模型记录
 │   ├── task.py                    # 任务状态
-│   ├── database.py                # 数据库连接 / 已分析库状态 / 实体类型
+│   ├── database.py                # 数据库连接 / 已分析库状态
 │   ├── source.py                  # 数据源
 │   ├── cdc.py                     # CDC 状态
 │   ├── wiki.py                    # WikiPage（正文 + 引用锚点 + source_hash）
@@ -364,7 +362,6 @@ CREATE CONSTRAINT IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE
 | `/api/task` | `api/task.py` | 异步任务状态 |
 | `/api/decision` | `api/routes/decision.py` | 决策引擎对话（可选 `scope` 限定作用域 + 返回引用） |
 | `/api/filesystem` | `api/routes/filesystem.py` | 文件系统操作 |
-| `/api/entity-types` | `api/routes/entity_types.py` | 实体类型管理 |
 | `/api/wiki` | `api/routes/wiki.py` | Wiki 页面 CRUD / 生成 / 答案发布 |
 | `/api/ontology` | `api/routes/ontology.py` | 本体包查询与导入导出、中文词表（`/vocabulary`）、治理报告 |
 | `/api` | `api/routes/source.py` | 数据源管理（含 `summarize` / `refresh` / `stale`） |

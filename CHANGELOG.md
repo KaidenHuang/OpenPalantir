@@ -38,6 +38,7 @@ LLM Wiki + 受控本体演进路线的三个里程碑（M1 Wiki 与检索、M2 �
 ### 移除
 
 - `backend/config/domain_config.yaml`（词表唯一来源改为本体包，消除重复定义）
+- `/api/entity-types` 路由与 `entity_types` 表（`models/database.py:EntityType` + 启动播种 `init_entity_types()`）：它是本体注册表的 SQLite 副本，前端与测试均无调用方，类型与显示名的唯一来源改回 `ontology/packs/`。旧库里的 `entity_types` 表不影响运行，需要清理可删 `backend/data/sqlite/database.db` 重启
 
 ## [1.0.0] - 2025-06-01
 
