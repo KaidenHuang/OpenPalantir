@@ -9,6 +9,7 @@ MinerU PDF 结构提取适配器
 
 import re
 import os
+import shutil
 import tempfile
 import subprocess
 import uuid
@@ -25,6 +26,14 @@ def extract_pdf_with_mineru(pdf_path: str) -> str:
     output_dir = os.path.join(tempfile.gettempdir(), f'mineru_{uuid.uuid4().hex[:8]}')
     os.makedirs(output_dir, exist_ok=True)
 
+    try:
+        return _parse_pdf_with_mineru(pdf_path, output_dir)
+    finally:
+        # 子进程失败/超时/异常都要清临时产物，成功解析同样
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def _parse_pdf_with_mineru(pdf_path: str, output_dir: str) -> str:
     pdf_name = os.path.splitext(os.path.basename(pdf_path))[0]
 
     cmd = [
@@ -55,10 +64,6 @@ def extract_pdf_with_mineru(pdf_path: str) -> str:
 
     with open(md_file, 'r', encoding='utf-8') as f:
         md_content = f.read()
-
-    # 清理临时文件
-    import shutil
-    shutil.rmtree(output_dir, ignore_errors=True)
 
     return md_content
 

@@ -1,3 +1,4 @@
+import os
 import uuid
 from sqlalchemy.orm import Session
 from models.database import DatabaseConnection, DatabaseTable, DatabaseColumn, DatabaseForeignKey, InferredRelationship, AnalyzedDatabase
@@ -307,7 +308,8 @@ class DatabaseService:
             DatabaseTable.connection_id == connection_id
         ).first() is not None
         if not has_data:
-            summary_dir = os.path.join("data", "summaries", "DBS", connection_id)
+            summary_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                   "data", "summaries", "DBS", connection_id)
             has_data = os.path.isdir(summary_dir) and bool(os.listdir(summary_dir))
 
         if not has_data:
@@ -333,7 +335,8 @@ class DatabaseService:
         if not db_name:
             return None
 
-        summary_path = os.path.join("data", "summaries", "DBS", connection_id, f"{db_name}.json")
+        _backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        summary_path = os.path.join(_backend_dir, "data", "summaries", "DBS", connection_id, f"{db_name}.json")
         if not os.path.isfile(summary_path):
             return None
 

@@ -38,21 +38,35 @@ def register_middleware(app) -> None:
         start_time = time.time()
         ACTIVE_REQUESTS.inc()
 
+        # 指标 endpoint 标签使用路由模板（/api/graph/nodes/{id}），禁止逐请求原始 path
+        # 聚入标签——否则 ID 级别的高基数序列会撑爆 Prometheus
+        route = request.scope.get("route")
+        endpoint = route.path if route else request.url.path
+        if not endpoint.startswith("/api"):
+            endpoint = "other"
+
         try:
             response = await call_next(request)
             process_time = time.time() - start_time
 
+            # BaseHTTPMiddleware 下 route 在 call_next 才解析，响应后重新兜一次路由模板
+            resolved = request.scope.get("route")
+            if resolved:
+                endpoint = resolved.path
+                if not endpoint.startswith("/api"):
+                    endpoint = "other"
+
             REQUEST_COUNT.labels(
-                method=request.method, endpoint=str(request.url.path),
+                method=request.method, endpoint=endpoint,
                 status=response.status_code
             ).inc()
             REQUEST_LATENCY.labels(
-                method=request.method, endpoint=str(request.url.path)
+                method=request.method, endpoint=endpoint
             ).observe(process_time)
 
             if response.status_code >= 400:
                 ERROR_COUNT.labels(
-                    method=request.method, endpoint=str(request.url.path),
+                    method=request.method, endpoint=endpoint,
                     status=response.status_code
                 ).inc()
 
@@ -60,7 +74,7 @@ def register_middleware(app) -> None:
         except Exception as e:
             logger.error(f"Error processing request: {request.method} {request.url} - {str(e)}")
             ERROR_COUNT.labels(
-                method=request.method, endpoint=str(request.url.path), status=500
+                method=request.method, endpoint=endpoint, status=500
             ).inc()
             return JSONResponse(status_code=500, content={"detail": "Internal server error"})
         finally:

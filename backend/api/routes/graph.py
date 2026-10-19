@@ -114,18 +114,21 @@ def get_node(entity_id: str):
 def search_nodes(request: EntitySearchRequest):
     """搜索节点/实体"""
     try:
-        logger.info(f"接收搜索节点请求: query={request.query}, page={request.page}, limit={request.limit}, entity_type={request.entity_type}")
+        # 限界兜底：恶意/失灵前端可传 limit=10^9 把 Neo4j 一次拉死
+        limit = max(1, min(request.limit or 10, 100))
+        page = max(1, request.page or 1)
+        logger.info(f"接收搜索节点请求: query={request.query}, page={page}, limit={limit}, entity_type={request.entity_type}")
 
-        offset = (request.page - 1) * request.limit
+        offset = (page - 1) * limit
         entities, total_count = entity_repo.list_entities_with_pagination(
             entity_type=request.entity_type,
             query=request.query,
-            limit=request.limit,
+            limit=limit,
             offset=offset,
         )
-        total_pages = (total_count + request.limit - 1) // request.limit
+        total_pages = (total_count + limit - 1) // limit
 
-        logger.info(f"搜索节点成功: 共 {total_count} 个结果, 当前页 {request.page}/{total_pages}")
+        logger.info(f"搜索节点成功: 共 {total_count} 个结果, 当前页 {page}/{total_pages}")
         return {
             "status": "success",
             "data": {
@@ -133,8 +136,8 @@ def search_nodes(request: EntitySearchRequest):
                 "pagination": {
                     "total_count": total_count,
                     "total_pages": total_pages,
-                    "current_page": request.page,
-                    "page_size": request.limit
+                    "current_page": page,
+                    "page_size": limit
                 }
             }
         }

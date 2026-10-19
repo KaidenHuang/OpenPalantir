@@ -32,14 +32,18 @@ class TaskWSManager:
         logger.info(f"[ws] 客户端断开，当前连接数: {len(self._connections)}")
 
     async def broadcast(self, data: dict):
-        """向所有连接的客户端广播消息"""
+        """向所有连接的客户端广播消息
+
+        单连接发送限时（默认 5 秒）：慢读者被 TCP 窗口 buffering 卡住时不允许
+        占着 event loop 把整个广播队列拖死；超时连接按死连接清理。
+        """
         if not self._connections:
             return
         message = json.dumps(data, ensure_ascii=False)
         stale = []
         for conn in self._connections:
             try:
-                await conn.send_text(message)
+                await asyncio.wait_for(conn.send_text(message), timeout=5)
             except Exception:
                 stale.append(conn)
         for conn in stale:
