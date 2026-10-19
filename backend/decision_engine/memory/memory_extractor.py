@@ -21,8 +21,12 @@ class MemoryExtractor:
 
     @property
     def model_client(self):
+        # 不缓存 None：模型晚于进程启动/配置好时，属性不改写失败结果，下轮取值还能拿到新客户端
         if self._model_client is None:
-            self._model_client = get_model_client()
+            client = get_model_client()
+            if client is not None:
+                self._model_client = client
+            return client
         return self._model_client
 
     def extract_async(self, question: str, answer_summary: str,

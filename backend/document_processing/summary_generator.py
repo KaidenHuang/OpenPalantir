@@ -56,8 +56,8 @@ def file_content_hash(path: str) -> str:
 
 
 def summary_path(source_id: str, file_path: str) -> str:
-    """某文档源下某文件的摘要 JSON 路径；任意 ../../ 形态都拒（source_id 合成进路径且受查）"""
-    if not re.fullmatch(r"[0-9a-fA-F-]{8,}", source_id):
+    """某文档源下某文件的摘要 JSON 路径；source_id/file_path 里的路径分隔符与 .. 直接拒（safe_join 兜底严格包含判定）"""
+    if not re.fullmatch(r"[0-9a-zA-Z][0-9a-zA-Z_-]*", source_id):
         raise ValueError(f"非法 source_id: {source_id}")
     from utils.path_guard import safe_join
 
@@ -100,8 +100,12 @@ def generate(full_path: str) -> dict:
     if ext not in generators:
         raise ValueError(f"不支持的文件类型: {ext}")
 
+    # 指纹先行：先取 hash 再做耗时的摘要生成。若生成期间源文件被改，
+    # 落盘的是新摘要+旧指纹 → 下轮刷新判 stale 重跑（安全的误报方向）；
+    # 反序（先生成后取指纹）会让"改文件掐秒"漏检使旧内容永久假有效。
+    content_hash = file_content_hash(full_path)
     result = generators[ext](full_path)
-    result["content_hash"] = file_content_hash(full_path)
+    result["content_hash"] = content_hash
     return result
 
 

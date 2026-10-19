@@ -180,8 +180,14 @@ class WikiService:
             if entity_pages:
                 ids = [entity_generator.parse_entity_datasource(p.datasource)
                        for p in entity_pages]
-                alive = set(entity_repo.get_entities_batch([i for i in ids if i]))
-                stale += [p for p, eid in zip(entity_pages, ids) if eid not in alive]
+                try:
+                    # strict：Neo4j 故障时得到的全空白集合不等于「实体已死」，宁可本轮不清理也不能整批误删
+                    alive = set(entity_repo.get_entities_batch([i for i in ids if i], strict=True))
+                except Exception as e:
+                    logger.warning(f"[wiki] prune_orphans 跳过实体页校验（图谱读取失败）: {e}")
+                    alive = None
+                if alive is not None:
+                    stale += [p for p, eid in zip(entity_pages, ids) if eid not in alive]
 
             for page in stale:
                 db.delete(page)

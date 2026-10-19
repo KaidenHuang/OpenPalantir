@@ -196,8 +196,9 @@ def _repair_by_closing(text: str) -> Optional[str]:
 
 def _apply_text_fixes(text: str) -> str:
     """应用常见的文本修复（来自 pageindex 和 engine 的经验策略）。"""
-    # Python None → JSON null
-    text = text.replace('None', 'null')
+    # Python None → JSON null：只替换结构性位置（冒号/逗号/首括号之后），
+    # 整词全替换会把 "None body" 这类字符串字面量内容也改坏并让 payload 失真
+    text = re.sub(r'(:\s*|\[\s*|,\s*)(None\b)(?![\w"])', lambda m: m.group(1) + 'null', text)
     # 尾部逗号：,] → ]  ,} → }
     text = text.replace(',]', ']').replace(',}', '}')
     return text

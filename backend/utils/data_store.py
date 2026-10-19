@@ -68,6 +68,8 @@ class EntityDataStore:
             logger.info("没有需要保存的实体")
             return entity_count, rel_count
 
+        # 词表外 'time' 类型防幻觉阀门在进料缝拦截（repo 层不再过滤，保证 ids 与输入对齐）
+        entities = [e for e in entities if (e.get('type') or '').strip().lower() != 'time']
         prepared_entities = []
         name_to_eid: Dict[str, str] = {}  # 原始名 → entity_id（别名解析前）
         for entity in entities:
@@ -167,6 +169,8 @@ class EntityDataStore:
         if not entities:
             return []
 
+        # 词表外 'time' 类型防幻觉阀门在进料缝拦截（repo 层不再过滤，保证 ids 与输入对齐）
+        entities = [e for e in entities if (e.get('type') or '').strip().lower() != 'time']
         prepared_entities = []
         for entity in entities:
             ed = EntityData.from_llm_dict(entity, datasource=datasource or "")

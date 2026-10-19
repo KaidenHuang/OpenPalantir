@@ -66,12 +66,15 @@ class DatabaseDialect:
             return []
 
     def fetch_table_rows_batched(self, connection, table_name: str, columns: List[str],
-                                  batch_size: int = 5000, max_rows: int = 0):
+                                 batch_size: int = 5000, max_rows: int = 0,
+                                 order_keys: Optional[List[str]] = None):
         """生成器：分批获取表行数据（基于 LIMIT/OFFSET），每批 yield List[Dict]
         :param max_rows: 最大返回行数（0=不限制）
+        :param order_keys: 稳定排序列（给定页数据才可复现，无主键回退时必传，否则并发写入会丢行/重复行）
         大表请使用 fetch_table_rows_keyset() 以避免 OFFSET 性能退化。
         """
         try:
+            order_cols = [safe_identifier(c) for c in (order_keys or [])]
             t = table(table_name, *[column(c) for c in columns])
             offset = 0
             total_yielded = 0
@@ -80,6 +83,8 @@ class DatabaseDialect:
                     break
                 limit = min(batch_size, max_rows - total_yielded) if max_rows > 0 else batch_size
                 stmt = select(t).limit(limit).offset(offset)
+                if order_cols:
+                    stmt = stmt.order_by(*[literal_column(c) for c in order_cols])
                 result = connection.execute(stmt)
                 db_columns = result.keys()
                 rows = result.fetchall()
@@ -102,7 +107,8 @@ class DatabaseDialect:
         """
         if not pk_columns:
             logger.warning(f"表 {table_name} 无主键，回退 LIMIT/OFFSET 分页")
-            yield from self.fetch_table_rows_batched(connection, table_name, columns, batch_size, max_rows)
+            yield from self.fetch_table_rows_batched(
+                connection, table_name, columns, batch_size, max_rows, order_keys=columns)
             return
 
         try:
@@ -151,7 +157,8 @@ class DatabaseDialect:
 
         except Exception as e:
             logger.error(f"游标分页查询表 {table_name} 时出错: {e}，回退 LIMIT/OFFSET")
-            yield from self.fetch_table_rows_batched(connection, table_name, columns, batch_size, max_rows)
+            yield from self.fetch_table_rows_batched(
+                connection, table_name, columns, batch_size, max_rows, order_keys=pk_columns)
 
 class MySQLDialect(DatabaseDialect):
     """MySQL方言"""

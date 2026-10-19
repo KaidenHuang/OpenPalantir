@@ -81,14 +81,10 @@ class EntityRepository:
     # ── 写入 ──
 
     def add_entity(self, entity: Dict[str, Any], defer_cache: bool = False) -> Dict[str, Any]:
-        """添加单个实体"""
+        """添加单个实体（不做词表过滤，由调用方保证类型合法）"""
         try:
             entity_name = entity.get("name")
             entity_type = entity.get("type", "Entity")
-
-            if entity_type == 'time':
-                logger.info(f"[add_entity] 跳过 time 类型实体: {entity_name}")
-                return {"status": "skipped", "message": "time type entity is not allowed"}
 
             logger.info(f"[add_entity] 开始添加实体: {entity_name}, type={entity_type}")
 
@@ -127,19 +123,21 @@ class EntityRepository:
             raise
 
     def add_entities(self, entities: List[Dict[str, Any]], defer_cache: bool = False) -> Dict[str, Any]:
-        """批量添加实体（UNWIND + MERGE，按 id 幂等）"""
+        """批量添加实体（UNWIND + MERGE，按 id 幂等）。
+
+        ids 与入参实体一一对应（含空列表）；词表外类型过滤不属于 repo 职责（在 data_store 进料缝拦截）。
+        """
         try:
             logger.info(f"[add_entities] 开始批量添加实体，数量: {len(entities)}")
 
-            filtered = [e for e in entities if e.get('type') != 'time']
-            if not filtered:
+            if not entities:
                 logger.info("[add_entities] 没有需要添加的实体")
                 return {"status": "success", "count": 0, "ids": []}
 
             entity_ids = []
             entity_list = []
 
-            for entity in filtered:
+            for entity in entities:
                 entity_name = entity.get("name", "")
                 eid = compute_entity_id(entity_name)
                 entity_ids.append(eid)
@@ -194,14 +192,16 @@ class EntityRepository:
             logger.error(f"获取实体失败: {e}")
             return None
 
-    def get_entities_batch(self, entity_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    def get_entities_batch(self, entity_ids: List[str], strict: bool = False) -> Dict[str, Dict[str, Any]]:
         """批量获取实体，单次 Cypher 查询，返回 {id: entity_dict}。
-        超过 5000 个 ID 时自动分块查询。"""
+
+        超过 5000 个 ID 时自动分块查询；strict=True 时查询失败直接抛出（默认吞错返回已取部分）。"""
         if not entity_ids:
             return {}
-        entities = {}
-        chunk_size = 5000
         try:
+            entities = {}
+            chunk_size = 5000
+            # strict: 批量读失败必须显式抛出而不是返回半空的字典 —— prune 等仲裁方依赖它与真实存活集合区分
             for i in range(0, len(entity_ids), chunk_size):
                 chunk = entity_ids[i:i + chunk_size]
                 query = """
@@ -218,6 +218,8 @@ class EntityRepository:
             return entities
         except Exception as e:
             logger.error(f"批量获取实体失败: {e}")
+            if strict:
+                raise
             return entities
 
     def search_entities(self, query: str, limit: int = 10, source_filters: List[str] = None,
@@ -793,18 +795,21 @@ class EntityRepository:
         优先选择含 'name' 的非主键字符串列，否则取第一个字符串值。
         """
         try:
-            # 分批获取 byname 为空的实体
+            # 游标分批获取 byname 为空的实体（按下 id 递进，避免无候选产出时空转死循环）
             fetch_query = """
             MATCH (n:Entity)
-            WHERE n.byname IS NULL AND n.attributes IS NOT NULL
+            WHERE n.byname IS NULL AND n.attributes IS NOT NULL AND n.id > $last_id
             RETURN n.id AS id, n.attributes AS attrs
+            ORDER BY n.id
             LIMIT 5000
             """
             updated = 0
+            last_id = ""
             while True:
-                result = neo4j_conn.execute_query(fetch_query, {})
+                result = neo4j_conn.execute_query(fetch_query, {"last_id": last_id})
                 if not result:
                     break
+                last_id = result[-1]["id"]
 
                 batch = []
                 for record in result:
@@ -842,9 +847,6 @@ class EntityRepository:
                         {"batch": batch}
                     )
                     updated += len(batch)
-
-                if len(result) < 5000:
-                    break
 
             if updated > 0:
                 logger.info(f"[backfill_byname] 回填了 {updated} 个实体的 byname")

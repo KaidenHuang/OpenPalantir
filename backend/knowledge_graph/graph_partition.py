@@ -164,11 +164,11 @@ class GraphPartition:
                         u_partition = partition_id
                     if v in nodes:
                         v_partition = partition_id
-                    if u_partition and v_partition:
+                    if u_partition is not None and v_partition is not None:
                         break
                 
                 # 如果u和v在不同的分区，添加元边
-                if u_partition and v_partition and u_partition != v_partition:
+                if u_partition is not None and v_partition is not None and u_partition != v_partition:
                     edge_key = tuple(sorted([u_partition, v_partition]))
                     if edge_key not in inter_partition_edges:
                         inter_partition_edges[edge_key] = 0

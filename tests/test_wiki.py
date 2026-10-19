@@ -1,4 +1,4 @@
-"""
+﻿"""
 Wiki 模块单元测试
 
 测试 page_generator（文档页/主题页）、entity_generator（实体页）、WikiService（CRUD、发布、互链）。
@@ -414,7 +414,7 @@ class TestOrphanPruning:
         env = wiki_env
         self._save(env.service, "entity", "ENT://id_zs/张三", "张三")
         self._save(env.service, "entity", "ENT://id_pf/研发平台", "研发平台")
-        repo = SimpleNamespace(get_entities_batch=lambda ids: {i: {} for i in ids if i != "id_zs"})
+        repo = SimpleNamespace(get_entities_batch=lambda ids, strict=False: {i: {} for i in ids if i != "id_zs"})
         monkeypatch.setattr("knowledge_graph.entity_repository.entity_repo", repo)
 
         assert env.service.prune_orphans() == 1
@@ -424,7 +424,7 @@ class TestOrphanPruning:
         env = wiki_env
         self._save(env.service, "topic", "", "绩效")
         self._save(env.service, "answer", "", "问答沉淀")
-        repo = SimpleNamespace(get_entities_batch=lambda ids: {})
+        repo = SimpleNamespace(get_entities_batch=lambda ids, strict=False: {})
         monkeypatch.setattr("knowledge_graph.entity_repository.entity_repo", repo)
 
         assert env.service.prune_orphans() == 0
