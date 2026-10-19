@@ -125,22 +125,27 @@ main.py (FastAPI 应用入口)
   │       ├─ analyze_path/            ← 路径分析
   │       ├─ analyze_centrality/      ← 中心性分析
   │       └─ analyze_community/       ← 社区检测
-  ├─ document_processing/             ← 文档解析
-  │   ├─ document_processor.py        ← PDF/Word/Markdown/图片解析
-  │   └─ summary_generator.py         ← 摘要编排 + 落盘 + 源文件内容指纹 + DOC:// 来源 URI
-  ├─ source_management/               ← 文档源处理与刷新
-  │   ├─ source_service.py            ← 摘要分块抽取（实体/关系入库）
-  │   └─ refresh_service.py           ← 内容失效传播：判定→先生成→后回收→Wiki 刷新
-  ├─ entity_extraction/               ← 实体提取
-  │   └─ llm_entity_enhancer.py       ← LLM 驱动的实体+关系抽取
-  ├─ content_extraction/              ← 内容提取（纯解析，无 LLM）
-  │   ├─ models.py                    ← ExtractedDocument / Section 数据契约
-  │   └─ converters/                  ← pdf(pymupdf4llm)/docx/md/txt 转换器注册表
-  ├─ content_summarization/           ← 摘要生成（唯一的 LLM 环节）
-  ├─ database_management/             ← 外部数据库管理
-  │   ├─ database_manager.py          ← 连接管理 + Schema提取 + 行级导入
-  │   ├─ database_service.py          ← 数据库元数据 CRUD
-  │   └─ schema_annotator.py          ← LLM Schema 语义标注
+  ├─ source_registry/                 ← ① 注册数据源
+  │   ├─ document/
+  │   │   ├─ registry.py              ← 文档源注册/软删/恢复/路径解析
+  │   │   └─ scanner.py               ← 源目录浏览
+  │   └─ database/registry.py         ← 连接 CRUD / 测连 / 库列表
+  ├─ content_extraction/              ← ② 内容提取（纯解析，无 LLM）
+  │   ├─ document/                    ← 章节树 + 页码（models/md_parser/converters）
+  │   └─ database/                    ← connector/dialects/schema_reader/store（表/字段/主外键/视图）
+  ├─ summary_generation/              ← ③ 摘要生成（唯一的 LLM 环节）
+  │   ├─ document/                    ← 摘要树 + 落盘/指纹/DOC:// URI（summarizer/store）
+  │   └─ database/                    ← 库表业务标注 + 概要落盘（annotator/build/store）
+  ├─ entity_extraction/               ← ④ 实体抽取
+  │   ├─ document/                    ← chunker/service/extractor（批次 LLM 抽实体/关系/属性）
+  │   └─ database/                    ← importer（行实体/属性表/外键关系）+ row_reader（分页）
+  ├─ wiki_generation/                 ← ⑤ Wiki 生成
+  │   ├─ document/                    ← 文档页 / 跨文档主题页
+  │   ├─ entity/                      ← 图谱实体页
+  │   └─ service.py                   ← 页面 CRUD + 生成编排 + 答案发布 + 孤儿清理
+  ├─ pipeline/                        ← 跨阶段调度薄层
+  │   ├─ refresh.py                   ← 内容失效传播：判定→先生成→后回收→Wiki 刷新
+  │   └─ watcher.py                   ← 文档监听：轮询指纹，派发 document_refresh 任务
   ├─ model_management/                ← LLM 模型管理
   │   ├─ model_client.py              ← 统一 LLM 调用客户端
   │   └─ model_service.py             ← 模型配置 CRUD
@@ -153,16 +158,15 @@ main.py (FastAPI 应用入口)
   │   ├─ task_manager.py              ← 任务队列 + 执行器（按 task_type 分发 handler；唯一落库缝）
   │   └─ handlers/                    ← schema_analyze / schema_import / cdc_start /
   │                                     document_summary / document_refresh / wiki_generate
-  ├─ file_sources/                    ← 文件源抽象
-  │   ├─ base.py                      ← 抽象基类
-  │   ├─ local_source.py              ← 本地文件系统实现
-  │   └─ watcher.py                   ← 文档监听：轮询指纹，派发 document_refresh 任务
   ├─ utils/                           ← 工具
-  │   └─ data_store.py                ← EntityDataStore (写 Neo4j)
+  │   └─ json_utils.py / path_guard.py
   └─ system/                          ← 系统
       ├─ logger.py                    ← 日志（文件输出到 logs/）
       └─ system_integration.py        ← CORS/监控/健康检查
 ```
+
+> 五阶段组件各自再分 `document/`（文档侧）与 `database/`（数据库侧）两个实现，阶段间只经组件对外接口耦合。
+> `knowledge_graph/entity_data_store.py`（语义行装配）是所有抽取侧共用的落库缝，不属于任何单一阶段。
 
 ### 2.2 各模块职责
 
@@ -170,22 +174,20 @@ main.py (FastAPI 应用入口)
 |------|------|---------|
 | `config/` | 数据库连接管理 | SQLAlchemy engine/session、Neo4j driver |
 | `models/` | ORM 模型定义 | SQLAlchemy ORM、Pydantic |
-| `api/routes/` | REST API 端点 | FastAPI Router、Pydantic Schema |
-| `knowledge_graph/` | 图谱 CRUD、搜索、分区、缓存 | Cypher（按 LinkType 类型化边）、LRU Cache |
+| `api/routes/` | REST API 端点（薄壳，业务归组件） | FastAPI Router、Pydantic Schema |
+| `knowledge_graph/` | 图谱 CRUD、搜索、分区、缓存、来源回收、语义行装配 | Cypher（按 LinkType 类型化边）、LRU Cache |
 | `analysis_engine/` | 图算法分析 | NetworkX、Louvain、scikit-learn |
 | `ontology/` | 受控本体注册表、谓词归一化与治理 | YAML 本体包、词表校验、prompt 注入、只读聚合治理报告、包导入导出 |
-| `wiki/` | LLM Wiki 页面生成与编辑 | 摘要树聚合、跨文档主题聚类、实体档案拼装 |
 | `decision_engine/` | 智能决策 | 统一 Agentic RAG（ReAct 循环）、种子检索、双层记忆、Skill+MCP 工具管理 |
-| `document_processing/` | 多格式文档解析 + 摘要落盘与内容指纹 | PyPDF2、python-docx、Pillow、pytesseract |
-| `content_extraction/` | 按格式提取结构/正文/页码 → 统一中间格式 | pymupdf4llm、python-docx、Markdown 章节解析（无 LLM） |
-| `source_management/` | 摘要→图谱抽取、文档内容失效传播 | 指纹比对、按佐证回收、Wiki 下游刷新 |
-| `entity_extraction/` | 实体识别+关系抽取 | LLM prompt 工程、JSON 修复 |
-| `content_summarization/` | 摘要树生成（叶子 summary / 父 prefix_summary + 页码区间） | LLM 节点摘要 |
-| `database_management/` | 外部DB连接+Schema分析 | SQLAlchemy dialects、LLM 标注 |
+| `source_registry/` | ① 数据源注册与生命周期 | 文档源注册/软删/恢复/目录浏览；连接 CRUD/测连/库列表 |
+| `content_extraction/` | ② 按格式提取结构/正文/页码 + 库表 Schema | pymupdf4llm、python-docx、Markdown 章节解析、SQLAlchemy dialects（无 LLM） |
+| `summary_generation/` | ③ 摘要树生成（叶子 summary / 父 prefix_summary + 页码区间）+ 文档摘要落盘与指纹；库表业务标注与概要 | LLM 节点摘要、内容指纹（DOC:// 来源 URI） |
+| `entity_extraction/` | ④ 实体/关系/属性抽取 | 文档侧 LLM prompt 工程 + JSON 修复；数据库侧行实体/属性表/外键关系 |
+| `wiki_generation/` | ⑤ LLM Wiki 页面生成与编辑（文档页 / 主题页 / 实体页 / 答案沉淀） | 摘要树聚合、实体档案拼装、`source_hash` 幂等 |
+| `pipeline/` | 跨阶段调度（失效传播、指纹监听） | 指纹比对、按佐证回收、Wiki 下游刷新、轮询派发 |
 | `model_management/` | LLM 统一调用 | Ollama API、OpenAI-compatible API |
-| `task_management/` | 异步任务队列 | Celery、线程池、状态追踪 |
+| `task_management/` | 异步任务队列 | 线程池、状态追踪、handler 契约分发 |
 | `cdc/` | Debezium 增量同步 | Redis Streams、XREADGROUP、事件处理 |
-| `file_sources/` | 文件源抽象 + 文档变更监听 | 本地文件系统、预留S3接口、指纹轮询派发刷新任务 |
 
 ---
 
@@ -332,10 +334,10 @@ App.tsx (标签导航)
 
 同一实体/关系可由多个来源佐证（`entity_id`=MD5(name)、`relationship_id`=MD5(s_p_o) 都与来源无关），因此按来源过滤或回收必须走 `knowledge_graph/source_scope.py` 的 Cypher 片段（`match_prefix` / `match_any_prefix` / `union_sources` / `strip_prefix`），否则重跑一个来源会连带删掉其他来源的佐证。回收入口是 `knowledge_graph/recycle.py 的 recycle_datasource(prefix)`：先摘边佐证、再摘实体佐证，**佐证列表清空才删除**。
 
-文档侧的失效判定不建状态表：摘要 JSON 内的 `content_hash` 就是生成当时源文件的 MD5，`source_management/refresh_service.py` 比对它即可得出 `changed` / `removed` / 未变更；下游 Wiki 页各自的 `source_hash` 幂等，上游一变下游自动重算。
+文档侧的失效判定不建状态表：摘要 JSON 内的 `content_hash` 就是生成当时源文件的 MD5，`pipeline/refresh.py` 比对它即可得出 `changed` / `removed` / 未变更；下游 Wiki 页各自的 `source_hash` 幂等，上游一变下游自动重算。
 
 ```
-文档变更 ──▶ file_sources/watcher.py（DOC_WATCH_ENABLED=1 轮询）
+文档变更 ──▶ pipeline/watcher.py（DOC_WATCH_ENABLED=1 轮询）
              或 POST /api/sources/{id}/refresh
                  │
                  ▼  task_type = document_refresh

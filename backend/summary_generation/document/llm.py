@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 
 from system.logger import logger
 
-# 中英文 token 数的轻量估算比例（与旧 pageindex 估算口径一致）
+# 中英文 token 数的轻量估算比例（不依赖 tokenizer 的字符数近似）
 _CHINESE_CHAR_RATIO = 1.5
 _ENGLISH_CHAR_RATIO = 4.0
 

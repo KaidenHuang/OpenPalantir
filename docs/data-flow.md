@@ -31,7 +31,7 @@
   │  ├─ .docx → python-docx 标题样式 → 章节层级                      │
   │  ├─ .md   → Markdown 章节解析（与 PDF 共用 md_parser）           │
   │  └─ .txt  → 单章节兜底                                          │
-  │ 再由 content_summarization 做 LLM 摘要（唯一的 LLM 环节）：        │
+  │ 再由 summary_generation/document 做 LLM 摘要（唯一的 LLM 环节）： │
   │  ├─ 叶子节点 → summary + 正文 text                              │
   │  ├─ 父节点 → prefix_summary（含子树正文聚合）                    │
   │  ├─ 页码区间聚合（PDF 节点带 page_start/page_end）                │
@@ -62,7 +62,7 @@
   └─────────────────────────────────────────────────────────────┘
                           ↓
   ┌─────────────────────────────────────────────────────────────┐
-  │ 阶段5：Wiki 页面生成 (backend/wiki/)                           │
+  │ 阶段5：Wiki 页面生成 (backend/wiki_generation/)               │
   │ wiki_service.generate_all()                                   │
   │  ├─ 文档页：摘要树 structure 节点 → 单篇档案页                   │
   │  ├─ 主题页：跨文档共享关键词聚类 → LLM 合并改写                    │
@@ -217,15 +217,15 @@ CDC 只覆盖数据库行级变更，文档侧的「改了 / 删了」由内容�
 
 ```
 指纹来源：摘要 JSON 内的 content_hash = 生成当时源文件的 MD5
-          （document_processing/summary_generator.py 是唯一出口）
+          （summary_generation/document/store.py 是唯一出口）
 
 [源文件变更/删除]
-    → file_sources/watcher.py 每 DOC_WATCH_INTERVAL 秒调 refresh_service.scan_stale()
+    → pipeline/watcher.py 每 DOC_WATCH_INTERVAL 秒调 pipeline.refresh.scan_stale()
       （也可手动 POST /api/sources/{id}/refresh；GET /api/sources/{id}/stale 查待刷新项）
     → 创建 task_type = document_refresh 异步任务（同一文档在途任务不重复派发）
                               ↓
   ┌─────────────────────────────────────────────────────────────┐
-  │ source_management/refresh_service.refresh_document()          │
+  │ pipeline/refresh.py：进度①→④，任一失败下游保持原状            │
   │  ① 重新生成摘要并落盘（取 content_hash 作为本代指纹）           │
   │     LLM 失败即抛出 —— 旧摘要、旧图谱、旧 Wiki 页保持完整          │
   │  ② 按可用模型重新抽取实体关系入库（代际佐证 URI@content_hash）    │

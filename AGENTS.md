@@ -41,12 +41,16 @@ OpenPalantir 是基于 AI 的数据分析与知识图谱构建系统：支持文
 
 本项目采用**前后端分离**架构：
 
-- **`backend/`** -- Python FastAPI 服务端，按领域模块组织：
-  - `api/routes/` -- REST API 端点定义
+- **`backend/`** -- Python FastAPI 服务端，按领域模块组织（前五个为五阶段数据链路组件，各自再分 `document/` 与 `database/` 两侧）：
+  - `api/routes/` -- REST API 端点定义（薄壳，业务归组件）
   - `config/` -- 数据库连接、Neo4j、引擎与环境配置
-  - `document_processing/` -- 文档解析（PDF、Word、MD、图片）
-  - `entity_extraction/` -- 基于 LLM 的实体与关系抽取
-  - `knowledge_graph/` -- Neo4j 图谱操作（CRUD、分区、性能优化）
+  - `source_registry/` -- ① 注册数据源（文档源/数据库连接的注册、生命周期、测连、源目录浏览）
+  - `content_extraction/` -- ② 内容提取（纯解析，无 LLM）：文档 → 章节树 + 页码；数据库 → 表/字段/主外键/视图
+  - `summary_generation/` -- ③ 摘要生成（唯一 LLM 环节）：文档摘要树 + 落盘/指纹；库表业务标注 + 概要
+  - `entity_extraction/` -- ④ 实体抽取：文档批次 LLM 抽实体/关系/属性；数据库行实体/属性表/外键关系
+  - `wiki_generation/` -- ⑤ Wiki 生成（文档页 / 跨文档主题页 / 图谱实体页 / 问答沉淀）
+  - `pipeline/` -- 跨阶段调度薄层（内容失效传播 `refresh` + 指纹轮询监听 `watcher`）
+  - `knowledge_graph/` -- Neo4j 图谱操作（CRUD、分区、性能优化、来源回收、语义行装配）
   - `analysis_engine/` -- 图谱分析（路径、社区、中心性、趋势）
   - `decision_engine/` -- 对话式决策推理内核
     - `agentic/` -- 统一 ReAct 循环（MAX_TURNS=15），种子检索提供初始上下文，上下文窗口自动压缩
@@ -54,9 +58,7 @@ OpenPalantir 是基于 AI 的数据分析与知识图谱构建系统：支持文
     - `tool_manager/` -- Skill + MCP 工具管理
     - `retrievers/` -- 检索器
     - `skills/` -- 3 个内置技能
-  - `database_management/` -- 数据库 Schema 标注与管理
   - `ontology/` -- 受控本体注册表（YAML 本体包、谓词归一化、prompt 词表注入、治理报告、社区包导入导出）
-  - `wiki/` -- LLM Wiki 页面生成与服务（文档页 / 跨文档主题页 / 图谱实体页 / 问答沉淀）
   - `model_management/` -- LLM 模型客户端集成，经 `ModelClient` 统一调用 Ollama API，支持本地/云端模型
   - `cdc/` -- Debezium 增量同步（CDC 消费 + 事件处理 + Schema 缓存）
   - `task_management/` -- 异步任务队列与状态跟踪
@@ -78,7 +80,7 @@ OpenPalantir 是基于 AI 的数据分析与知识图谱构建系统：支持文
 - **受控本体**：Neo4j 边类型取自 `ontology/packs/*.yaml` 的 LinkType 词表（谓词归一化**先于** `relationship_id` 计算，公式不变）；未命中词表兜底为「其他」，原始谓词存 `r.raw_predicate`。实体/关系枚举由 `ontology/prompt.py` 动态注入 prompt，文档抽取与 DB Schema 标注共用同一词表。
 - **Wiki 页面**：`wiki_pages` 表存 Markdown 正文 + `source_refs` 引用锚点，kind 为 document/topic/entity/answer；实体页 datasource 为 `ENT://{entity_id}/{name}`；生成按 `source_hash` 幂等跳过，LLM 不可用降级为确定性拼装。
 - **来源归属**：实体节点与关系边都带两级来源——`datasource`（主来源，展示与检索用）与 `datasources`（全部佐证来源）。按来源过滤/回收必须走 `knowledge_graph/source_scope.py` 的 Cypher 片段（以 `datasources` 判定），否则重跑一个来源会连带删掉其他来源的佐证。来源 URI 出口：文档 `DOC://{source_id}/{文件相对路径}`、实体页 `ENT://{entity_id}/{name}`、数据库 `DBS://{conn}/{db}[/{table}]`。
-- **内容失效传播**：摘要 JSON 内的 `content_hash`（源文件 MD5）是文档指纹，`source_management/refresh_service.py` 据此判定 changed/removed/未变更；刷新顺序是**先生成摘要 → 抽取（代际佐证 `URI@content_hash`）→ 旧代回收（`keep_hash` 保留新代，`recycle_datasource` 只摘本来源佐证，清空才删）→ Wiki**，抽取/落库失败时旧图谱数据完好。文档级监听 `file_sources/watcher.py` 轮询派发 `document_refresh` 任务，与只管数据库的 CDC 对称。**详见 `docs/data-flow.md`。**
+- **内容失效传播**：摘要 JSON 内的 `content_hash`（源文件 MD5）是文档指纹，`pipeline/refresh.py` 据此判定 changed/removed/未变更；刷新顺序是**先生成摘要 → 抽取（代际佐证 `URI@content_hash`）→ 旧代回收（`keep_hash` 保留新代，`recycle_datasource` 只摘本来源佐证，清空才删）→ Wiki**，抽取/落库失败时旧图谱数据完好。文档级监听 `pipeline/watcher.py` 轮询派发 `document_refresh` 任务，与只管数据库的 CDC 对称。**详见 `docs/data-flow.md`。**
 - **本体治理与社区包**：内置包在 `ontology/packs/`，社区/自定义包在 `backend/data/ontology_packs/`（同名以后者为准，运行时数据、不入库）；导入即走与内置包相同的校验链（`validate_pack`），导出 YAML 可原样回读。注册表 `version` 每次包注册/reload 自增，`ontology/prompt.py` 以 `(version, domain)` 为缓存键——社区包导入后新词表立刻进 prompt，无需重启。治理查询只读聚合，统一入口 `ontology/governance.py`（兜底占比、词表外谓词、定义域值域违规、游离/占位实体、无来源产出、别名候选），经 `/api/ontology/report` 暴露。
 - **配置来源**：`backend/.env`（后端）、`frontend/src/config/apiConfig.ts`（前端 API 端点）。
 - **MCP 工具**：通过 `config/mcp_servers.json` 配置外部 MCP Server，工具自动纳入 AgenticEngine ReAct 循环。

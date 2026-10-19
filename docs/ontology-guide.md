@@ -87,7 +87,7 @@ Neo4j 边类型 = `受控key`                              ← 白名单校验�
   受控公式（旧边自然下线，MERGE 幂等写入重建新边）。
 - **边类型即谓词**：`MATCH ()-[r:任职于]->()` 是合法查询，图谱可直接按关系类型做路径与模式分析。
 - **不丢信息**：兜底为「其他」的边保留 `raw_predicate`，治理报告据此提示该补哪些 alias。
-- **三条写入路径共用**：文档抽取（`utils/data_store.py`）、数据库行级导入（`task_management/handlers/schema_import.py`）、CDC 增量（`cdc/event_processor.py`）都经同一个 `canonical_rel_id`。
+- **三条写入路径共用**：文档抽取（`knowledge_graph/entity_data_store.py`）、数据库行级导入（`task_management/handlers/schema_import.py`）、CDC 增量（`cdc/event_processor.py`）都经同一个 `canonical_rel_id`。
 
 ---
 

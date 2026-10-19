@@ -75,10 +75,12 @@ python scripts/demo/run_demo.py
          ↕ HTTP
 ┌─ 后端 (FastAPI + Python) ──────────────────────────────────┐
 │  api/routes/      → 各模块 router（含 wiki / ontology）      │
-│  content_extraction/ → 内容提取（结构/正文/页码）             │
-│  content_summarization/ → 层级摘要树（LLM）                  │
+│  五阶段数据链路（各分 document / database 两侧）：            │
+│  ① source_registry/  ② content_extraction/                  │
+│  ③ summary_generation/  ④ entity_extraction/                │
+│  ⑤ wiki_generation/                                         │
+│  pipeline/        → 跨阶段调度（失效传播 / 指纹监听）         │
 │  ontology/        → 本体注册表 · 谓词归一化 · 治理 · prompt   │
-│  wiki/            → 页面生成（文档页 / 主题页 / 实体页）      │
 │  decision_engine/ → ReAct 循环 + 混合检索 + 记忆 + Skill/MCP │
 │  task_manager/    → 异步任务队列（状态追踪）                 │
 │  cdc/             → Debezium 增量同步                       │
@@ -91,7 +93,7 @@ python scripts/demo/run_demo.py
          ↕
 ┌─ 外部服务 ─────────────────────────────────────────────────┐
 │  Debezium Server (Quarkus) → 源DB binlog/WAL → Redis        │
-│  MinerU (PDF 解析) · Ollama (LLM / embedding)               │
+│  Ollama (LLM / embedding)                                   │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -141,23 +143,21 @@ docker-compose up -d
 OpenPalantir/
 ├── backend/                # FastAPI 后端
 │   ├── api/routes/         # REST API 端点（含 wiki.py / ontology.py）
+│   ├── source_registry/    # ① 注册数据源（文档源 / 数据库连接）
+│   ├── content_extraction/ # ② 内容提取（结构/正文/页码，无 LLM）
+│   ├── summary_generation/ # ③ 摘要生成（唯一的 LLM 环节）
+│   ├── entity_extraction/  # ④ 实体抽取（文档 LLM / 数据库行）
+│   ├── wiki_generation/    # ⑤ Wiki 页面生成与服务
+│   ├── pipeline/           # 跨阶段调度（失效传播 / 指纹监听）
 │   ├── analysis_engine/    # 图谱分析引擎
 │   ├── cdc/                # Debezium 增量同步 (CDC)
 │   ├── config/             # 数据库 & Neo4j 配置
-│   ├── database_management/# 外部数据库连接管理与 Schema 标注
 │   ├── decision_engine/    # ReAct 循环 / 检索 / 记忆 / Skill+MCP
-│   ├── document_processing/# 文档解析与层级摘要（PDF/Word/MD/图片）
-│   ├── entity_extraction/  # 实体识别（LLM 增强，词表来自本体）
-│   ├── file_sources/       # 文件源抽象与变更监听
 │   ├── knowledge_graph/    # Neo4j 图操作（类型化边、来源回收）
 │   ├── model_management/   # LLM 模型客户端（含 embedding、流式）
 │   ├── models/             # SQLAlchemy ORM 模型与资源 ID
 │   ├── ontology/           # 本体注册表 / 谓词归一化 / 治理 / prompt
 │   │   └── packs/          # 内置本体包 YAML
-│   ├── content_extraction/ # 内容提取（结构/正文/页码，无 LLM）
-│   ├── content_summarization/ # 摘要树生成（LLM）
-│   ├── source_management/  # 文档源处理与失效重生成
-│   ├── wiki/               # Wiki 页面生成与服务
 │   ├── system/             # 日志 & 系统集成
 │   ├── task_management/    # 异步任务管理
 │   └── utils/              # 工具函数

@@ -1,7 +1,7 @@
 """
 统一 JSON 提取与修复工具
 
-合并 model_client.py、agentic/engine.py 与旧 pageindex 管线的 JSON 处理逻辑，
+合并 model_client.py 与 agentic/engine.py 的 JSON 处理逻辑，
 提供单一的 extract_json() 入口。
 
 处理链：
@@ -195,7 +195,7 @@ def _repair_by_closing(text: str) -> Optional[str]:
 
 
 def _apply_text_fixes(text: str) -> str:
-    """应用常见的文本修复（来自 pageindex 和 engine 的经验策略）。"""
+    """应用常见的文本修复（LLM 输出格式兜底策略）。"""
     # Python None → JSON null：只替换结构性位置（冒号/逗号/首括号之后），
     # 整词全替换会把 "None body" 这类字符串字面量内容也改坏并让 payload 失真
     text = re.sub(r'(:\s*|\[\s*|,\s*)(None\b)(?![\w"])', lambda m: m.group(1) + 'null', text)

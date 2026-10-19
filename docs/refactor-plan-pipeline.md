@@ -215,3 +215,21 @@ backend/
 - **数据零迁移**：代码搬家不碰 `data/summaries` 结构与 Neo4j；只有新功能（视图、实体属性）才需要源端重跑。
 - **CDC 与 schema_cache 的隐式依赖**：阶段 2、3 改 DatabaseService/manager 时必须同步改 cdc 三处 import，
   否则 CDC 配置链路静默断掉——列入每阶段 grep 清单。
+
+---
+
+## 8. 执行记录（已完成）
+
+按阶段顺序落地，每阶段一个提交、独立可回退：
+
+| 阶段 | 提交 | 内容 |
+|------|------|------|
+| 回退锚点 | `dc23961` | 移除 pageindex/mineru 旧实现，`content_extraction` 落地 |
+| ① 注册数据源 | `22e1414` | `source_registry/{document,database}`、`pipeline/{refresh,watcher}`、`content_extraction/database`、`summary_generation/database` 落地；`file_sources/` 与 `source_management/refresh_service.py` 删除；各方言补 `extract_views`（D4） |
+| ② 内容提取 | `3e0f8ee` | `content_extraction/*` → `content_extraction/document/*`（models/md_parser/converters） |
+| ③ 摘要生成 | `a11a222` | `content_summarization/*` → `summary_generation/document/*`；`document_processing/` 与 `content_summarization/` 目录解散；`schema_annotator` → `summary_generation/database/annotator` |
+| ④ 实体抽取 | `4dc6d4d` | `source_management/source_service` → `entity_extraction/document/{chunker,service}`；`llm_entity_enhancer` → `entity_extraction/document/extractor`；`database_management/` 解散（dialects → `content_extraction/database/dialects`、SchemaStore → `content_extraction/database/store`、import_helpers → `entity_extraction/database/importer`、行读取 → `entity_extraction/database/row_reader`）；**D5 启用**：跨批次属性合并 + 本体属性词表注入 prompt + 实体属性非空覆盖 |
+| ⑤ Wiki 生成 | `78802e2` | `wiki/` → `wiki_generation/`（service 顶层；文档页/主题页 → `document/`，实体页 → `entity/`）；预留 `database/` 扩展位（D7） |
+| ⑥ 收尾 | 本提交 | 清理残留引用与文档结构描述（`README.md`、`AGENTS.md`、`backend/AGENTS.md`、`docs/*`），全局 grep 旧目录名归零，全量测试 |
+
+复核标准：全局 grep `document_processing|content_summarization|source_management|file_sources|database_management|wiki\.` 在代码中 0 匹配（本计划文档内的「改造前」引用除外）。

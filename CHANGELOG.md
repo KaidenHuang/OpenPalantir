@@ -22,7 +22,7 @@ LLM Wiki + 受控本体演进路线的三个里程碑（M1 Wiki 与检索、M2 �
 - **本体包 `extends`**：社区包可挂在内置域包之上只写增量，校验相对父视图进行
 - **本体治理**（`/api/ontology/report`）：词表使用率、词表外谓词、非法实体类型、定义域/值域违规、游离/占位实体、无来源产出、别名候选与结论清单
 - **本体 API**：域列表、包导入导出（YAML 回读等价）、reload，导入即让 prompt 缓存失效，无需重启
-- **内容失效传播**：摘要 JSON 记录源文件 `content_hash`，变更即标记受影响摘要/实体/Wiki 页为 stale 并重跑「摘要 → 图谱回收 → 重抽取 → Wiki 刷新」；`file_sources/watcher.py` 可选轮询监听
+- **内容失效传播**：摘要 JSON 记录源文件 `content_hash`，变更即标记受影响摘要/实体/Wiki 页为 stale 并重跑「摘要 → 图谱回收 → 重抽取 → Wiki 刷新」；`pipeline/watcher.py` 可选轮询监听
 - **示例与一键 demo**：`examples/docs`（三篇同主题文档）+ `examples/ontology/rd_efficiency.yaml` + `scripts/demo/run_demo.py`
 
 ### 变更

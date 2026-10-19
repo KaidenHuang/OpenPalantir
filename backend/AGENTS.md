@@ -79,7 +79,24 @@ OpenPalantir 后端是数据分析与知识图谱构建系统的服务端，基�
 5. 初始化系统集成（日志、错误处理器、中间件、指标、路由）
 6. 后台线程：byname 回填（`backfill_byname()`）
 7. 注册 12 个路由组（含 `/api/wiki`、`/api/ontology`）
-8. `DOC_WATCH_ENABLED=1` 时启动文档轮询监听（`file_sources/watcher.py`），shutdown 时与 CDC Consumer 一同停止
+8. `DOC_WATCH_ENABLED=1` 时启动文档轮询监听（`pipeline/watcher.py`），shutdown 时与 CDC Consumer 一同停止
+
+## 五阶段组件
+
+数据处理链路按「注册 → 提取 → 摘要 → 抽取 → Wiki」五个阶段组织，每个阶段一个顶层组件目录，
+内部再分 `document/`（文档侧）与 `database/`（数据库侧）两个实现；阶段之间只经组件对外接口耦合。
+
+| 阶段 | 组件 | 对外入口 |
+|------|------|----------|
+| ① 注册数据源 | `source_registry/` | `document_source_registry`（注册/软删/恢复/浏览）、`database_source_registry`（连接 CRUD/测连/库列表） |
+| ② 内容提取 | `content_extraction/` | `document/`：`extract_content()` → `ExtractedDocument`（章节树 + 页码）；`database/`：`extract_schema_for_connection()` → 表/字段/主外键/**视图** |
+| ③ 摘要生成 | `summary_generation/` | `document/`：`summarize_document()` + `store`（落盘/指纹/URI）；`database/`：`annotator`（LLM 标注）+ `build`/`store`（库表概要） |
+| ④ 实体抽取 | `entity_extraction/` | `document/`：`DocumentExtractionService`（批次 LLM 抽实体/关系/属性）；`database/`：`importer`（行实体/属性表/外键关系）+ `row_reader`（keyset 分页） |
+| ⑤ Wiki 生成 | `wiki_generation/` | `service.wiki_service`（页面 CRUD/编排/答案发布）、`document/`（文档页+主题页）、`entity/`（实体页） |
+
+跨阶段的两件事不在某个组件里，放 `pipeline/` 薄层：
+- `pipeline/refresh.py`：内容失效传播（摘要 → 抽取新代佐证 → 旧代回收 → Wiki 刷新）
+- `pipeline/watcher.py`：轮询内容指纹派发 `document_refresh`（与只管数据库的 CDC 对称）
 
 ## 模块结构
 
@@ -148,41 +165,75 @@ backend/
 │   ├── source_scope.py            # 来源归属/回收的 Cypher 片段唯一出口
 │   ├── graph_partition.py         # 图谱分区算法（Louvain 等，分析引擎共用）
 │   ├── graph_performance.py       # 性能优化（索引/Redis 快照缓存）
+│   ├── entity_data_store.py       # 语义行装配（原 utils/data_store.py）：实体/关系字段与端点 id
 │   └── alias_cache.py             # 别名缓存
 │
 ├── analysis_engine/               # 图谱分析引擎
 │   ├── analyzer.py                # 分析主入口
 │   └── report_generator.py        # 报告生成
 │
-├── document_processing/           # 文档处理
-│   ├── document_processor.py      # 统一文档解析入口
-│   └── summary_generator.py       # 摘要编排（提取→LLM摘要）+ 落盘 + content_hash + DOC:// 来源 URI
+├── source_registry/               # ① 注册数据源
+│   ├── document/
+│   │   ├── registry.py            # 文档源注册/软删/恢复/路径解析（产出判定以回调注入）
+│   │   └── scanner.py             # 源目录浏览（前端文件选择）
+│   └── database/
+│       └── registry.py            # 连接 CRUD / 测连 / 库列表 / 产出判定合并
 │
-├── entity_extraction/             # 实体关系抽取
-│   ├── llm_entity_enhancer.py     # LLM 实体增强
-│   ├── prompt_combined_template.md # 抽取 prompt（实体/关系枚举由本体注册表注入）
-│   └── prompt_template.md         # 仅实体抽取 prompt
+├── content_extraction/            # ② 内容提取（纯解析，无 LLM）
+│   ├── document/
+│   │   ├── models.py              # ExtractedDocument / Section 数据契约
+│   │   ├── md_parser.py           # Markdown 章节解析（PDF/MD 共用建树核心）
+│   │   └── converters/            # 格式注册表：pdf/docx/md/txt（新格式在此登记）
+│   └── database/
+│       ├── connector.py           # SQLAlchemy 引擎构建（含裸引擎，仅列举库/测连用）
+│       ├── dialects.py            # 各方言 Schema/视图 SQL + SchemaExtractor 编排
+│       ├── schema_reader.py       # extract_schema_for_connection（配置 → 引擎 → 提取）
+│       └── store.py               # SchemaStore：表/字段/外键/推断关系 + 已分析库记录
+│
+├── summary_generation/            # ③ 摘要生成（唯一的 LLM 环节）
+│   ├── document/
+│   │   ├── summarizer.py          # ExtractedDocument → 摘要树（叶子 summary，父 prefix_summary）
+│   │   ├── tree_utils.py          # node_id / 子树正文聚合 / 页码区间
+│   │   ├── llm.py                 # ModelClient 调用 + token 估算
+│   │   ├── store.py               # 摘要落盘/指纹/DOC:// 来源 URI/遍历（原 summary_generator）
+│   │   └── prompts/               # 节点摘要 / 文档描述模板
+│   └── database/
+│       ├── annotator.py           # 库/表/字段业务标注（词表并入统一本体）
+│       ├── build.py               # Schema → 概要结构（表/键/视图）
+│       └── store.py               # 概要 JSON 落盘（data/summaries/DBS/{conn}/{db}.json）
+│
+├── entity_extraction/             # ④ 实体抽取
+│   ├── document/
+│   │   ├── service.py             # DocumentExtractionService：批次 LLM 抽取 + 去重 + 落库
+│   │   ├── chunker.py             # 摘要树 → 正文批次 + 跨批次去重（含属性合并）
+│   │   ├── extractor.py           # LLMEntityEnhancer（取实体/关系/实体属性）
+│   │   └── prompts/               # 抽取 prompt（实体/关系/属性枚举由本体注册表注入）
+│   └── database/
+│       ├── importer.py            # 行实体/属性表/外键关系构建（原 import_helpers）
+│       └── row_reader.py          # 表行读取：keyset / LIMIT-OFFSET 两套分页 + 标识符白名单
+│
+├── wiki_generation/               # ⑤ Wiki 生成
+│   ├── document/
+│   │   ├── generator.py           # 文档页 / 跨文档主题页
+│   │   └── prompts/
+│   ├── entity/
+│   │   ├── generator.py           # 图谱实体页（实体档案 → 页面）
+│   │   └── prompts/
+│   └── service.py                 # 页面 CRUD + 生成编排 + 答案发布 + 孤儿页清理
+│                                   # 预留 database/ 扩展位（本轮不含库表页面）
+│
+├── pipeline/                      # 跨阶段调度薄层
+│   ├── refresh.py                 # 内容失效传播（摘要→抽取新代→旧代回收→Wiki）
+│   └── watcher.py                 # 轮询内容指纹派发 document_refresh
 │
 ├── ontology/                      # 受控本体层
 │   ├── registry.py                # 包加载/校验/extends 链/视图合并、社区包导入导出、version 计数
 │   ├── governance.py              # 治理报告：词表使用/非法类型/定义域值域/游离实体/别名候选
 │   ├── predicates.py              # 谓词归一化 → relationship_id → Cypher 类型名
-│   ├── prompt.py                  # 类型枚举注入 prompt（按 (version, domain) 缓存）
+│   ├── prompt.py                  # 类型/属性枚举注入 prompt（按 (version, domain) 缓存）
 │   ├── types.py                   # ObjectType / LinkType / PropertyType / OntologyPack
 │   └── packs/                     # 内置包 general/finance/medical/workforce
 │                                   # 社区包在 data/ontology_packs/（同名覆盖内置；可 extends 内置域只写增量）
-│
-├── wiki/                          # LLM Wiki 内容层
-│   ├── wiki_service.py            # 页面 CRUD + 生成编排 + 答案发布 + 孤儿页清理
-│   ├── page_generator.py          # 文档页 / 跨文档主题页
-│   ├── entity_generator.py        # 图谱实体页（实体档案 → 页面）
-│   └── prompts/                   # prompt_document_page / prompt_topic_page / prompt_entity_page
-│
-├── database_management/           # 数据库 Schema 管理
-│   ├── database_manager.py        # 数据库连接管理
-│   ├── database_service.py        # 数据库导入服务
-│   ├── schema_annotator.py        # Schema 标注（关系词表并入统一本体）
-│   └── import_helpers.py          # 导入辅助
 │
 ├── cdc/                           # CDC 增量同步
 │   ├── cdc_manager.py             # CDC 管理器（生命周期）
@@ -211,7 +262,7 @@ backend/
 ├── models/                        # ORM / 数据模型
 │   ├── model.py                   # 模型记录
 │   ├── task.py                    # 任务状态
-│   ├── database.py                # 数据库连接 / 实体类型
+│   ├── database.py                # 数据库连接 / 已分析库状态 / 实体类型
 │   ├── source.py                  # 数据源
 │   ├── cdc.py                     # CDC 状态
 │   ├── wiki.py                    # WikiPage（正文 + 引用锚点 + source_hash）
@@ -232,30 +283,13 @@ backend/
 ├── websocket/                     # WebSocket 通信
 │   └── task_ws.py                 # 任务进度 WebSocket（/ws/tasks）
 │
-├── source_management/             # 数据源管理
-│   ├── source_service.py          # 摘要分块抽取（实体/关系入库）
-│   └── refresh_service.py         # 内容失效传播：按 content_hash 判定 + 重跑编排
-│
-├── file_sources/                  # 文件源抽象
-│   ├── base.py                    # 文件源基类
-│   ├── local_source.py            # 本地文件源
-│   └── watcher.py                 # 文档监听：轮询指纹派发 document_refresh
-│
-├── content_extraction/            # 内容提取（纯解析，无 LLM）
-│   ├── models.py                  # ExtractedDocument / Section 数据契约
-│   ├── md_parser.py               # Markdown 章节解析（PDF/MD 共用建树核心）
-│   └── converters/                # 格式注册表：pdf/docx/md/txt（新格式在此登记）
-│
-├── content_summarization/         # 摘要生成（唯一的 LLM 环节，与提取解耦）
-│   ├── summarizer.py              # ExtractedDocument → 摘要树（叶子 summary，父 prefix_summary）
-│   ├── tree_utils.py              # node_id / 子树正文聚合 / 页码区间
-│   ├── llm.py                     # ModelClient 调用 + token 估算
-│   └── prompts/                   # 节点摘要 / 文档描述模板
-│
 └── utils/                         # 工具函数
     ├── json_utils.py              # JSON 序列化
-    └── data_store.py              # 数据存储工具
+    └── path_guard.py              # 路径安全（safe_join：源内相对路径越界拒绝）
 ```
+
+> 图谱写入侧（`knowledge_graph/`，含 `entity_data_store.py` 语义行装配）见上面「知识图谱」段；
+> 它不属于五阶段中的任何一环，而是所有抽取侧共用的落库缝。
 
 ## 开发命令
 
@@ -304,7 +338,7 @@ taskkill /F /IM python.exe
 | `BATCH_SIZE` | `100` | 批处理大小 |
 | `CACHE_TTL` | `3600` | 缓存 TTL |
 | `DATABASE_URL` | `sqlite:///data/sqlite/database.db` | SQLite 路径 |
-| `DOC_WATCH_ENABLED` | `0` | 文档轮询监听开关（`1` 时启动 `file_sources/watcher.py`，比对 `content_hash` 派发 `document_refresh`） |
+| `DOC_WATCH_ENABLED` | `0` | 文档轮询监听开关（`1` 时启动 `pipeline/watcher.py`，比对 `content_hash` 派发 `document_refresh`） |
 | `DOC_WATCH_INTERVAL` | `60` | 轮询间隔秒数（下限 5） |
 
 ### 数据库说明

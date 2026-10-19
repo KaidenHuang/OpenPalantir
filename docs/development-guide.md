@@ -106,16 +106,16 @@ OpenPalantir/
 │   │       ├── analyze_path/    ← 路径分析
 │   │       ├── analyze_centrality/ ← 中心性分析
 │   │       └── analyze_community/  ← 社区检测
-│   ├── document_processing/     ← 文档解析
-│   ├── content_extraction/      ← 内容提取（结构/正文/页码，无 LLM）
-│   ├── content_summarization/   ← 摘要生成（LLM）
-│   ├── entity_extraction/       ← LLM 实体提取
-│   ├── database_management/     ← 外部 DB 连接管理
+│   ├── source_registry/         ← ① 数据源注册（文档源/DB 连接）
+│   ├── content_extraction/      ← ② 内容提取（结构/正文/页码，无 LLM）
+│   ├── summary_generation/      ← ③ 摘要生成（唯一的 LLM 环节）
+│   ├── entity_extraction/       ← ④ 实体抽取（文档 LLM / 数据库行）
+│   ├── wiki_generation/         ← ⑤ Wiki 页面生成与服务
+│   ├── pipeline/                ← 跨阶段调度（失效传播/指纹监听）
 │   ├── model_management/        ← LLM 调用客户端
 │   ├── cdc/                     ← Debezium 增量同步 (CDC)
 │   ├── task_management/         ← 异步任务管理
-│   ├── file_sources/            ← 文件源抽象
-│   ├── utils/                   ← 数据存储工具
+│   ├── utils/                   ← 通用工具
 │   └── system/                  ← 日志 + 系统集成
 ├── frontend/
 │   └── src/
