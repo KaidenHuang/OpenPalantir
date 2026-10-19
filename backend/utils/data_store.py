@@ -24,11 +24,16 @@ class EntityDataStore:
         use_create: bool = False,
         defer_cache: bool = False,
     ) -> int:
-        """分批写入关系，避免单次 UNWIND 过大导致 Neo4j 内存压力和锁竞争"""
+        """分批写入关系，避免单次 UNWIND 过大导致 Neo4j 内存压力和锁竞争
+
+        写入失败为硬失败：仍会尝试完剩余批次（MERGE 幂等，重跑安全），
+        但只要存在失败批次就抛出 —— 静默少写会让上游把部分写入当全量成功。
+        """
         if not prepared_relationships:
             return 0
 
         total = 0
+        failed_batches: List[int] = []
         batch_size = _NEO4J_REL_BATCH_SIZE
         total_batches = (len(prepared_relationships) + batch_size - 1) // batch_size
 
@@ -42,7 +47,13 @@ class EntityDataStore:
                 total += result.get('count', 0)
             except Exception as e:
                 logger.error(f"[save_relationships] 第 {batch_num} 批写入失败: {e}")
-                # 继续尝试后续批次，而非全部放弃
+                failed_batches.append(batch_num)
+
+        if failed_batches:
+            raise RuntimeError(
+                f"关系写入失败批次 {len(failed_batches)}/{total_batches}（批次号: {failed_batches[:5]}），"
+                f"已成功 {total} 条：MERGE 幂等，修正存储后重跑即可补齐"
+            )
 
         return total
 
@@ -85,20 +96,23 @@ class EntityDataStore:
 
         try:
             result = entity_repo.add_entities(prepared_entities)
-            entity_ids = result.get('ids', [])
-            entity_count = len(entity_ids)
-            logger.info(f"实体保存成功，数量: {entity_count}")
-
-            for i, entity_id in enumerate(entity_ids):
-                if i < len(prepared_entities):
-                    prepared_entities[i]['entity_id'] = entity_id
-
-            # 构建别名缓存（写入成功后）
-            alias_cache.build_from_entities(prepared_entities)
-
         except Exception as e:
             logger.error(f"批量保存实体时出错: {e}")
-            return entity_count, rel_count
+            raise
+
+        entity_ids = result.get('ids', [])
+        entity_count = len(entity_ids)
+        logger.info(f"实体保存成功，数量: {entity_count}")
+
+        for i, entity_id in enumerate(entity_ids):
+            if i < len(prepared_entities):
+                prepared_entities[i]['entity_id'] = entity_id
+
+        # 别名缓存构建失败不破坏本次落库（只弱化后续别名合并），记日志即可
+        try:
+            alias_cache.build_from_entities(prepared_entities)
+        except Exception as e:
+            logger.warning(f"别名缓存构建失败（已落库数据不受影响）: {e}")
 
         if relationships:
             entity_name_map = {}
@@ -158,77 +172,3 @@ class EntityDataStore:
 
         logger.info(f"数据存储完成，实体: {entity_count}, 关系: {rel_count}")
         return entity_count, rel_count
-
-    @staticmethod
-    def save_entities_only(
-        entities: List[Dict[str, Any]],
-        datasource: str = None,
-        defer_cache: bool = False,
-    ) -> List[Dict[str, Any]]:
-        """仅保存实体（不处理关系），返回已填充 entity_id 的实体列表"""
-        if not entities:
-            return []
-
-        # 词表外 'time' 类型防幻觉阀门在进料缝拦截（repo 层不再过滤，保证 ids 与输入对齐）
-        entities = [e for e in entities if (e.get('type') or '').strip().lower() != 'time']
-        prepared_entities = []
-        for entity in entities:
-            ed = EntityData.from_llm_dict(entity, datasource=datasource or "")
-            prepared_entities.append(ed.to_neo4j_dict())
-
-        try:
-            result = entity_repo.add_entities(prepared_entities, defer_cache=defer_cache)
-            entity_ids = result.get('ids', [])
-            for i, entity_id in enumerate(entity_ids):
-                if i < len(prepared_entities):
-                    prepared_entities[i]['entity_id'] = entity_id
-        except Exception as e:
-            logger.error(f"批量保存实体时出错: {e}")
-
-        return prepared_entities
-
-    @staticmethod
-    def save_relationships_only(
-        relationships: List[Dict[str, Any]],
-        entity_name_map: Dict[str, Dict[str, Any]],
-        datasource: str = "",
-        use_create: bool = False,
-        defer_cache: bool = False,
-    ) -> int:
-        """仅保存关系，使用提供的 entity_name_map 解析 subject/object ID
-
-        语义行只补端点 id，谓词归一化 / relationship_id 由 RelationshipRepository 统一处理。
-
-        Args:
-            relationships: 关系列表
-            entity_name_map: 实体名 → entity 字典映射（含 entity_id）
-            datasource: 产出这批关系的来源 URI，写入边用于后续回收
-            use_create: True=使用 CREATE（首次导入更快）；False=使用 MERGE（默认，幂等安全）
-            defer_cache: 批量导入静默期
-        """
-        if not relationships:
-            return 0
-
-        prepared_relationships = []
-        for relationship in relationships:
-            subject_name = str(relationship.get('s', '')).strip()
-            object_name = str(relationship.get('o', '')).strip()
-
-            subject_entity = entity_name_map.get(subject_name) or entity_name_map.get(subject_name.lower())
-            object_entity = entity_name_map.get(object_name) or entity_name_map.get(object_name.lower())
-
-            prepared = {
-                'subject': subject_name,
-                'object': object_name,
-                'predicate': relationship.get('p', ''),
-                'datasource': datasource,
-                'occurrence_time': relationship.get('ot', ''),
-                'description': relationship.get('d', ''),
-                'attributes': relationship.get('a', {}),
-                'subject_id': subject_entity.get('entity_id', '') if subject_entity else '',
-                'object_id': object_entity.get('entity_id', '') if object_entity else ''
-            }
-            prepared_relationships.append(prepared)
-
-        return EntityDataStore._save_relationships_batched(
-            prepared_relationships, use_create=use_create, defer_cache=defer_cache)

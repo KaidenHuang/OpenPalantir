@@ -187,7 +187,7 @@ class LLMEntityEnhancer:
 
         except Exception as e:
             logger.error(f"同时提取实体和关系失败: {e}")
-            return {"entities": [], "relationships": []}
+            raise
     
     def _build_prompt(self, text: str) -> str:
         """构建实体识别提示词（使用缓存的模板）"""
@@ -284,10 +284,10 @@ class LLMEntityEnhancer:
             logger.info(f"分块处理完成，共提取 {len(unique_entities)} 个实体和 {len(all_relationships)} 个关系（去重前: {len(all_entities)} 个实体）")
             
             return {"entities": unique_entities, "relationships": all_relationships}
-            
+
         except Exception as e:
             logger.error(f"分块处理实体和关系提取失败: {e}")
-            return {"entities": [], "relationships": []}
+            raise
 
     @staticmethod
     def _get_entities(response_json: dict) -> list:

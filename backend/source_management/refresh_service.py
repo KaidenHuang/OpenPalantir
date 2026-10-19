@@ -164,7 +164,18 @@ def _extract(summary_path: str, datasource: str, domain: str,
         raise RuntimeError("没有可用的模型，无法重新抽取实体关系")
 
     service = SourceService(model_config)
-    return service.extract_from_summary(
+    result = service.extract_from_summary(
         summary_path=summary_path, datasource=datasource,
         parallelism=parallelism, domain=domain,
     )
+
+    # 零实体守卫：摘要结构存在却抽到 0 实体，几乎必然是 LLM 全部调用失败
+    # （call_json 失败返回 None → enhancer 只能得到空结果，异常已被吞在客户端层）。
+    # 此时旧图谱刚被回收，静默成功会变成「图谱被清空的假成功」——按失败处理。
+    entity_count = (result or {}).get("entity_count", 0)
+    if entity_count == 0:
+        raise RuntimeError(
+            "重新抽取得到 0 个实体（大概率 LLM 不可用），刷新按失败处理；"
+            "请检查模型配置后重跑"
+        )
+    return result
