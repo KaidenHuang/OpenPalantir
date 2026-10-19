@@ -38,7 +38,7 @@ python scripts/demo/run_demo.py
 
 | 能力 | 说明 |
 |------|------|
-| 层级摘要 | PageIndex 式摘要树：文档级描述 + 节点级摘要 + 原文双字段，Wiki 与问答的素材层 |
+| 层级摘要 | 摘要树：文档级描述 + 节点级摘要 + 原文双字段，Wiki 与问答的素材层 |
 | LLM Wiki 生成 | 文档页 / 跨文档主题页 / 本体实体页三级，支持流式与分节续写长文 |
 | 页面编辑与发布 | `GET/PUT/DELETE /api/wiki/pages`，draft/published 状态，问答答案可发布为新页面 |
 | 引用溯源 | `/api/decision/ask` 支持 `scope`（页面/文档）与 `citations`，前端渲染为可点击锚点 |
@@ -75,7 +75,8 @@ python scripts/demo/run_demo.py
          ↕ HTTP
 ┌─ 后端 (FastAPI + Python) ──────────────────────────────────┐
 │  api/routes/      → 各模块 router（含 wiki / ontology）      │
-│  pageindex/       → 层级摘要树                              │
+│  content_extraction/ → 内容提取（结构/正文/页码）             │
+│  content_summarization/ → 层级摘要树（LLM）                  │
 │  ontology/        → 本体注册表 · 谓词归一化 · 治理 · prompt   │
 │  wiki/            → 页面生成（文档页 / 主题页 / 实体页）      │
 │  decision_engine/ → ReAct 循环 + 混合检索 + 记忆 + Skill/MCP │
@@ -153,7 +154,8 @@ OpenPalantir/
 │   ├── models/             # SQLAlchemy ORM 模型与资源 ID
 │   ├── ontology/           # 本体注册表 / 谓词归一化 / 治理 / prompt
 │   │   └── packs/          # 内置本体包 YAML
-│   ├── pageindex/          # 文档摘要树
+│   ├── content_extraction/ # 内容提取（结构/正文/页码，无 LLM）
+│   ├── content_summarization/ # 摘要树生成（LLM）
 │   ├── source_management/  # 文档源处理与失效重生成
 │   ├── wiki/               # Wiki 页面生成与服务
 │   ├── system/             # 日志 & 系统集成

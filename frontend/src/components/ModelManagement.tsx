@@ -12,7 +12,7 @@ interface ModelPlatform {
   id: string;
   name: string;
   status: 'available' | 'unavailable' | 'unknown';
-  type: 'local' | 'cloud';
+  type: 'local' | 'cloud' | 'opencode';
   enabled: boolean;
 }
 
@@ -43,7 +43,7 @@ const ModelManagement: React.FC = () => {
   const [selectedPlatform, setSelectedPlatform] = useState<string>('');
   const [isAddModalVisible, setIsAddModalVisible] = useState(false);
   const [newModelName, setNewModelName] = useState('');
-  const [newModelType, setNewModelType] = useState<'local' | 'cloud'>('cloud');
+  const [newModelType, setNewModelType] = useState<'local' | 'cloud' | 'opencode'>('cloud');
 
   // 从 store 的 models 派生出 UI 用的 platforms 列表
   const platforms = useMemo(() => {
@@ -166,6 +166,16 @@ const ModelManagement: React.FC = () => {
         } catch {
           status = 'unavailable';
         }
+      } else if (selectedPlatform === 'opencode') {
+        // OpenCode CLI 模式：无需 API 密钥，直接用后端真实测试
+        const signal = getComponentSignal();
+        const response = await httpPost(API_CONFIG.endpoints.model.testConnection(platform.id), {
+          api_url: '',
+          api_key: '',
+          model: config.model
+        }, { signal });
+        status = response.data.connection_status || 'unknown';
+        message.info(response.data.message || '连接测试完成');
       } else {
         // 对于云端模型，简单检查API地址和密钥
         if (!config.apiKey) {
@@ -448,7 +458,7 @@ const ModelManagement: React.FC = () => {
                 />
               </div>
 
-              {selectedPlatform !== 'ollama' && (
+              {selectedPlatform !== 'ollama' && selectedPlatform !== 'opencode' && (
                 <div style={{ marginBottom: '20px' }}>
                   <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', color: '#333' }}>API密钥</label>
                   <Input.Password
@@ -456,6 +466,12 @@ const ModelManagement: React.FC = () => {
                     onChange={(e) => handleConfigChange('apiKey', e.target.value)}
                     style={{ width: '100%', borderRadius: 6 }}
                   />
+                </div>
+              )}
+
+              {selectedPlatform === 'opencode' && (
+                <div style={{ marginBottom: '20px', padding: '10px', background: '#f6f8fa', borderRadius: 6, fontSize: 13, color: '#555' }}>
+                  OpenCode CLI 模式：通过本机 <code>opencode run</code> 调用（默认 agent 为只读的 plan，工具已禁用），无需 API 密钥。需本机 OpenCode 已登录账号。
                 </div>
               )}
 
@@ -497,6 +513,11 @@ const ModelManagement: React.FC = () => {
                     <>
                       <Option value="deepseek-v4-flash">DeepSeek V4 Flash</Option>
                       <Option value="deepseek-v4-pro">DeepSeek V4 Pro</Option>
+                    </>
+                  )}
+                  {selectedPlatform === 'opencode' && (
+                    <>
+                      <Option value="opencode/glm-5.3-flash-free">GLM-5.3-Flash Free</Option>
                     </>
                   )}
                 </Select>
@@ -544,6 +565,7 @@ const ModelManagement: React.FC = () => {
                 >
                   <Option value="cloud">云端</Option>
                   <Option value="local">本地</Option>
+                  <Option value="opencode">OpenCode CLI（本机）</Option>
                 </Select>
               </Form.Item>
             </Form>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Button } from 'antd';
+import { Button, Popover } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { logger } from '../services/logger';
 import { useTaskStore } from '../stores/taskStore';
@@ -29,10 +29,14 @@ const TaskList: React.FC = () => {
 
   const getTaskTypeLabel = (type: string): string => {
     switch (type) {
+      case 'document_generate_summary': return '文档概要生成';
+      case 'document_refresh': return '文档刷新';
+      case 'wiki_generate': return 'Wiki 生成';
+      case 'database_schema_analyze': return '数据库Schema分析';
+      case 'database_schema_import': return '数据库Schema导入';
+      case 'database_cdc_start': return 'CDC 增量同步';
       case 'relationship_extraction': return '关系提取';
       case 'document_upload': return '文档上传';
-      case 'database_schema_import': return '数据库Schema导入';
-      case 'database_schema_analyze': return '数据库Schema分析';
       default: return type;
     }
   };
@@ -114,8 +118,7 @@ const TaskList: React.FC = () => {
             <table className="task-table">
               <thead>
                 <tr>
-                  <th>任务 ID</th>
-                  <th>文档名称</th>
+                  <th>数据源</th>
                   <th>任务类型</th>
                   <th>状态</th>
                   <th>进度</th>
@@ -126,17 +129,34 @@ const TaskList: React.FC = () => {
               <tbody>
                 {tasks.map((task) => (
                   <tr key={task.task_id} onClick={() => setSelectedTaskId(task.task_id)} style={{ cursor: 'pointer' }}>
-                    <td>{task.task_id}</td>
-                    <td>{task.document_name || '-'}</td>
+                    <td title={task.datasource_uri || undefined}>{task.datasource_label || '-'}</td>
                     <td>{getTaskTypeLabel(task.task_type)}</td>
                     <td>
-                      <span className={`status-badge ${getStatusClass(task.status)}`}>
-                        {task.status === 'pending' && '待处理'}
-                        {task.status === 'running' && '运行中'}
-                        {task.status === 'completed' && '已完成'}
-                        {task.status === 'failed' && '失败'}
-                        {task.status === 'stopped' && '已停止'}
-                      </span>
+                      {task.status === 'failed' && task.error ? (
+                        <Popover
+                          trigger="click"
+                          placement="bottomLeft"
+                          title="失败原因"
+                          content={<div style={{ maxWidth: 420, whiteSpace: 'pre-wrap', fontSize: 12 }}>{task.error}</div>}
+                        >
+                          <span
+                            className={`status-badge ${getStatusClass(task.status)}`}
+                            style={{ cursor: 'help', textDecoration: 'underline dotted' }}
+                            title="点击查看失败原因"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            失败
+                          </span>
+                        </Popover>
+                      ) : (
+                        <span className={`status-badge ${getStatusClass(task.status)}`}>
+                          {task.status === 'pending' && '待处理'}
+                          {task.status === 'running' && '运行中'}
+                          {task.status === 'completed' && '已完成'}
+                          {task.status === 'failed' && '失败'}
+                          {task.status === 'stopped' && '已停止'}
+                        </span>
+                      )}
                     </td>
                     <td>
                       {task.status === 'running' && (

@@ -413,7 +413,7 @@ Prometheus 格式的监控指标。
 软删除文档源。
 
 ### `POST /api/sources/{source_id}/summarize`
-为源内某个文件生成 PageIndex 摘要树（异步任务 `document_generate_summary`），并记录当时的 `content_hash`（源文件 MD5，失效判定的指纹）。
+为源内某个文件生成摘要树（异步任务 `document_generate_summary`），并记录当时的 `content_hash`（源文件 MD5，失效判定的指纹）。
 
 **Request Body**: `{"file": "章节/红楼梦.txt"}` → `{"task_id", "message"}`；文件缺失/路径越界/类型不支持 → 400。
 

@@ -13,4 +13,5 @@ class Task(Base):
     complete_time = Column(DateTime(timezone=True), nullable=True)
     file_id = Column(String, nullable=True)
     result = Column(String, nullable=True)
+    error = Column(String, nullable=True)  # failed 时的失败原因，任务列表/详情展示用
     payload = Column(String, nullable=True)  # JSON 序列化的创建 payload，重启重跑的恢复源

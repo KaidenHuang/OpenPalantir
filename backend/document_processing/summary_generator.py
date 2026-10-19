@@ -1,5 +1,5 @@
 """
-摘要生成与存放 —— PageIndex 分派 + 源文件内容指纹
+摘要生成与存放 —— 内容提取 + LLM 摘要 + 源文件内容指纹
 
 摘要落在 data/summaries/DOC/{source_id}/{文件相对路径}.json，
 JSON 里的 content_hash 是生成当时源文件的 MD5。
@@ -82,29 +82,21 @@ def stored_content_hash(path: str) -> str:
 
 
 def generate(full_path: str) -> dict:
-    """按扩展名分派 PageIndex 生成摘要，并记录源文件指纹"""
-    from pageindex import (
-        generate_pageindex_docx,
-        generate_pageindex_md,
-        generate_pageindex_pdf,
-        generate_pageindex_txt,
-    )
+    """生成文档摘要：纯解析提取结构 → LLM 节点摘要 → 记录源文件指纹"""
+    from content_extraction import extract_content
+    from content_summarization import summarize_document
 
     ext = os.path.splitext(full_path)[1].lower()
-    generators = {
-        ".pdf": generate_pageindex_pdf,
-        ".md": generate_pageindex_md,
-        ".txt": generate_pageindex_txt,
-        ".docx": generate_pageindex_docx,
-    }
-    if ext not in generators:
+    from content_extraction.converters import supported_extensions
+    if ext not in supported_extensions():
         raise ValueError(f"不支持的文件类型: {ext}")
 
     # 指纹先行：先取 hash 再做耗时的摘要生成。若生成期间源文件被改，
     # 落盘的是新摘要+旧指纹 → 下轮刷新判 stale 重跑（安全的误报方向）；
     # 反序（先生成后取指纹）会让"改文件掐秒"漏检使旧内容永久假有效。
     content_hash = file_content_hash(full_path)
-    result = generators[ext](full_path)
+    extracted = extract_content(full_path)
+    result = summarize_document(extracted)
     result["content_hash"] = content_hash
     return result
 

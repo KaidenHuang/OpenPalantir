@@ -1,7 +1,7 @@
 """
 统一 JSON 提取与修复工具
 
-合并 model_client.py、agentic/engine.py、pageindex/utils.py 三处的 JSON 处理逻辑，
+合并 model_client.py、agentic/engine.py 与旧 pageindex 管线的 JSON 处理逻辑，
 提供单一的 extract_json() 入口。
 
 处理链：

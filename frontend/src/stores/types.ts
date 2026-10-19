@@ -52,7 +52,10 @@ export interface Task {
   started_at: string | null;
   completed_at: string | null;
   error: string | null;
-  document_name?: string;
+  /** 任务所属数据源展示标签：文档任务=文件名，数据库任务=库名（连接名），其他 null */
+  datasource_label?: string;
+  /** 数据源 URL：DOC://{source_id}/{路径} 或 DBS://{连接}/{库名}，其他 null */
+  datasource_uri?: string;
   payload?: unknown;
   result?: unknown;
 }
@@ -131,7 +134,7 @@ export interface ModelPlatform {
 export interface ModelInfo {
   id: number;
   name: string;
-  model_type: 'local' | 'cloud';
+  model_type: 'local' | 'cloud' | 'opencode';
   platform: string;
   enabled: boolean;
   api_url?: string;

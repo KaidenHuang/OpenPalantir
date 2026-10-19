@@ -127,16 +127,16 @@ main.py (FastAPI 应用入口)
   │       └─ analyze_community/       ← 社区检测
   ├─ document_processing/             ← 文档解析
   │   ├─ document_processor.py        ← PDF/Word/Markdown/图片解析
-  │   ├─ mineru_adapter.py            ← MinerU 版面解析适配
-  │   └─ summary_generator.py         ← 摘要落盘 + 源文件内容指纹 + DOC:// 来源 URI
+  │   └─ summary_generator.py         ← 摘要编排 + 落盘 + 源文件内容指纹 + DOC:// 来源 URI
   ├─ source_management/               ← 文档源处理与刷新
   │   ├─ source_service.py            ← 摘要分块抽取（实体/关系入库）
   │   └─ refresh_service.py           ← 内容失效传播：判定→先生成→后回收→Wiki 刷新
   ├─ entity_extraction/               ← 实体提取
   │   └─ llm_entity_enhancer.py       ← LLM 驱动的实体+关系抽取
-  ├─ pageindex/                       ← 文档摘要树
-  │   ├─ page_index.py                ← PDF/TXT 分层摘要生成
-  │   └─ page_index_md.py            ← Markdown 摘要生成
+  ├─ content_extraction/              ← 内容提取（纯解析，无 LLM）
+  │   ├─ models.py                    ← ExtractedDocument / Section 数据契约
+  │   └─ converters/                  ← pdf(pymupdf4llm)/docx/md/txt 转换器注册表
+  ├─ content_summarization/           ← 摘要生成（唯一的 LLM 环节）
   ├─ database_management/             ← 外部数据库管理
   │   ├─ database_manager.py          ← 连接管理 + Schema提取 + 行级导入
   │   ├─ database_service.py          ← 数据库元数据 CRUD
@@ -176,10 +176,11 @@ main.py (FastAPI 应用入口)
 | `ontology/` | 受控本体注册表、谓词归一化与治理 | YAML 本体包、词表校验、prompt 注入、只读聚合治理报告、包导入导出 |
 | `wiki/` | LLM Wiki 页面生成与编辑 | 摘要树聚合、跨文档主题聚类、实体档案拼装 |
 | `decision_engine/` | 智能决策 | 统一 Agentic RAG（ReAct 循环）、种子检索、双层记忆、Skill+MCP 工具管理 |
-| `document_processing/` | 多格式文档解析 + 摘要落盘与内容指纹 | PyPDF2、python-docx、Pillow、pytesseract、PageIndex |
+| `document_processing/` | 多格式文档解析 + 摘要落盘与内容指纹 | PyPDF2、python-docx、Pillow、pytesseract |
+| `content_extraction/` | 按格式提取结构/正文/页码 → 统一中间格式 | pymupdf4llm、python-docx、Markdown 章节解析（无 LLM） |
 | `source_management/` | 摘要→图谱抽取、文档内容失效传播 | 指纹比对、按佐证回收、Wiki 下游刷新 |
 | `entity_extraction/` | 实体识别+关系抽取 | LLM prompt 工程、JSON 修复 |
-| `pageindex/` | 文档分层摘要 | LLM、层级聚类 |
+| `content_summarization/` | 摘要树生成（叶子 summary / 父 prefix_summary + 页码区间） | LLM 节点摘要 |
 | `database_management/` | 外部DB连接+Schema分析 | SQLAlchemy dialects、LLM 标注 |
 | `model_management/` | LLM 统一调用 | Ollama API、OpenAI-compatible API |
 | `task_management/` | 异步任务队列 | Celery、线程池、状态追踪 |

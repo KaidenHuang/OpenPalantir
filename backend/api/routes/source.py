@@ -164,8 +164,9 @@ def browse_source(source_id: str, prefix: str = "", db: Session = Depends(get_db
         if source.source_type != "local":
             raise HTTPException(status_code=400, detail="仅支持本地文件系统浏览")
 
+        base_path = os.path.abspath(source.path)
         try:
-            current_path = safe_join(source.path, prefix) if prefix else os.path.abspath(source.path)
+            current_path = safe_join(source.path, prefix) if prefix else base_path
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 

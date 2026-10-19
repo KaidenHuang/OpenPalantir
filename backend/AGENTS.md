@@ -28,7 +28,7 @@ OpenPalantir 后端是数据分析与知识图谱构建系统的服务端，基�
 | 图数据库 | Neo4j 4.4（`neo4j` Python driver） |
 | 缓存 / 消息 | Redis（RESP2 协议，`protocol=2`） |
 | 任务队列 | 内置线程调度（`task_manager`，早期不需要独立 broker） |
-| 文档处理 | PyPDF2、python-docx、Pillow、markdown、magic-pdf（MinerU） |
+| 文档处理 | PyPDF2、python-docx、Pillow、markdown、pymupdf4llm（PDF→Markdown 结构提取） |
 | LLM 调用 | ModelClient（Ollama API 兼容，支持本地/云端模型） |
 | 图计算 | NetworkX、scikit-learn、python-louvain |
 | OCR | pytesseract |
@@ -156,8 +156,7 @@ backend/
 │
 ├── document_processing/           # 文档处理
 │   ├── document_processor.py      # 统一文档解析入口
-│   ├── mineru_adapter.py          # MinerU PDF 解析适配
-│   └── summary_generator.py       # 摘要落盘 + 源文件 content_hash + DOC:// 来源 URI
+│   └── summary_generator.py       # 摘要编排（提取→LLM摘要）+ 落盘 + content_hash + DOC:// 来源 URI
 │
 ├── entity_extraction/             # 实体关系抽取
 │   ├── llm_entity_enhancer.py     # LLM 实体增强
@@ -242,15 +241,16 @@ backend/
 │   ├── local_source.py            # 本地文件源
 │   └── watcher.py                 # 文档监听：轮询指纹派发 document_refresh
 │
-├── pageindex/                     # 页面索引
-│   ├── page_index.py              # PDF 分层摘要树
-│   ├── page_index_mineru.py       # MinerU 版面解析版摘要树
-│   ├── page_index_docx.py         # Word 摘要树
-│   ├── page_index_md.py           # Markdown 摘要树
-│   ├── page_index_txt.py          # 文本页面索引
-│   ├── model_adapter.py           # PageIndex 与 ModelClient 的适配层
-│   ├── config.yaml                # 分层/分块参数
-│   └── utils.py
+├── content_extraction/            # 内容提取（纯解析，无 LLM）
+│   ├── models.py                  # ExtractedDocument / Section 数据契约
+│   ├── md_parser.py               # Markdown 章节解析（PDF/MD 共用建树核心）
+│   └── converters/                # 格式注册表：pdf/docx/md/txt（新格式在此登记）
+│
+├── content_summarization/         # 摘要生成（唯一的 LLM 环节，与提取解耦）
+│   ├── summarizer.py              # ExtractedDocument → 摘要树（叶子 summary，父 prefix_summary）
+│   ├── tree_utils.py              # node_id / 子树正文聚合 / 页码区间
+│   ├── llm.py                     # ModelClient 调用 + token 估算
+│   └── prompts/                   # 节点摘要 / 文档描述模板
 │
 └── utils/                         # 工具函数
     ├── json_utils.py              # JSON 序列化

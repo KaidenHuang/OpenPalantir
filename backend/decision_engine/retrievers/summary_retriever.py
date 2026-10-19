@@ -104,6 +104,16 @@ def _search_document_file(file_path: str, keywords: set) -> List[RawEvidence]:
     return results
 
 
+def _page_label(node: dict) -> str:
+    """节点页码区间 → 展示文本（p3 / p3-7）；无页码概念的格式返回空"""
+    start, end = node.get("page_start"), node.get("page_end")
+    if start is None:
+        return ""
+    if end is None or end == start:
+        return f"p{start}"
+    return f"p{start}-{end}"
+
+
 def _walk_doc_nodes(node: dict, doc_name: str, keywords: set, results: List[RawEvidence],
                     depth: int = 0, source_uuid: str = "", original_filename: str = ""):
     if depth > 10:
@@ -118,7 +128,7 @@ def _walk_doc_nodes(node: dict, doc_name: str, keywords: set, results: List[RawE
             source_type="document_summary",
             source_id=f"{doc_name}/{title}",
             content={"title": title, "node_id": node.get("node_id", ""),
-                     "line_num": node.get("line_num", ""), "summary": summary},
+                     "page": _page_label(node), "summary": summary},
             relevance_score=score,
             metadata={"doc_name": doc_name, "title": title, "node_id": node.get("node_id", ""),
                       "source_uuid": source_uuid, "datasource": doc_datasource},

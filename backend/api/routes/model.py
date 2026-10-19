@@ -105,19 +105,24 @@ def create_model(
         logger.info(f"接收创建模型请求: name={name}, model_type={model_type}")
 
         # 验证类型值
-        if model_type not in ['local', 'cloud']:
+        if model_type not in ['local', 'cloud', 'opencode']:
             logger.error(f"创建模型失败: 无效的模型类型 model_type={model_type}")
-            raise HTTPException(status_code=400, detail="无效的模型类型，必须是 'local' 或 'cloud'")
+            raise HTTPException(status_code=400, detail="无效的模型类型，必须是 'local'、'cloud' 或 'opencode'")
 
         # 设置默认值
         if api_url is None:
-            api_url = "http://localhost:11434" if model_type == "local" else "https://api.openai.com/v1"
+            if model_type == "local":
+                api_url = "http://localhost:11434"
+            elif model_type == "opencode":
+                api_url = ""
+            else:
+                api_url = "https://api.openai.com/v1"
 
         model_data = {
             "name": name,
             "type": model_type,
             "status": status,
-            "models": models,
+            "models": models or (["opencode/glm-5.3-flash-free"] if model_type == "opencode" else []),
             "enabled": enabled,
             "api_url": api_url,
             "api_key": api_key
@@ -172,9 +177,9 @@ def update_model(
         logger.info(f"接收更新模型请求: model_id={model_id}")
 
         # 验证类型值
-        if model_type is not None and model_type not in ['local', 'cloud']:
+        if model_type is not None and model_type not in ['local', 'cloud', 'opencode']:
             logger.error(f"更新模型失败: 无效的模型类型 model_type={model_type}")
-            raise HTTPException(status_code=400, detail="无效的模型类型，必须是 'local' 或 'cloud'")
+            raise HTTPException(status_code=400, detail="无效的模型类型，必须是 'local'、'cloud' 或 'opencode'")
 
         model_data = {}
         if name is not None:

@@ -19,8 +19,11 @@
     is_connected = client.test_connection()
 """
 
+import glob
 import json
 import os
+import shutil
+import subprocess
 import time
 import traceback
 from dataclasses import dataclass, field
@@ -33,6 +36,58 @@ from utils.json_utils import extract_json as _extract_json_unified, fix_json
 class _EmbedEndpointMissing(Exception):
     """Ollama 旧版本无 /api/embed 端点，触发降级"""
     pass
+
+
+def _resolve_opencode_cli() -> str:
+    """定位本机 opencode CLI。
+
+    优先级：环境变量 OPENCODE_CLI → PATH（opencode-cli / opencode）
+    → OpenCode Desktop 内置 CLI（Windows 下 %APPDATA%\\ai.opencode.desktop\\cli\\*）。
+    """
+    explicit = os.environ.get('OPENCODE_CLI')
+    if explicit and os.path.exists(explicit):
+        return explicit
+    for name in ("opencode-cli", "opencode"):
+        found = shutil.which(name)
+        if found:
+            return found
+    candidates = glob.glob(os.path.join(
+        os.environ.get('APPDATA', ''), 'ai.opencode.desktop', 'cli', '*', 'opencode-cli.exe'
+    ))
+    if candidates:
+        return sorted(candidates)[-1]
+    raise RuntimeError(
+        "未找到 opencode CLI：请将 CLI 加入 PATH，或设置环境变量 OPENCODE_CLI 指向可执行文件"
+    )
+
+
+def _ensure_opencode_workdir() -> str:
+    """确保 opencode run 的工作目录存在，并写入工具拒绝配置（仅首次）。"""
+    workdir = os.environ.get('OPENCODE_CLI_WORKDIR')
+    if not workdir:
+        workdir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'data', 'opencode_bridge_ws'
+        )
+    os.makedirs(workdir, exist_ok=True)
+    config_path = os.path.join(workdir, 'opencode.json')
+    if not os.path.exists(config_path):
+        config = {
+            "$schema": "https://opencode.ai/config.json",
+            "permissions": [
+                {"action": "shell", "resource": "*", "effect": "deny"},
+                {"action": "edit", "resource": "*", "effect": "deny"},
+                {"action": "webfetch", "resource": "*", "effect": "deny"},
+                {"action": "websearch", "resource": "*", "effect": "deny"},
+                {"action": "subagent", "resource": "*", "effect": "deny"}
+            ]
+        }
+        try:
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"[opencode] 写入工作目录 opencode.json 失败: {e}")
+    return workdir
 
 
 @dataclass
@@ -75,16 +130,19 @@ class ModelConfig:
     def from_dict(cls, config: Dict[str, Any]) -> 'ModelConfig':
         """
         从字典创建ModelConfig实例
-        
+
         Args:
             config: 配置字典
-            
+
         Returns:
             ModelConfig实例
         """
+        model_type = config.get('model_type') or config.get('type', 'local')
         return cls(
-            type=config.get('model_type') or config.get('type', 'local'),
-            models=config.get('models', ['qwen2.5:7b']),
+            type=model_type,
+            models=config.get('models', None) or (
+                ['opencode/glm-5.3-flash-free'] if model_type == 'opencode' else ['qwen2.5:7b']
+            ),
             api_url=config.get('api_url', 'http://localhost:11434'),
             api_key=config.get('api_key', ''),
             priority=config.get('priority', 'local'),
@@ -186,9 +244,11 @@ class ModelClient:
 
     def call_raw(self, prompt: str, system_prompt: str = "你是一个AI助手。",
                  temperature: float = 0, max_tokens: int = 8192) -> str:
-        """调用模型并返回原始文本（不做 JSON 解析），供 pageindex 等模块使用。"""
+        """调用模型并返回原始文本（不做 JSON 解析），供 content_summarization 等模块使用。"""
         if self.config.type == "local":
             return self._call_local_model(prompt, "json", temperature, max_tokens)
+        elif self.config.type == "opencode":
+            return self._call_opencode_cli(prompt, system_prompt)
         else:
             return self._call_cloud_model(prompt, system_prompt, "json_object", temperature, max_tokens)
 
@@ -197,6 +257,8 @@ class ModelClient:
         """调用模型返回纯文本（Markdown 等长文），供 Wiki 页面生成等模块使用。"""
         if self.config.type == "local":
             return self._call_local_model(prompt, "text", temperature, max_tokens)
+        elif self.config.type == "opencode":
+            return self._call_opencode_cli(prompt, system_prompt)
         else:
             return self._call_cloud_model(prompt, system_prompt, "text", temperature, max_tokens)
 
@@ -225,11 +287,14 @@ class ModelClient:
         # 根据模型类型选择正确的格式参数
         # 本地模型（Ollama）使用 "json"
         # 云端模型（OpenAI兼容）使用 "json_object"
+        # opencode CLI：prompt 自带指令，不做服务端格式约束
         expected_format = "json_object" if self.config.type == "cloud" else "json"
-        
+
         # 调用底层模型API
         if self.config.type == "local":
             response_text = self._call_local_model(prompt, expected_format, temperature, max_tokens)
+        elif self.config.type == "opencode":
+            response_text = self._call_opencode_cli(prompt, system_prompt or "你是一个AI助手。")
         else:
             response_text = self._call_cloud_model(prompt, system_prompt or "你是一个AI助手。", expected_format, temperature, max_tokens)
         
@@ -244,6 +309,81 @@ class ModelClient:
             logger.warning(f"JSON提取失败，原始响应长度: {len(response_text)}")
             logger.info(f"原始响应前500字符: {response_text[:500]}")
         return result
+
+    def _call_opencode_cli(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+    ) -> str:
+        """调用本机 OpenCode CLI（opencode run），用于 'opencode' 类型模型。
+
+        - 模型 ID 来自 model_name（如 opencode/glm-5.3-flash-free）
+        - 工作目录默认 backend/data/opencode_bridge_ws，目录内 opencode.json
+          拒绝 shell/edit/webfetch/websearch/subagent 等工具，保证纯文本生成
+        - 子进程解析 --format json 事件流，聚合 type=text 的正文
+
+        注意：Windows 命令行长度上限约 32K 字符，超长 prompt 会调用失败。
+        """
+        def _do_call():
+            cli = _resolve_opencode_cli()
+            model = self.config.model_name or (
+                self.config.models[0] if self.config.models else None
+            )
+            if not model:
+                raise ValueError("opencode 类型模型缺少模型 ID（models 为空）")
+
+            workdir = _ensure_opencode_workdir()
+            if system_prompt:
+                text_prompt = f"{system_prompt}\n\n{prompt}"
+            else:
+                text_prompt = prompt
+
+            try:
+                result = subprocess.run(
+                    [cli, "run", "--format", "json", "--agent", "plan", "--model", model, text_prompt],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=max(self.config.timeout, 300),
+                    cwd=workdir,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                )
+            except subprocess.TimeoutExpired as e:
+                raise RuntimeError(f"opencode run 超时（>{max(self.config.timeout, 300)}s）: {e}")
+
+            if not result.stdout:
+                stderr_tail = (result.stderr or "").strip()[-300:]
+                raise RuntimeError(f"opencode run 无输出 (exit={result.returncode}): {stderr_tail}")
+
+            texts: List[str] = []
+            errors: List[str] = []
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if not line or not line.startswith("{"):
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                event_type = event.get("type")
+                if event_type == "text":
+                    text = (event.get("part") or {}).get("text") or ""
+                    if text:
+                        texts.append(text)
+                elif event_type == "error":
+                    err = event.get("error") or {}
+                    errors.append(err.get("message") or "opencode 运行失败")
+
+            if not texts and errors:
+                raise RuntimeError(f"opencode 运行失败: {'; '.join(errors[:3])}")
+            if not texts:
+                raise ValueError("opencode 响应内容为空")
+
+            logger.info(f"opencode CLI 响应成功，响应长度: {len(''.join(texts))}")
+            return "".join(texts)
+
+        return self._with_retry(_do_call, "opencode/run") or ""
 
     def _call_local_model(
         self,
@@ -327,6 +467,8 @@ class ModelClient:
             # 直接调用底层模型API进行连接测试
             if self.config.type == "local":
                 response = self._call_local_model("Hello", "text", 0, 10)
+            elif self.config.type == "opencode":
+                response = self._call_opencode_cli("Reply with a single word: ok", "你是一个AI助手。")
             else:
                 # 使用较高的 max_tokens (100) 以支持带 reasoning 的模型（如 DeepSeek V4）
                 response = self._call_cloud_model("Hello", "你是一个AI助手。", "text", 0, 100)
@@ -339,6 +481,9 @@ class ModelClient:
         """批量计算文本向量（embedding 模型）。失败返回 None，调用方需优雅降级。"""
         if not texts:
             return []
+        if self.config.type == "opencode":
+            # CLI 调用方式无 embedding 端点，直接降级
+            return None
         model = self.config.embedding_model
         if not model:
             return None
@@ -440,8 +585,39 @@ class ModelClient:
         """
         if self.config.type == "local":
             return self._call_local_chat(messages, tools, system_prompt, temperature, max_tokens, tool_choice)
+        elif self.config.type == "opencode":
+            return self._call_opencode_chat(messages, system_prompt)
         else:
             return self._call_cloud_chat(messages, tools, system_prompt, temperature, max_tokens, tool_choice)
+
+    def _call_opencode_chat(
+        self,
+        messages: List[Dict[str, Any]],
+        system_prompt: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """opencode 类型不支持 tool calling 协商：把消息序列化为文本 prompt，
+        返回纯文本回复（tool_calls 恒为空）。决策引擎收到空 tool_calls 时会
+        把 content 当作最终回答，循环可正常收敛。"""
+        blocks: List[str] = []
+
+        def _append(role: str, content: Any) -> None:
+            if isinstance(content, list):
+                content = "\n".join(
+                    item.get("text", "") if isinstance(item, dict) else str(item)
+                    for item in content
+                )
+            if content:
+                blocks.append(f"{role}: {content}")
+
+        if system_prompt:
+            blocks.append(f"system: {system_prompt}")
+        for msg in messages:
+            _append(msg.get("role", "user"), msg.get("content"))
+        blocks.append("assistant:")
+        prompt = "\n\n".join(blocks)
+
+        text = self._call_opencode_cli(prompt)
+        return {"content": text, "tool_calls": []}
 
     def _call_local_chat(
         self,
@@ -544,8 +720,8 @@ def get_model_client() -> Optional[ModelClient]:
         config = ModelService.get_available_model(db)
         if not config:
             return None
-        sig = (config.type, config.model_name, tuple(config.models or []),
-               config.api_url, config.api_key)
+        sig = (config.get('type'), config.get('model_name'), tuple(config.get('models') or []),
+               config.get('api_url'), config.get('api_key'))
         if _client_cache is not None and _client_cache_sig == sig:
             return _client_cache
         _client_cache = ModelClient(config)

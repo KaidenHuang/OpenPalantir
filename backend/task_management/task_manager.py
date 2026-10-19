@@ -28,6 +28,8 @@ class Task:
         self.completed_at = None
         self.file_id = None
         self.stop_event = threading.Event()  # 用于 CDC 等长驻任务的通知式停止
+        self.datasource_label: Optional[str] = None  # 「数据源」展示标签（list/detail 批量填充）
+        self.datasource_uri: Optional[str] = None    # 「数据源 URL」展示值（同上，TYPE://ID 形式）
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -35,6 +37,8 @@ class Task:
             "task_type": self.task_type,
             "status": self.status,
             "payload": self.payload,
+            "datasource_label": self.datasource_label,
+            "datasource_uri": self.datasource_uri,
             "result": self.result,
             "progress": self.progress,
             "error": self.error,
@@ -48,6 +52,7 @@ def _apply_db_row(task: "Task", db_task) -> "Task":
     task.status = db_task.status
     task.progress = db_task.progress or 0
     task.result = db_task.result
+    task.error = db_task.error
     task.created_at = db_task.create_time.isoformat() if db_task.create_time else None
     task.completed_at = db_task.complete_time.isoformat() if db_task.complete_time else None
     task.file_id = db_task.file_id
@@ -71,6 +76,131 @@ def _payload_from_db_row(db_task) -> Dict[str, Any]:
     return {}
 
 
+def _document_name_from_payload(payload: Dict[str, Any]) -> Optional[str]:
+    """文档来源任务的展示名：从 payload 的位置字段（file_path/file）提取文件名"""
+    file_path = payload.get("file_path") or payload.get("file")
+    if not file_path:
+        return None
+    return os.path.basename(str(file_path).replace("\\", "/"))
+
+
+def _wiki_name_from_payload(payload: Dict[str, Any]) -> Optional[str]:
+    """Wiki 生成任务的展示名：DOC:// 数据源 URI 拆出目标文件名，实体场景返回 None"""
+    datasource = payload.get("datasource")
+    if isinstance(datasource, str) and datasource.startswith("DOC://"):
+        parts = datasource.split("/")
+        if len(parts) >= 3 and parts[-1]:
+            return os.path.basename(parts[-1].replace("\\", "/"))
+    return None
+
+
+def _connection_alias_map() -> Dict[str, Dict[str, Optional[str]]]:
+    """数据库连接别名映射：connection_id → {name, database}。
+
+    一次批量查询（schema_import 等任务 payload 中无 database_name，需经连接记录补全）。
+    """
+    from config.database import SessionLocal
+    from models.database import DatabaseConnection
+    try:
+        db = SessionLocal()
+        try:
+            rows = db.query(
+                DatabaseConnection.id, DatabaseConnection.name, DatabaseConnection.database
+            ).all()
+            return {
+                cid: {"name": name, "database": database}
+                for cid, name, database in rows
+            }
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"[_connection_alias_map] 数据源映射查询失败: {str(e)}")
+        return {}
+
+
+def _document_source_alias_map() -> Dict[str, str]:
+    """文档源别名映射：source_id → 注册名称。"""
+    from config.database import SessionLocal
+    from models.source import DocumentSource
+    try:
+        db = SessionLocal()
+        try:
+            rows = db.query(DocumentSource.id, DocumentSource.name).all()
+            return {sid: name for sid, name in rows}
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"[_document_source_alias_map] 文档源映射查询失败: {str(e)}")
+        return {}
+
+
+def _datasource_uri_from_payload(payload: Dict[str, Any]) -> Optional[str]:
+    """任务「数据源 URL」原始派生（ID 段为 SPI 内部 ID）：`{TYPE}://{ID}/...`。
+
+    - Wiki 任务：payload 已携带 DOC:// 数据源 URI，原样透传
+    - 文档任务：DOC://{source_id}/{相对路径}
+    - 数据库任务：DBS://{连接}[/{库名}]
+    展示层由 _humanize_uri 把 ID 段替换为注册名称。
+    """
+    datasource = payload.get("datasource")
+    if isinstance(datasource, str) and datasource.startswith("DOC://"):
+        return datasource
+
+    source_id = payload.get("source_id")
+    file_path = payload.get("file_path") or payload.get("file")
+    if source_id and file_path:
+        return f"DOC://{source_id}/{file_path}"
+
+    connection_id = payload.get("connection_id")
+    if connection_id:
+        database_name = payload.get("database_name")
+        return f"DBS://{connection_id}/{database_name}" if database_name else f"DBS://{connection_id}"
+    return None
+
+
+def _humanize_uri(uri: str, aliases: Dict[str, str]) -> str:
+    """把数据源 URI 的 ID 段替换为注册名称（数据库名/文档源名），未知 ID 保留原值"""
+    if not uri:
+        return uri
+    from models.resource_identifier import ResourceIdentifier
+    try:
+        parsed = ResourceIdentifier.parse(uri)
+    except ValueError:
+        return uri
+    name = aliases.get(parsed.uuid)
+    if not name:
+        return uri
+    return f"{parsed.type.value}://{name}/{parsed.path}" if parsed.path else f"{parsed.type.value}://{name}"
+
+
+def _datasource_label_from_payload(
+    payload: Dict[str, Any], conn_aliases: Optional[Dict[str, Dict[str, Optional[str]]]] = None
+) -> Optional[str]:
+    """任务「数据源」标签的唯一派生出口，按任务来源类型取值：
+    - 文档任务（file_path/file）→ 文件名
+    - Wiki 任务（DOC:// datasource）→ 目标文件名
+    - 数据库任务（connection_id）→ 库名（连接名），库名缺失经连接记录补全
+    - 其他任务 → None（前端显示 '-'）
+    """
+    doc_name = _document_name_from_payload(payload)
+    if doc_name:
+        return doc_name
+
+    wiki_name = _wiki_name_from_payload(payload)
+    if wiki_name:
+        return wiki_name
+
+    connection_id = payload.get("connection_id")
+    if not connection_id:
+        return None
+    conn = (conn_aliases or {}).get(connection_id, {})
+    database_name = payload.get("database_name") or conn.get("database")
+    conn_name = conn.get("name") or ""
+    if database_name:
+        return f"{database_name}（{conn_name}）" if conn_name else database_name
+    return conn_name or None
+
+
 class TaskManager:
     def __init__(self, max_concurrent_tasks: int = 5):
         self.tasks: Dict[str, Task] = {}
@@ -83,6 +213,31 @@ class TaskManager:
 
         # 从数据库加载任务
         self._load_tasks()
+
+    def _fill_datasource_labels(self, tasks: List["Task"]) -> None:
+        """为一批任务批量解析「数据源」标签与 URL。
+
+        一次性批量查询文档源/连接注册表的别名映射；URL 中的 ID 段替换为注册名称，
+        数据库任务的库名缺失经连接记录补全（如 schema_import 不带 database_name）。
+        """
+        conn_aliases = _connection_alias_map()
+        aliases: Dict[str, str] = {cid: c["name"] for cid, c in conn_aliases.items() if c["name"]}
+
+        doc_ids = {t.payload.get("source_id") for t in tasks if t.payload.get("source_id")}
+        for t in tasks:
+            datasource = t.payload.get("datasource")
+            if isinstance(datasource, str) and datasource.startswith("DOC://"):
+                parsed = datasource.split("/")
+                if len(parsed) >= 3 and parsed[2]:
+                    doc_ids.add(parsed[2])
+        doc_ids.discard(None)
+        if doc_ids:
+            aliases.update(_document_source_alias_map())
+
+        for task in tasks:
+            task.datasource_label = _datasource_label_from_payload(task.payload, conn_aliases)
+            uri = _datasource_uri_from_payload(task.payload)
+            task.datasource_uri = _humanize_uri(uri, aliases) if uri else None
 
     def create_task(self, task_type: str, payload: Dict[str, Any]) -> str:
         """创建新任务（payload 契约在入口校验 —— 见 handlers/base.py）"""
@@ -155,19 +310,19 @@ class TaskManager:
     def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
         """获取任务状态"""
         try:
-            # 直接从数据库中获取
             db = SessionLocal()
             try:
                 db_task = db.query(TaskRow).filter(TaskRow.id == task_id).first()
                 if db_task:
-                    task = _apply_db_row(Task(task_id=db_task.id, task_type=db_task.type, payload={}), db_task)
-
-                    result = task.to_dict()
-                    return result
+                    task = _apply_db_row(
+                        Task(task_id=db_task.id, task_type=db_task.type, payload=_payload_from_db_row(db_task)),
+                        db_task)
+                    self._fill_datasource_labels([task])
+                    return task.to_dict()
             finally:
                 db.close()
-            
-            logger.info(f"[get_task_status] 返回值: 未找到任务, task_id={task_id}")
+
+            logger.info(f"[get_task_status] 未找到任务, task_id={task_id}")
             return None
         except Exception as e:
             logger.error(f"[get_task_status] 异常: {str(e)}")
@@ -194,18 +349,18 @@ class TaskManager:
         """列出所有任务"""
         logger.info(f"[list_tasks] 入参: 无")
         try:
-            # 直接从数据库中获取任务列表
             db = SessionLocal()
             try:
                 db_tasks = db.query(TaskRow).offset(0).limit(1000).all()
                 tasks = []
                 for db_task in db_tasks:
-                    task = _apply_db_row(Task(task_id=db_task.id, task_type=db_task.type, payload={}), db_task)
-
-                    task_dict = task.to_dict()
-                    tasks.append(task_dict)
+                    task = _apply_db_row(
+                        Task(task_id=db_task.id, task_type=db_task.type, payload=_payload_from_db_row(db_task)),
+                        db_task)
+                    tasks.append(task)
+                self._fill_datasource_labels(tasks)
                 logger.info(f"[list_tasks] 返回值: 共{len(tasks)}个任务")
-                return tasks
+                return [task.to_dict() for task in tasks]
             finally:
                 db.close()
         except Exception as e:

@@ -108,6 +108,15 @@ def init_models():
                     api_url="https://api.siliconflow.cn/v1",
                     api_key=""
                 ),
+                ModelInfo(
+                    name="OpenCode CLI",
+                    type="opencode",
+                    status="unknown",
+                    models=["opencode/glm-5.3-flash-free"],
+                    enabled=False,
+                    api_url="",
+                    api_key=""
+                ),
             ]
             db.add_all(default_models)
             db.commit()

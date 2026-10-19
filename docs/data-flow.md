@@ -25,13 +25,18 @@
   └─────────────────────────────────────────────────────────────┘
                           ↓
   ┌─────────────────────────────────────────────────────────────┐
-  │ 阶段2：摘要树生成 (PageIndex)                                  │
-  │ PageIndex 将长文本分层处理：                                    │
-  │  ├─ 文本分段 → 逐段 LLM 摘要                                   │
-  │  ├─ 摘要聚类 → 形成层级树结构                                   │
-  │  ├─ 标题检测 → 识别章节标题                                     │
+  │ 阶段2：内容提取 + 摘要树生成                                     │
+  │ 先纯解析提取结构（content_extraction，无 LLM）：                  │
+  │  ├─ .pdf  → pymupdf4llm 按页转 Markdown（页码锚点）              │
+  │  ├─ .docx → python-docx 标题样式 → 章节层级                      │
+  │  ├─ .md   → Markdown 章节解析（与 PDF 共用 md_parser）           │
+  │  └─ .txt  → 单章节兜底                                          │
+  │ 再由 content_summarization 做 LLM 摘要（唯一的 LLM 环节）：        │
+  │  ├─ 叶子节点 → summary + 正文 text                              │
+  │  ├─ 父节点 → prefix_summary（含子树正文聚合）                    │
+  │  ├─ 页码区间聚合（PDF 节点带 page_start/page_end）                │
   │  └─ 保存到 data/summaries/DOC/{uuid}/                        │
-  │ 输出: 多层级摘要树 JSON (node_id: 00000001 → 00000002 → ...)    │
+  │ 输出: 摘要树 JSON（title/node_id/page_start/page_end/…）          │
   └─────────────────────────────────────────────────────────────┘
                           ↓
   ┌─────────────────────────────────────────────────────────────┐
@@ -445,7 +450,7 @@ LOOP (最多 10 轮):
 
 | 类型 | 触发接口 | Handler | 执行内容 |
 |------|---------|---------|---------|
-| `document_generate_summary` | `POST /api/sources/{id}/summarize` | DocumentSummaryHandler | PageIndex 摘要树 + 记录 content_hash |
+| `document_generate_summary` | `POST /api/sources/{id}/summarize` | DocumentSummaryHandler | content_extraction 结构提取 + LLM 摘要树 + 记录 content_hash |
 | `document_refresh` | `POST /api/sources/{id}/refresh`、文档监听 | DocumentRefreshHandler | 重跑摘要 → 抽取（新代佐证）→ 旧代回收 → Wiki 刷新（见 §2.4） |
 | `wiki_generate` | `POST /api/wiki/generate` | WikiGenerateHandler | 文档页 / 主题页 / 实体页批量生成 |
 | `database_schema_analyze` | `POST /api/database/{connection_id}/analyze` | SchemaAnalyzeHandler | 阶段1 Schema 语义标注 |

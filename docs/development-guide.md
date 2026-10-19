@@ -107,8 +107,9 @@ OpenPalantir/
 │   │       ├── analyze_centrality/ ← 中心性分析
 │   │       └── analyze_community/  ← 社区检测
 │   ├── document_processing/     ← 文档解析
+│   ├── content_extraction/      ← 内容提取（结构/正文/页码，无 LLM）
+│   ├── content_summarization/   ← 摘要生成（LLM）
 │   ├── entity_extraction/       ← LLM 实体提取
-│   ├── pageindex/               ← 文档摘要树
 │   ├── database_management/     ← 外部 DB 连接管理
 │   ├── model_management/        ← LLM 调用客户端
 │   ├── cdc/                     ← Debezium 增量同步 (CDC)

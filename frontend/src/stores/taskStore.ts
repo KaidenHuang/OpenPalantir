@@ -118,10 +118,10 @@ export const useTaskStore = create<TaskState>()((set, get) => ({
               ),
             }));
           } else if (data.type === 'task_update') {
-            // 状态变更 → 本地更新 + 重新拉取完整列表
+            // 状态变更 → 本地更新 + 重新拉取完整列表（error 随状态推送，失败原因立即可见）
             set((state) => ({
               tasks: state.tasks.map((t) =>
-                t.task_id === data.task_id ? { ...t, status: data.status } : t
+                t.task_id === data.task_id ? { ...t, status: data.status, error: data.error ?? t.error } : t
               ),
               _lastFetched: 0,
             }));

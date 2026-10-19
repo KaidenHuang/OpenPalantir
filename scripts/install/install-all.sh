@@ -31,7 +31,6 @@ finish() {
     echo "  Redis:           已安装 (原生)"
     echo "  Neo4j:           已安装 (原生)"
     echo "  Debezium Server: $(debezium_extracted_dir)"
-    echo "  MinerU:          magic-pdf (PDF 结构提取)"
     echo "  后端:            $PROJECT_ROOT/backend"
     echo "  前端:            $PROJECT_ROOT/frontend"
     echo ""
@@ -133,11 +132,6 @@ main() {
     bash "$SCRIPT_DIR/install-debezium.sh" || {
         print_error "Debezium 安装失败"
         exit 1
-    }
-
-    step "安装 MinerU"
-    bash "$SCRIPT_DIR/install-mineru.sh" || {
-        print_warn "MinerU 安装失败（非致命），PDF 结构提取将不可用"
     }
 
     step "安装前端依赖"
