@@ -146,10 +146,8 @@ class EventProcessor:
 
         entity_id = compute_entity_id(entity_name)
 
-        neo4j_conn.execute_query(
-            "MATCH (n:Entity {id: $id}) DETACH DELETE n",
-            {"id": entity_id}
-        )
+        # 行级删除必须走来源感知：只摘本来源佐证，被其他来源仍佐证的实体保留
+        entity_repo.delete_entity_scoped(entity_id, self._datasource(table_name))
         logger.debug(f"[CDC] DELETE 实体: {entity_name} (id={entity_id})")
 
     def _sync_fk_relationships(
@@ -168,10 +166,11 @@ class EventProcessor:
         if not fk_defs:
             return
 
-        # 1) 查询该实体当前的出向 FK 关系（通过 r.source = 'cdc_fk' 标识；泛型匹配全部 LinkType）
+        # 1) 查询该实体当前的出向 FK 关系——按受控类型「依赖」匹配，
+        #    不只认 r.source = 'cdc_fk'（全量导入/重导写出的边可能没有该标签）
         existing_query = """
         MATCH (s:Entity {id: $entity_id})-[r]->(t:Entity)
-        WHERE r.source = 'cdc_fk'
+        WHERE type(r) = '依赖'
         RETURN r.relationship_id as rel_id, t.name as target_name
         """
         existing_rels = neo4j_conn.execute_query(existing_query, {"entity_id": subject_id})

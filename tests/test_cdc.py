@@ -63,6 +63,45 @@ class TestEventProcessor:
         assert result == "delete", f"DELETE 应返回 'delete'，实际 {result}"
         assert mock_neo4j_conn.execute_query.call_count >= 1, "应调用 DELETE 查询"
 
+    def test_delete_is_source_scoped(self, mock_neo4j_conn, sample_schema_cache, sample_debezium_event_delete):
+        """行级删除必须来源感知：不允许出现裸 DETACH DELETE；删边/删节点均须携带来源前缀"""
+        processor = EventProcessor(
+            schema=sample_schema_cache,
+            connection_id="test-conn",
+            database_name="test_db",
+        )
+
+        processor.process_event(sample_debezium_event_delete)
+
+        queries = [c.args[0] for c in mock_neo4j_conn.execute_query.call_args_list]
+        assert not any("DETACH DELETE" in q for q in queries), "CDC 删除不得用 DETACH DELETE 越过来源保护"
+        delete_node_queries = [q for q in queries if "DELETE n" in q and "MATCH (n:Entity {id:" in q]
+        assert delete_node_queries, "应有按 id 的节点摘除步骤"
+        for c in mock_neo4j_conn.execute_query.call_args_list:
+            if "$prefix" in c.args[0]:
+                assert c.args[1].get("prefix", "").startswith("DBS://"), \
+                    "佐证摘除必须限定在本来源 DBS:// 前缀内"
+
+    def test_delete_scoped_multi_source_node_survives(self, mock_neo4j_conn, sample_schema_cache):
+        """多来源佐证节点：删除本来源佐证后其余佐证仍在 → 不删除实体"""
+        processor = EventProcessor(
+            schema=sample_schema_cache,
+            connection_id="test-conn",
+            database_name="test_db",
+        )
+
+        mock_neo4j_conn.execute_query.side_effect = [
+            [],  # 摘邻边佐证
+            [],  # 节点佐证清空前有其余来源 → 返回空（未命中删除条件）
+        ]
+        processor.process_event({
+            "op": "d",
+            "source": {"table": "users"},
+            "before": {"id": 42, "name": "张三", "email": "x@test.com"},
+        })
+        queries = [c.args[0] for c in mock_neo4j_conn.execute_query.call_args_list]
+        assert not any("DETACH DELETE" in q for q in queries)
+
     def test_process_skip_unknown_op(self, mock_neo4j_conn, sample_schema_cache):
         """未知操作类型返回 'skip'"""
         processor = EventProcessor(
@@ -171,10 +210,14 @@ class TestEventProcessor:
         total_calls = mock_neo4j_conn.execute_query.call_count
         assert total_calls >= 2, f"应有至少 2 次 Neo4j 调用（MERGE实体 + FK关系），实际 {total_calls}"
 
-        fk_writes = [c.args[0] for c in mock_neo4j_conn.execute_query.call_args_list
-                     if "UNWIND" in c.args[0] and "cdc_fk" in c.args[0]]
+        fk_writes = [c for c in mock_neo4j_conn.execute_query.call_args_list
+                     if "UNWIND" in c.args[0]]
         assert fk_writes, "应写入 FK 关系"
-        assert all("`依赖`" in q for q in fk_writes), "外键关系须为受控类型「依赖」"
+        assert all(c.args[0].count("$source_tag") == 1 for c in fk_writes), \
+            "source_tag 必须参数化（$source_tag），不允许 f-string 插值"
+        assert all(c.args[1].get("source_tag") == "cdc_fk" for c in fk_writes), \
+            "FK 关系须携带 source_tag='cdc_fk'"
+        assert all("`依赖`" in c.args[0] for c in fk_writes), "外键关系须为受控类型「依赖」"
 
     def test_fk_relationship_update(self, mock_neo4j_conn, sample_schema_cache):
         """FK 值变更时：删除旧关系 + 创建新关系"""

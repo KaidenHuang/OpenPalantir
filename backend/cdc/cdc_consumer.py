@@ -117,6 +117,66 @@ class CDCConsumer:
     def _group_name(self) -> str:
         return f"openpalantir-{self.connection_id}"
 
+    def _process_stream_batch(self, stream_name: str, entries, consumer_group: str):
+        """处理一批 Stream 条目：逐条解析→处理→立即 ACK；批次结束后更新检查点"""
+        last_id_in_batch = None
+        for msg_id, data in entries:
+            if self._stop_event.is_set():
+                # 收到停止信号：不处理剩余消息（留在 PENDING，下次启动时由 _drain_pending 回捞）
+                break
+
+            try:
+                event = self._parse_event(data)
+                if event:
+                    self.processor.process_event(event)
+                    self.events_processed += 1
+                    ts_ms = event.get("ts_ms")
+                    if ts_ms:
+                        self.last_event_ts = ts_ms
+            except Exception as e:
+                logger.error(f"[CDC] 处理事件失败 (msg_id={msg_id}): {e}")
+                # 继续处理下一条，不阻塞整个流
+
+            # 每条消息立即 ACK（操作已幂等）
+            self._redis.xack(stream_name, consumer_group, msg_id)
+            last_id_in_batch = msg_id
+
+        if last_id_in_batch:
+            self.last_message_id = last_id_in_batch
+            self._save_checkpoint()
+
+    def _drain_pending(self, consumer_group: str, consumer_name: str):
+        """启动自恢复：XREADGROUP id="0" 读回本 consumer 的 PEL 并处理（Redis 5.0 无 XAUTOCLAIM）
+
+        进程重启/异常退出时上一批"已读未 ACK"的消息若不回捞，将永远滞留在 PEL。
+        仅针对自己名下的 PEL（id="0"），不涉及其他 consumer 的积压。
+        """
+        stream_keys = self.schema.get_stream_keys(self.topic_prefix)
+        for key in stream_keys:
+            try:
+                while not self._stop_event.is_set():
+                    messages = self._redis.xreadgroup(
+                        groupname=consumer_group,
+                        consumername=consumer_name,
+                        streams={key: "0"},
+                        count=100,
+                    )
+                    if not messages:
+                        break
+                    for stream_name, entries in messages:
+                        if not entries:
+                            continue
+                        logger.info(f"[CDC] 回捞 PEL 存量消息 {len(entries)} 条: {key}")
+                        self._process_stream_batch(stream_name, entries, consumer_group)
+            except redis.exceptions.ResponseError as e:
+                return  # stream 或 group 尚不存在，无需回捞
+            except Exception as e:
+                logger.warning(f"[CDC] PEL 回捞失败（主循环继续）: {e}")
+                return
+        if self._stop_event.is_set():
+            return
+        logger.debug(f"[CDC] PEL 回捞完成: conn={self.connection_id}")
+
     def _consume_loop(self):
         """主消费循环（后台线程）"""
         consumer_group = self._group_name
@@ -125,6 +185,10 @@ class CDCConsumer:
         stream_dict = {key: ">" for key in stream_keys}
 
         logger.info(f"[CDC] 开始消费循环，订阅 {len(stream_keys)} 个 Stream")
+
+        # 启动自恢复：先排空上一个会话留在 PEL 的未 ACK 消息
+        # （Redis 5.0 无 XAUTOCLAIM，标准做法是 XREADGROUP id="0" 读回自己 PEL）
+        self._drain_pending(consumer_group, consumer_name)
 
         consecutive_errors = 0
         max_backoff = 30  # 最大退避秒数
@@ -146,33 +210,7 @@ class CDCConsumer:
                 for stream_name, entries in messages:
                     if not entries:
                         continue
-
-                    last_id_in_batch = None
-                    for msg_id, data in entries:
-                        if self._stop_event.is_set():
-                            # 收到停止信号：不处理剩余消息（留在 PENDING，下次重启时重发）
-                            break
-
-                        try:
-                            event = self._parse_event(data)
-                            if event:
-                                result = self.processor.process_event(event)
-                                self.events_processed += 1
-                                ts_ms = event.get("ts_ms")
-                                if ts_ms:
-                                    self.last_event_ts = ts_ms
-                        except Exception as e:
-                            logger.error(f"[CDC] 处理事件失败 (msg_id={msg_id}): {e}")
-                            # 继续处理下一条，不阻塞整个流
-
-                        # 每条消息立即 ACK（操作已幂等）
-                        self._redis.xack(stream_name, consumer_group, msg_id)
-                        last_id_in_batch = msg_id
-
-                    # 批次完成后更新检查点
-                    if last_id_in_batch:
-                        self.last_message_id = last_id_in_batch
-                        self._save_checkpoint()
+                    self._process_stream_batch(stream_name, entries, consumer_group)
 
                 consecutive_errors = 0
 
