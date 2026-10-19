@@ -187,6 +187,5 @@ cd backend && python -m pytest ../tests/test_extraction_quality.py -v -s
 | [docs/development-guide.md](docs/development-guide.md) | 开发环境搭建、添加功能、代码规范 |
 | [docs/ontology-guide.md](docs/ontology-guide.md) | 本体包写法、`extends` 扩展链、谓词归一化如何改变落库数据、治理报告怎么读 |
 | [examples/README.md](examples/README.md) | 示例文档与示例社区本体包、一键 demo `scripts/demo/run_demo.py` |
-| [openspec/project.md](openspec/project.md) | 能力规格与提案流程的项目上下文（含硬约束清单） |
 | [INSTALL.md](INSTALL.md) | 安装部署、环境变量参考、系统要求、常见问题 |
 | [backend/cdc/AGENTS.md](backend/cdc/AGENTS.md) | CDC 模块（`backend/cdc/`）设计、关键设计、多类型支持、修改注意 |

@@ -163,7 +163,6 @@ OpenPalantir/
 ├── examples/               # 示例文档 + 示例社区本体包
 ├── scripts/                # 安装、服务管理与 demo 脚本
 ├── tests/                  # 测试
-├── openspec/               # 规格与变更提案流程
 └── docs/                   # 设计文档
 ```
 
@@ -195,7 +194,7 @@ OpenPalantir/
 
 ## 贡献
 
-领域本体包是最欢迎的贡献方式——`extends` 一个内置域包、只写你的增量，导入即校验、校验即生效。提案流程见 [CONTRIBUTING.md](CONTRIBUTING.md) 与 `openspec/`。
+领域本体包是最欢迎的贡献方式——`extends` 一个内置域包、只写你的增量，导入即校验、校验即生效。流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 许可证
 
