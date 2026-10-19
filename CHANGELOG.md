@@ -32,6 +32,7 @@ LLM Wiki + 受控本体演进路线的三个里程碑（M1 Wiki 与检索、M2 �
 - 实体/关系类型枚举改为从本体注册表动态注入，文档抽取与数据库 Schema 标注共用同一套词表；DB 行级导入原先的 6 选项硬编码关系词表并入统一 LinkType
 - 问答的领域实体词表取自本体注册表，社区导入的域自动可用于问答
 - 关系类型化边需要干净图谱：删除 `backend/data/sqlite/database.db` 与 Neo4j 数据后重新导入（早期阶段不写迁移脚本）
+- 基底包 `general` 不再可被覆盖：自定义目录 `backend/data/ontology_packs/general.yaml` 会被忽略并记 warning，`name: general` 的导入包一律拒绝（先前文件级覆盖能把全部域视图的底座换掉）；域包同名覆盖内置的行为保持不变
 
 ### 移除
 

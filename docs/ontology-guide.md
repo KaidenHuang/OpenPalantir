@@ -41,10 +41,11 @@ general ⊕ workforce ⊕ rd_efficiency        # extends: workforce 的社区包
 
 ```
 backend/ontology/packs/*.yaml       ← 内置包：general / workforce / finance / medical
-backend/data/ontology_packs/*.yaml  ← 社区与自定义包（运行时目录，同名覆盖内置）
+backend/data/ontology_packs/*.yaml  ← 社区与自定义包（运行时目录，域包同名覆盖内置；基底包除外）
 ```
 
 - 加载由 `OntologyRegistry.load()` 完成，**内置与用户包走同一条 `validate_pack()` 校验链**，社区包的验收标准与内置包完全一致。
+- 基底包 `general` 只认内置目录：自定义目录里的 `general.yaml` 会被忽略并记 warning，运行期导入 `name: general` 一律拒绝（`register_pack` 是这道政策唯一的缝）。
 - 缺少 `general` 或任一包非法 → 直接抛 `OntologyError`，服务不会带着半套词表启动。
 - `backend/data/` 已被 `.gitignore` 忽略：本体包是本地运行数据。要把包贡献回社区，请提交到 `backend/ontology/packs/`。
 
@@ -225,9 +226,9 @@ Wiki 实体页按本体类型组织实体档案，关系段落的谓词就是 Li
 
 ## 9. 常见问题
 
-**改了 packs 里的 YAML 但没生效？** 内置包改动需 `POST /api/ontology/reload`；`backend/data/ontology_packs/` 下的同名包会覆盖内置包，先确认没有-shadow。
+**改了 packs 里的 YAML 但没生效？** 内置包改动需 `POST /api/ontology/reload`；`backend/data/ontology_packs/` 下的同名**域包**会覆盖内置包，先确认没有-shadow。
 
-**能不能覆盖 `general`？** 可以——把改过的 `general.yaml` 放进 `data/ontology_packs/`（文件级覆盖）。但 API 的 `persist` 导入**禁止**覆盖基底包，避免运行期把词表改坏。
+**能不能覆盖 `general`？** 不能。基底包是全部域视图的公共底座，还提供两个硬编码兜底标识（实体 `other`、谓词「其他」——后者被 `predicates.FALLBACK_PREDICATE` 用作兜底边类型，词表里没有它，每条词表外关系的写入都会在 `cypher_rel_type` 抛错）。所以自定义目录里的 `general.yaml` 会被忽略并记 warning，导入 `name: general` 的包一律 400。要改基底就改 `backend/ontology/packs/general.yaml` 本身——它在版本控制里，改动会进 diff 和评审。
 
 **谓词为什么全是中文？** 词表 key 就是 Neo4j 边类型，团队约定用中文谓词贴合中文文档；key 也可用英文，只要同一个包内一致。
 

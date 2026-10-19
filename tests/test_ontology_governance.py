@@ -2,7 +2,8 @@
 本体治理与本体包导入导出测试
 
 覆盖「词表使用统计、非法类型/谓词/定义域值域检测、结构问题清单、
-社区包导入即校验、导出可回读、用户包覆盖内置包、新谓词贯通归一化→类型化边」。
+社区包导入即校验、导出可回读、域包同名覆盖内置（基底包 general 从文件与导入两条路径均不可覆盖）、
+新谓词贯通归一化→类型化边」。
 图谱聚合查询以 Mock 隔离，不依赖 Neo4j。
 """
 import os
@@ -158,23 +159,74 @@ class TestPackImportExport:
         registry.reload()
         assert registry.resolve_predicate_any("存放于") == "存放于"
 
-    def test_general_cannot_be_persisted_over(self, registry):
+    def test_general_cannot_be_persisted_over(self, registry, tmp_path):
         with pytest.raises(OntologyError):
             registry.import_pack(BASE_PACK_YAML, persist=True)
 
-    def test_user_pack_overrides_builtin(self, tmp_path):
+        assert not (tmp_path / "user_packs" / "general.yaml").exists()
+
+    def test_general_cannot_be_imported_even_without_persist(self, registry):
+        """基底包拒绝落在 register_pack 这道唯一运行期注册缝上，persist 与否都拦"""
+        before = registry.version
+        with pytest.raises(OntologyError):
+            registry.import_pack(BASE_PACK_YAML)
+
+        assert registry.version == before
+        assert registry.domains() == ["general"]
+
+    def test_user_dir_cannot_replace_base_pack_by_filename(self, tmp_path):
+        """拷一份 general.yaml 进自定义目录顶替基底 —— 旧行为的漏洞，现必须被忽略"""
+        packs = tmp_path / "packs"
+        packs.mkdir()
+        builtin_base = BASE_PACK_YAML
+        (packs / "general.yaml").write_text(builtin_base, encoding="utf-8")
+        user = tmp_path / "user_packs"
+        user.mkdir()
+        (user / "general.yaml").write_text(
+            builtin_base + "  - key: 隶属\n    display_name: 隶属\n", encoding="utf-8")
+        (user / "logistics.yaml").write_text(COMMUNITY_PACK_YAML, encoding="utf-8")
+
+        reg = OntologyRegistry(packs_dir=str(packs), user_packs_dir=str(user))
+        reg.load()
+
+        assert reg.get_link_type("隶属", "general") is None
+        assert reg.get_link_type("管理", "general") is not None
+        # 顶替被忽略，但同目录的合法域包照常用
+        assert "logistics" in reg.domains()
+        assert reg.resolve_predicate("入库到", "logistics") == "存放于"
+
+    def test_pack_declaring_base_name_is_ignored_on_load(self, tmp_path):
+        """换个文件名、内部仍声明 name: general —— 与文件名顶替同一条政策，同样忽略"""
         packs = tmp_path / "packs"
         packs.mkdir()
         (packs / "general.yaml").write_text(BASE_PACK_YAML, encoding="utf-8")
         user = tmp_path / "user_packs"
         user.mkdir()
-        (user / "general.yaml").write_text(
+        (user / "mybase.yaml").write_text(
             BASE_PACK_YAML + "  - key: 隶属\n    display_name: 隶属\n", encoding="utf-8")
 
         reg = OntologyRegistry(packs_dir=str(packs), user_packs_dir=str(user))
         reg.load()
 
-        assert reg.is_link_key("隶属")
+        assert reg.domains() == ["general"]
+        assert reg.get_link_type("隶属", "general") is None
+
+    def test_user_pack_overrides_builtin_domain_pack(self, tmp_path):
+        """域包同名覆盖内置仍是保留特性（只有基底包例外）"""
+        packs = tmp_path / "packs"
+        packs.mkdir()
+        (packs / "general.yaml").write_text(BASE_PACK_YAML, encoding="utf-8")
+        (packs / "logistics.yaml").write_text(COMMUNITY_PACK_YAML, encoding="utf-8")
+        user = tmp_path / "user_packs"
+        user.mkdir()
+        (user / "logistics.yaml").write_text(
+            COMMUNITY_PACK_YAML + "  - key: 清关于\n    display_name: 清关于\n",
+            encoding="utf-8")
+
+        reg = OntologyRegistry(packs_dir=str(packs), user_packs_dir=str(user))
+        reg.load()
+
+        assert reg.get_link_type("清关于", "logistics") is not None
 
     def test_community_pack_reaches_typed_edge_write(self, patched_predicates):
         """社区包导入后，其谓词能直接成为 Neo4j 类型化边（词表 → 归一化 → Cypher 类型名）"""

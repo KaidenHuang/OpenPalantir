@@ -3,8 +3,10 @@
 
 general 为基底包，其余域包在其上扩展（同 key 覆盖）；包可用 extends 声明挂在某个
 域包之上，形成扩展链，社区包因此只写增量而不必整包 fork 内置域。
-内置包在 ontology/packs/，社区/自定义包在 data/ontology_packs/（同名以后者为准），
+内置包在 ontology/packs/，社区/自定义包在 data/ontology_packs/（域包同名以后者为准），
 导入即校验、导出即回读，社区提交的包走同一条校验链。
+基底包 general 是全部域视图的公共底座，且提供硬编码兜底标识（实体 other、谓词 其他），
+因此不可被自定义目录的文件或运行期导入替换——要改基底只能改 packs/general.yaml 本身。
 谓词归一化：exact key → 别名（大小写/空白不敏感），无法归一返回 None，
 由调用方决定拒绝或兜底。
 """
@@ -214,14 +216,21 @@ class OntologyRegistry:
     # ── 加载 ──
 
     def _pack_files(self) -> List[str]:
-        """内置包 + 用户包，同名以用户包为准"""
+        """内置包 + 用户包，域包同名以用户包为准；基底包只认内置目录"""
         found: Dict[str, str] = {}
-        for directory in (self._packs_dir, self._user_packs_dir):
+        for index, directory in enumerate((self._packs_dir, self._user_packs_dir)):
             if not os.path.isdir(directory):
                 continue
+            is_builtin_dir = index == 0
             for fname in sorted(os.listdir(directory)):
-                if fname.endswith((".yaml", ".yml")):
-                    found[os.path.splitext(fname)[0]] = os.path.join(directory, fname)
+                if not fname.endswith((".yaml", ".yml")):
+                    continue
+                stem = os.path.splitext(fname)[0]
+                path = os.path.join(directory, fname)
+                if stem == BASE_PACK and not is_builtin_dir:
+                    logger.warning(f"[ontology] 基底包不可由自定义目录覆盖，忽略 {path}")
+                    continue
+                found[stem] = path
         return [found[key] for key in sorted(found)]
 
     def load(self) -> None:
@@ -239,6 +248,8 @@ class OntologyRegistry:
                     logger.error(f"[ontology] 包加载失败，跳过 {os.path.basename(path)}: {e}")
                     continue
                 if pack.name == BASE_PACK and BASE_PACK in packs:
+                    logger.warning(f"[ontology] 自定义包 {os.path.basename(path)} "
+                                   f"声明基底包名，忽略")
                     continue
                 packs[pack.name] = pack
             if BASE_PACK not in packs:
@@ -260,6 +271,8 @@ class OntologyRegistry:
 
     def register_pack(self, pack: OntologyPack) -> None:
         """运行期注册外部本体包（社区包导入用）；校验不过则注册表原样不动"""
+        if pack.name == BASE_PACK:
+            raise OntologyError("基底包 general 不允许被覆盖")
         self.load()
         with self._lock:
             packs = dict(self._packs)
@@ -280,13 +293,13 @@ class OntologyRegistry:
         return pack_to_yaml(self._packs[domain])
 
     def import_pack(self, text: str, persist: bool = False) -> OntologyPack:
-        """导入社区/自定义包：校验不过直接拒绝；persist 时落到用户包目录，重启后仍在"""
+        """导入社区/自定义包：校验不过直接拒绝；persist 时落到用户包目录，重启后仍在
+
+        基底包由 register_pack 统一拒绝（persist 与否都不允许覆盖）。
+        """
         pack = parse_pack(yaml.safe_load(text) or {})
-        if persist:
-            if pack.name == BASE_PACK:
-                raise OntologyError("基底包 general 不允许覆盖")
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", pack.name):
-                raise OntologyError(f"包名只允许字母数字/下划线/连字符: {pack.name!r}")
+        if persist and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", pack.name):
+            raise OntologyError(f"包名只允许字母数字/下划线/连字符: {pack.name!r}")
         self.register_pack(pack)
         if persist:
             os.makedirs(self._user_packs_dir, exist_ok=True)
