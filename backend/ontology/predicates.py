@@ -24,9 +24,18 @@ def normalize_predicate(raw: str) -> Tuple[str, bool]:
 
 def canonical_rel_id(subject: str, raw_predicate: str, object_: str
                      ) -> Tuple[str, str, bool]:
-    """归一化谓词并计算 relationship_id，返回 (rel_id, 受控 key, 是否命中词表)"""
+    """归一化谓词并计算 relationship_id，返回 (rel_id, 受控 key, 是否命中词表)
+
+    词表内：ID 公式严格为 MD5(subject_受控key_object)。
+    词表外兜底：边类型仍落「其他」，但 ID 以**原始谓词**参与计算——
+    同一对实体间不同语义的词表外谓词若共用「其他」算 ID 会互相覆盖。
+    原始谓词 trim 后参与哈希；为空/None 时仍回退受控 key 公式。
+    """
     key, hit = normalize_predicate(raw_predicate)
-    return compute_relationship_id(subject, key, object_), key, hit
+    raw = (raw_predicate or "").strip()
+    if hit or not raw:
+        return compute_relationship_id(subject, key, object_), key, hit
+    return compute_relationship_id(subject, raw, object_), key, hit
 
 
 def cypher_rel_type(predicate_key: str) -> str:

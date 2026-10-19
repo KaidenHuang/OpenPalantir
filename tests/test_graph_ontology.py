@@ -158,6 +158,11 @@ class TestEntityIdConsistency:
 
     @pytest.mark.parametrize("raw", ["负责", "Foreign key", "随机谓词"])
     def test_same_names_same_id(self, raw):
-        first, key, _ = canonical_rel_id("X", raw, "Y")
+        first, key, hit = canonical_rel_id("X", raw, "Y")
         second, _, _ = canonical_rel_id("X", raw, "Y")
-        assert first == second == compute_relationship_id("X", key, "Y")
+        assert first == second
+        if hit:
+            assert first == compute_relationship_id("X", key, "Y")
+        else:
+            assert first != compute_relationship_id("X", key, "Y")
+            assert first == compute_relationship_id("X", raw, "Y")

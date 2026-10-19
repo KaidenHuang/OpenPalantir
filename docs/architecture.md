@@ -305,7 +305,7 @@ App.tsx (标签导航)
 | 图节点 ID | UUID v4 | `a1b2c3d4-...` |
 | 文档实体 | MD5(name) 32位hex | `6f5902ac237...` |
 | 数据库行实体 | `{表名}:{PK值}` | `users:42` |
-| 关系 ID | MD5(subject + predicate + object) 32位hex，predicate 为**受控 LinkType key**（归一化先于算 ID） | `c50d67e2ac...` |
+| 关系 ID | MD5(subject + predicate + object) 32位hex，predicate 为**受控 LinkType key**（归一化先于算 ID）；词表外兜底「其他」时 ID 改用**原始谓词**参与计算（防同对实体不同语义的兜底边互覆，见 docs/ontology-guide.md） | `c50d67e2ac...` |
 | 资源标识符 (URI) | `{TYPE}://{UUID}/{PATH}` | `DOC://a1b2-.../novel.txt` |
 | 摘要树节点 ID | 8位零填充序号 | `00000001` |
 | 会话 ID | `sess_` + uuid4.hex[:12] | `sess_a1b2c3d4e5f6` |

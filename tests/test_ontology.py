@@ -105,11 +105,19 @@ class TestPredicateNormalization:
     def test_canonical_rel_id_fallback_keeps_raw_separate(self):
         rel_id, key, hit = canonical_rel_id("A", "精通量子力学", "B")
         assert key == FALLBACK_PREDICATE and hit is False
-        assert rel_id == compute_relationship_id("A", FALLBACK_PREDICATE, "B")
+        assert rel_id == compute_relationship_id("A", "精通量子力学", "B")
+
+    def test_canonical_rel_id_fallback_distinct_raw(self):
+        first, _, _ = canonical_rel_id("A", "精通量子力学", "B")
+        second, _, _ = canonical_rel_id("A", "研究玄学", "B")
+        same_key, _, _ = canonical_rel_id("A", "精通量子力学", "B")
+        assert first != second
+        assert first == same_key
 
 
 class TestRelationshipNormalizeGuard:
-    """repository 写入前的归一化行：谓词必须受控、ID 必须与受控谓词一致"""
+    """repository 写入前的归一化行：谓词必须受控；词表内 ID 用受控 key，词表外 ID 用原始谓词"""
+
 
     @pytest.mark.parametrize("raw_predicate", ["负责", "Foreign key", "同事", "", "关联"])
     def test_normalize_rel_rows(self, raw_predicate):
@@ -122,8 +130,10 @@ class TestRelationshipNormalizeGuard:
         expected_key, expected_hit = normalize_predicate(raw_predicate)
         assert row["predicate"] == expected_key and hit is expected_hit
         assert row["predicate"] in keys
+        id_key = row["predicate"] if (expected_hit or not raw_predicate.strip()) \
+            else raw_predicate.strip()
         assert row["relationship_id"] == \
-            compute_relationship_id("张三", row["predicate"], "研发中心")
+            compute_relationship_id("张三", id_key, "研发中心")
         assert row["raw_predicate"] == (
             raw_predicate if raw_predicate != row["predicate"] else "")
 

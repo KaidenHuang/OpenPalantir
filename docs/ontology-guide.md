@@ -70,6 +70,7 @@ LLM 产出 (subject, predicate, object)
         │  返回 (受控 key, 是否命中词表)
         ▼
 relationship_id = MD5(subject + 受控key + object)     ← 归一化**先于**算 ID
+        │  （词表外兜底例外：ID 以原始谓词参与计算，见下）
         │
         ▼  ontology/predicates.cypher_rel_type(key)
 Neo4j 边类型 = `受控key`                              ← 白名单校验，非词表值拒绝（防注入）
@@ -79,6 +80,11 @@ Neo4j 边类型 = `受控key`                              ← 白名单校验�
 要点：
 
 - **ID 稳定**：因为 predicate 已归一，同一语义关系不管 LLM 用哪个同义词，都落在同一条边上。
+- **词表外 ID 不融合**：兜底「其他」时若仍用受控 key 算 ID，同一对实体间不同语义的
+  词表外谓词会共用一个 ID 互相覆盖——所以兜底边的 `relationship_id` 以**原始谓词**
+  参与计算（`MD5(subject + raw + object)`），边类型依旧是受控「其他」，
+  原文保留在 `r.raw_predicate`。等它日后补进词表（alias/key），ID 会迁回
+  受控公式（旧边自然下线，MERGE 幂等写入重建新边）。
 - **边类型即谓词**：`MATCH ()-[r:任职于]->()` 是合法查询，图谱可直接按关系类型做路径与模式分析。
 - **不丢信息**：兜底为「其他」的边保留 `raw_predicate`，治理报告据此提示该补哪些 alias。
 - **三条写入路径共用**：文档抽取（`utils/data_store.py`）、数据库行级导入（`task_management/handlers/schema_import.py`）、CDC 增量（`cdc/event_processor.py`）都经同一个 `canonical_rel_id`。
