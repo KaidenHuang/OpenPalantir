@@ -38,7 +38,8 @@ interface TaskState {
 
 function _getWsUrl(): string {
   const base = API_CONFIG.baseUrl.replace(/^http/, 'ws');
-  return `${base}/ws/tasks`;
+  const key = API_CONFIG.authKey;
+  return `${base}/ws/tasks${key ? `?key=${encodeURIComponent(key)}` : ''}`;
 }
 
 export const useTaskStore = create<TaskState>()((set, get) => ({

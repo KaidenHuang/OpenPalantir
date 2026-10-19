@@ -20,11 +20,9 @@ from system.logger import logger
 
 def resolve_file(base_path: str, file_path: str) -> str:
     """把源内相对路径解析为绝对路径，越界直接拒绝"""
-    base = os.path.normpath(base_path)
-    full = os.path.normpath(os.path.join(base, file_path))
-    if not full.startswith(base):
-        raise ValueError(f"路径越界: {file_path}")
-    return full
+    from utils.path_guard import safe_join
+
+    return safe_join(base_path, file_path)
 
 
 def stale_reason(source_id: str, file_path: str, full_path: str) -> str:

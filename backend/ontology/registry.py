@@ -9,6 +9,7 @@ general 为基底包，其余域包在其上扩展（同 key 覆盖）；包可�
 由调用方决定拒绝或兜底。
 """
 import os
+import re
 import threading
 from typing import Dict, List, Optional, Tuple
 
@@ -271,8 +272,11 @@ class OntologyRegistry:
     def import_pack(self, text: str, persist: bool = False) -> OntologyPack:
         """导入社区/自定义包：校验不过直接拒绝；persist 时落到用户包目录，重启后仍在"""
         pack = parse_pack(yaml.safe_load(text) or {})
-        if persist and pack.name == BASE_PACK:
-            raise OntologyError("基底包 general 不允许覆盖")
+        if persist:
+            if pack.name == BASE_PACK:
+                raise OntologyError("基底包 general 不允许覆盖")
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", pack.name):
+                raise OntologyError(f"包名只允许字母数字/下划线/连字符: {pack.name!r}")
         self.register_pack(pack)
         if persist:
             os.makedirs(self._user_packs_dir, exist_ok=True)

@@ -27,11 +27,36 @@ class Neo4jConnection:
             return [record for record in result]
 
     def execute_read_query(self, query, parameters=None):
-        """以只读会话执行 Cypher —— 写入语句（SET/CREATE/MERGE/DELETE…）会直接被 Neo4j 拒绝。"""
+        """以只读会话执行 Cypher；执行前用 EXPLAIN 解析计划树，拒绝任何含写算子（含嵌套 CALL 子查询）的语句。
+
+        说明：直连 bolt 上 `default_access_mode=READ_ACCESS` 不强制写入拦截（写语句照常执行），
+        因此服务端语义由计划检查兜底；写算子出现在计划中即拒（ValueError，调用方映射 400）。
+        """
         from neo4j import READ_ACCESS
+        self._assert_read_only(query, parameters or {})
         with self.driver.session(default_access_mode=READ_ACCESS) as session:
             result = session.run(query, parameters)
             return [record for record in result]
+
+    _WRITE_OPERATOR_WORDS = ("Create", "Merge", "Delete", "Set", "Remove", "Load")
+
+    def _assert_read_only(self, query: str, parameters: dict = None) -> None:
+        """EXPLAIN 不执行任何写操作，其计划树是判断只读语义的唯一可靠出口。"""
+        with self.driver.session() as session:
+            summary = session.run("EXPLAIN " + query, parameters).consume()
+        plan = getattr(summary, "plan", None)
+        stack = [plan]
+        write_ops = []
+        while stack:
+            node = stack.pop()
+            if node is None:
+                continue
+            op = getattr(node, "operator_type", "") or ""
+            if any(word in op for word in self._WRITE_OPERATOR_WORDS):
+                write_ops.append(op)
+            stack.extend(getattr(node, "children", []) or [])
+        if write_ops:
+            raise ValueError(f"只读接口拒绝包含写操作的查询: {', '.join(sorted(set(write_ops)))}")
     
     def initialize_schema(self):
         """初始化Neo4j schema"""

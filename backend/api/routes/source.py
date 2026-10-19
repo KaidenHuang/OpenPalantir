@@ -11,6 +11,7 @@ from model_management.model_service import ModelService
 from system.logger import logger
 from task_management.task_manager import task_manager
 from task_management.handlers import DocumentRefreshHandler, DocumentSummaryHandler
+from utils.path_guard import safe_join
 router = APIRouter()
 
 
@@ -163,11 +164,10 @@ def browse_source(source_id: str, prefix: str = "", db: Session = Depends(get_db
         if source.source_type != "local":
             raise HTTPException(status_code=400, detail="仅支持本地文件系统浏览")
 
-        base_path = os.path.normpath(source.path)
-        current_path = os.path.normpath(os.path.join(base_path, prefix)) if prefix else base_path
-
-        if not current_path.startswith(base_path):
-            raise HTTPException(status_code=400, detail="路径越界")
+        try:
+            current_path = safe_join(source.path, prefix) if prefix else os.path.abspath(source.path)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
         if not os.path.exists(current_path):
             raise HTTPException(status_code=404, detail=f"路径不存在: {current_path}")
@@ -223,9 +223,10 @@ def summarize_file(source_id: str, data: dict = Body(...), db: Session = Depends
         if not source:
             raise HTTPException(status_code=404, detail="文档源不存在")
 
-        full_path = os.path.normpath(os.path.join(source.path, file_path))
-        if not full_path.startswith(os.path.normpath(source.path)):
-            raise HTTPException(status_code=400, detail="路径越界")
+        try:
+            full_path = safe_join(source.path, file_path)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
         if not os.path.isfile(full_path):
             raise HTTPException(status_code=400, detail="文件不存在")
@@ -311,7 +312,10 @@ def list_stale_files(source_id: str, db: Session = Depends(get_db)):
 def get_summary(source_id: str, file: str, db: Session = Depends(get_db)):
     """获取已生成的概要内容"""
     try:
-        summary_abs_path = summary_generator.summary_path(source_id, file)
+        try:
+            summary_abs_path = summary_generator.summary_path(source_id, file)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
         if not os.path.isfile(summary_abs_path):
             raise HTTPException(status_code=404, detail="概要不存在，请先生成")
@@ -339,7 +343,10 @@ def extract_from_summary(source_id: str, data: dict = Body(...), db: Session = D
         if not source:
             raise HTTPException(status_code=404, detail="文档源不存在")
 
-        summary_abs_path = summary_generator.summary_path(source_id, file_path)
+        try:
+            summary_abs_path = summary_generator.summary_path(source_id, file_path)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         if not os.path.isfile(summary_abs_path):
             raise HTTPException(status_code=404, detail="概要不存在，请先生成概要")
 

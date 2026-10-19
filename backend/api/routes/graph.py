@@ -393,6 +393,8 @@ def query_graph(query: str = Body(..., description="Cypher 查询语句")):
 
         logger.info(f"查询图谱成功: 结果数: {len(results)}")
         return {"query": query, "results": results}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"查询图谱失败: {query}  error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -520,8 +522,12 @@ def get_query_performance(query: str = Body(..., description="Cypher 查询语�
         logger.debug(f"接收获取查询性能信息请求: query={query}")
 
         result = graph_performance.get_query_performance(query)
+        if result.get("status") == "error":
+            raise HTTPException(status_code=400, detail=result.get("message", "查询语法错误"))
         logger.info(f"获取查询性能信息成功: query={query}")
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"获取查询性能信息失败: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")

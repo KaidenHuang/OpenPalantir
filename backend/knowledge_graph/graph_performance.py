@@ -161,26 +161,30 @@ class GraphPerformanceOptimizer:
         return optimized_query
 
     def get_query_performance(self, query: str) -> Dict[str, Any]:
-        """获取查询性能信息"""
+        """查询性能分析 —— 仅执行 EXPLAIN（绝不真正执行查询，EXPLAIN 语义本身无写副作用）"""
         try:
-            # 记录开始时间
-            start_time = time.time()
+            with neo4j_conn.driver.session() as session:
+                start_time = time.time()
+                summary = session.run("EXPLAIN " + query).consume()
+                elapsed = time.time() - start_time
 
-            # 执行查询
-            result = neo4j_conn.execute_query(query)
-
-            # 记录结束时间
-            end_time = time.time()
-            execution_time = end_time - start_time
-
-            # 计算结果大小
-            result_size = len(result)
+            def flatten(node, depth: int = 0) -> list:
+                if node is None:
+                    return []
+                item = {"operator": getattr(node, "operator_type", ""), "depth": depth}
+                rows = (getattr(node, "arguments", None) or {}).get("EstimatedRows")
+                if rows is not None:
+                    item["estimated_rows"] = rows
+                children = getattr(node, "children", None) or []
+                for child in children:
+                    item.setdefault("children", []).extend(flatten(child, depth + 1))
+                return [item]
 
             return {
                 "status": "success",
                 "query": query,
-                "execution_time": execution_time,
-                "result_size": result_size
+                "elapsed_ms": round(elapsed * 1000, 1),
+                "plan": flatten(summary.plan) if summary.plan else [],
             }
         except Exception as e:
             return {

@@ -8,6 +8,7 @@ JSON 里的 content_hash 是生成当时源文件的 MD5。
 import hashlib
 import json
 import os
+import re
 from typing import Tuple
 
 from system.logger import logger
@@ -55,8 +56,12 @@ def file_content_hash(path: str) -> str:
 
 
 def summary_path(source_id: str, file_path: str) -> str:
-    """某文档源下某文件的摘要 JSON 路径"""
-    return os.path.join(SUMMARY_ROOT, "DOC", source_id, f"{file_path}.json")
+    """某文档源下某文件的摘要 JSON 路径；任意 ../../ 形态都拒（source_id 合成进路径且受查）"""
+    if not re.fullmatch(r"[0-9a-fA-F-]{8,}", source_id):
+        raise ValueError(f"非法 source_id: {source_id}")
+    from utils.path_guard import safe_join
+
+    return safe_join(SUMMARY_ROOT, "DOC", source_id, f"{file_path}.json")
 
 
 def source_summary_dir(source_id: str) -> str:

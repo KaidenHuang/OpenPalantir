@@ -270,7 +270,6 @@ def test_model_connection(
         raise HTTPException(status_code=404, detail=str(e))
     except HTTPException:
         raise
-        raise
     except Exception as e:
         logger.error(f"测试模型连接失败: model_id={model_id}, 错误: {str(e)}")
         raise HTTPException(status_code=500, detail=f"测试连接失败: {str(e)}")

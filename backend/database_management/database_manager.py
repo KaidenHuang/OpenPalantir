@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 from typing import Dict, List, Any, Optional
 from urllib.parse import quote
@@ -7,6 +8,15 @@ from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.exc import SQLAlchemyError
 from config.database import SessionLocal
 from system.logger import logger
+
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+
+
+def safe_identifier(name: str) -> str:
+    """literal_column 没有参数化能力：凡是会插进 SQL 的标识符（列/主键）必须过字符白名单。"""
+    if not _IDENTIFIER_RE.fullmatch(str(name)):
+        raise SQLAlchemyError(f"非法标识符: {name!r}")
+    return str(name)
 
 class DatabaseDialect:
     """数据库方言抽象基类（数据库级别批量操作）"""
@@ -98,7 +108,7 @@ class DatabaseDialect:
         try:
             from sqlalchemy import literal_column
             t = table(table_name, *[column(c) for c in columns])
-            pk_cols_sa = [literal_column(c) for c in pk_columns]
+            pk_cols_sa = [literal_column(safe_identifier(c)) for c in pk_columns]
             total_yielded = 0
             last_values = None  # List of pk values from the last row of previous batch
 
@@ -110,14 +120,14 @@ class DatabaseDialect:
                 stmt = select(t).limit(limit).order_by(*pk_cols_sa)
                 if last_values is not None:
                     if len(pk_columns) == 1:
-                        stmt = stmt.where(literal_column(pk_columns[0]) > last_values[0])
+                        stmt = stmt.where(literal_column(safe_identifier(pk_columns[0])) > last_values[0])
                     else:
                         # Composite key: (pk1 > v1) OR (pk1 = v1 AND pk2 > v2) OR ...
                         from sqlalchemy import or_, and_
                         clauses = []
                         for i in range(len(pk_columns)):
-                            eq_clauses = [literal_column(pk_columns[j]) == last_values[j] for j in range(i)]
-                            gt_clause = literal_column(pk_columns[i]) > last_values[i]
+                            eq_clauses = [literal_column(safe_identifier(pk_columns[j])) == last_values[j] for j in range(i)]
+                            gt_clause = literal_column(safe_identifier(pk_columns[i])) > last_values[i]
                             if eq_clauses:
                                 clauses.append(and_(*eq_clauses, gt_clause))
                             else:
@@ -652,7 +662,7 @@ class DatabaseManager:
                 else:
                     db_path = connection.database
                 if db_path:
-                    url = f"sqlite:///{db_path}"
+                    url = f"sqlite:///{quote(str(db_path), safe='/:\\\\')}"
                 else:
                     return None
             elif db_type == "oracle":
@@ -699,14 +709,14 @@ class DatabaseManager:
             elif db_type == "postgresql":
                 url = f"postgresql://{user}:{pw}@{host}:{port}/{database}"
             elif db_type == "sqlite":
-                url = f"sqlite:///{database}"
+                url = f"sqlite:///{quote(str(database), safe='/:\\\\')}"
             elif db_type == "oracle":
                 if service_name:
-                    url = f"oracle+cx_oracle://{user}:{pw}@{host}:{port}/{service_name}"
+                    url = f"oracle+cx_oracle://{user}:{pw}@{host}:{port}/{quote(service_name, safe='')}"
                 else:
-                    url = f"oracle+cx_oracle://{username}:{password}@{host}:{port}/{database}"
+                    url = f"oracle+cx_oracle://{user}:{pw}@{host}:{port}/{quote(database, safe='')}"
             elif db_type == "mssql":
-                url = f"mssql+pyodbc://{username}:{password}@{host}:{port}/{database}?driver=ODBC+Driver+17+for+SQL+Server"
+                url = f"mssql+pyodbc://{user}:{pw}@{host}:{port}/{quote(database, safe='')}?driver=ODBC+Driver+17+for+SQL+Server"
             else:
                 logger.error(f"不支持的数据库类型: {db_type}")
                 return None

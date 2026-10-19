@@ -92,7 +92,17 @@ async def startup_ws_loop():
 
 @app.websocket("/ws/tasks")
 async def websocket_tasks(websocket: WebSocket):
-    """任务状态实时推送 WebSocket 端点"""
+    """任务状态实时推送 WebSocket 端点
+
+    设置 API_AUTH_KEY 后要求握手时以 ?key= 或 X-API-Key 头携带密钥，否则 4401 关闭。
+    """
+    api_key = os.getenv("API_AUTH_KEY", "")
+    if api_key:
+        provided = websocket.query_params.get("key", "") or websocket.headers.get("x-api-key", "")
+        if provided != api_key:
+            await websocket.accept()
+            await websocket.close(code=4401, reason="Unauthorized")
+            return
     await task_ws_manager.connect(websocket)
     try:
         while True:

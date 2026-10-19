@@ -6,6 +6,8 @@ const API_BASE_URL = (import.meta as unknown as { env: { VITE_API_BASE_URL?: str
 
 export const API_CONFIG = {
   baseUrl: API_BASE_URL,
+  /** 与后端 API_AUTH_KEY 对应；WS 握手以 query param 携带（WS 无法走 axios 拦截器加头） */
+  authKey: (import.meta as unknown as { env: { VITE_API_AUTH_KEY?: string } }).env.VITE_API_AUTH_KEY || '',
   endpoints: {
     filesystem: {
       browse: `${API_BASE_URL}/api/filesystem/browse`,
