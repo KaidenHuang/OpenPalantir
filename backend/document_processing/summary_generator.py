@@ -87,7 +87,7 @@ def generate(full_path: str) -> dict:
     from content_summarization import summarize_document
 
     ext = os.path.splitext(full_path)[1].lower()
-    from content_extraction.converters import supported_extensions
+    from content_extraction.document.converters import supported_extensions
     if ext not in supported_extensions():
         raise ValueError(f"不支持的文件类型: {ext}")
 

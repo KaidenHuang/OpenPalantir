@@ -1,28 +1,17 @@
+"""② 内容提取 —— 文档/数据库分侧实现（纯解析，无 LLM）
+
+document/  各格式文档 → 统一 ExtractedDocument（章节树 + 页码锚点）
+database/  连接配置 → DatabaseSchema（表/字段/主外键/视图）
+
+新增文档格式（图片、PPT、音频、视频）时在 document/converters/ 注册表登记即可。
 """
-内容提取模块 —— 各格式文档 → 统一 ExtractedDocument（章节树 + 页码锚点）
-
-本模块只做确定性解析（无 LLM）：标题层级、正文、页码全部来自
-文档本身的样式/结构信息。摘要提取在 content_summarization 模块完成。
-
-新增格式（图片、PPT、音频、视频）时在 converters/ 注册表登记即可。
-"""
-import os
-
-from .converters import get_converter
-from .models import ExtractedDocument, Section
+from content_extraction.document import ExtractedDocument, Section, extract_content
+from content_extraction.database.schema_reader import extract_schema_for_connection
 
 
-def extract_content(path: str) -> ExtractedDocument:
-    """把文档提取为统一中间结构
-
-    Raises:
-        ValueError: 不支持的文件类型 / 文档无可提取内容
-    """
-    ext = os.path.splitext(path)[1].lower()
-    converter = get_converter(ext)
-    if not converter:
-        raise ValueError(f"不支持的文件类型: {ext}")
-    return converter(path)
-
-
-__all__ = ["extract_content", "ExtractedDocument", "Section"]
+__all__ = [
+    "extract_content",
+    "extract_schema_for_connection",
+    "ExtractedDocument",
+    "Section",
+]

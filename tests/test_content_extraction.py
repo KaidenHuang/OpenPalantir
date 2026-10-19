@@ -9,15 +9,15 @@ BACKEND = os.path.join(BASE, "backend")
 if BACKEND not in sys.path:
     sys.path.insert(0, BACKEND)
 
-from content_extraction import extract_content, ExtractedDocument, Section          # noqa: E402
-from content_extraction.converters import get_converter, supported_extensions       # noqa: E402
-from content_extraction.md_parser import parse_markdown_sections, single_section    # noqa: E402
+from content_extraction.document import extract_content, ExtractedDocument, Section          # noqa: E402
+from content_extraction.document.converters import get_converter, supported_extensions       # noqa: E402
+from content_extraction.document.md_parser import parse_markdown_sections, single_section    # noqa: E402
 
 
 # ── 注册表 ──────────────────────────────────────────────────
 
 def test_supported_extensions():
-    from content_extraction.converters import supported_extensions
+    from content_extraction.document.converters import supported_extensions
     exts = supported_extensions()
     for ext in (".pdf", ".docx", ".md", ".txt"):
         assert ext in exts
