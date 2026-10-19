@@ -120,11 +120,13 @@ class SourceService:
         datasource: str,
         parallelism: int = 8,
         domain: str = "general",
+        evidence_hash: str = None,
     ) -> Dict[str, Any]:
         """从概要文件提取实体和关系。
 
         流程：读文件 → 分段 → LLM 并发提取 → 去重 → 持久化
         domain 决定注入 prompt 的实体/关系本体类型枚举。
+        evidence_hash 透传 content_hash 代际标记（佐证条目落 URI@hash）。
         """
         from entity_extraction.llm_entity_enhancer import LLMEntityEnhancer
         from utils.data_store import EntityDataStore
@@ -186,9 +188,10 @@ class SourceService:
                 seen_rel.add(key)
                 relationships.append(r)
 
-        # 保存到知识库和图谱
+        # 保存到知识库和图谱（evidence_hash → 佐证代际标记）
         entity_count, rel_count = EntityDataStore.save_all(
-            entities, relationships, datasource=datasource
+            entities, relationships, datasource=datasource,
+            evidence_hash=evidence_hash
         )
 
         logger.info(f"实体关系提取完成: entities={entity_count}, relationships={rel_count}")

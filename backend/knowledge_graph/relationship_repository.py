@@ -16,7 +16,9 @@ GraphManager 作为薄门面委托调用本模块。
 from typing import Any, Dict, List, Tuple
 from config.neo4j_config import neo4j_conn
 from knowledge_graph.graph_performance import graph_performance
-from knowledge_graph.source_scope import match_prefix, strip_prefix, union_sources
+from knowledge_graph.source_scope import (
+    match_prefix, pure_uri, strip_prefix, strip_stale_evidence, union_sources
+)
 from utils.json_utils import db_json_dumps
 from ontology.predicates import cypher_rel_type, normalize_predicate, canonical_rel_id
 from system.logger import logger
@@ -53,6 +55,8 @@ def _normalize_rel(raw: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
         'subject_id': raw.get('subject_id', ''),
         'object_id': raw.get('object_id', ''),
         'datasource': raw.get('datasource', ''),
+        # 佐证条目（datasources 列表的并集源）：默认纯 URI；来源代际场景由调用方传 URI@content_hash
+        'evidence': raw.get('evidence') or raw.get('datasource', ''),
         'occurrence_time': raw.get('occurrence_time'),
         'description': raw.get('description'),
         'attributes': attrs_str,
@@ -212,7 +216,7 @@ class RelationshipRepository:
                 r.subject_id = $subject_id, r.object_id = $object_id,
                 r.occurrence_time = $occurrence_time, r.description = $description,
                 r.attributes = $attributes
-            SET r.datasources = {union_sources('r', '$datasource')}
+            SET r.datasources = {union_sources('r', '$evidence')}
             RETURN type(r) as type
             """
             neo4j_conn.execute_query(query, {
@@ -225,6 +229,7 @@ class RelationshipRepository:
                 'subject_id': row['subject_id'],
                 'object_id': row['object_id'],
                 'datasource': row['datasource'],
+                'evidence': row['evidence'],
                 'occurrence_time': row['occurrence_time'],
                 'description': row['description'],
                 'attributes': row['attributes'],
@@ -269,11 +274,11 @@ class RelationshipRepository:
 
             write_keys = {'subject_id': None, 'object_id': None, 'relationship_id': None,
                           'predicate': None, 'raw_predicate': None, 'confidence': None,
-                          'datasource': None,
+                          'datasource': None, 'evidence': None,
                           'occurrence_time': None, 'description': None, 'attributes': None}
 
             written = 0
-            union_rel_sources = union_sources('rel', 'r.datasource')
+            union_rel_sources = union_sources('rel', 'r.evidence')
             for predicate, rows in groups.items():
                 rel_type = cypher_rel_type(predicate)
                 payload = [{k: r[k] for k in write_keys} for r in rows]
@@ -364,6 +369,7 @@ class RelationshipRepository:
                     "description": raw.get("description", ""),
                     "attributes": attrs_str,
                     "datasource": raw.get("datasource", ""),
+                    "evidence": raw.get("evidence") or raw.get("datasource", ""),
                     "confidence": raw.get("confidence", default_confidence),
                 })
 
@@ -386,7 +392,7 @@ class RelationshipRepository:
                     f"{source_set}, "
                     f"r.description = item.description, r.attributes = item.attributes, "
                     f"r.confidence = item.confidence "
-                    f"SET r.datasources = {union_sources('r', 'item.datasource')}",
+                    f"SET r.datasources = {union_sources('r', 'item.evidence')}",
                     {**batch_params, **extra_params}
                 )
                 written += len(batch)
@@ -427,23 +433,30 @@ class RelationshipRepository:
     # ── 删除 ──
 
     def recycle_datasource(self, datasource_prefix: str,
-                           defer_cache: bool = False) -> int:
+                           defer_cache: bool = False, keep_hash: str = None) -> int:
         """摘除某来源对全部边的佐证，佐证清空则删除边
 
         同一条关系可被多个来源佐证（relationship_id 由 s_p_o 决定，与来源无关），
         因此只删除本来源不再佐证的边，其他来源仍在的边保留。
+        keep_hash（代际回收）：见 entity_repo.recycle_datasource——
+        保留本来源新代佐证（URI@keep_hash），摘除旧代与历史遗留纯 URI 条目；
+        None 时全摘（旧行为）。
         """
         try:
+            strip_expr = strip_stale_evidence('r') if keep_hash else strip_prefix('r')
             query = f"""
             MATCH ()-[r]->()
             WHERE {match_prefix('r', '$prefix')}
-            SET r.datasources = {strip_prefix('r')}
-            SET r.datasource = coalesce(head(r.datasources), '')
+            SET r.datasources = {strip_expr}
+            SET r.datasource = {pure_uri('r')}
             WITH r WHERE size(coalesce(r.datasources, [])) = 0
             DELETE r
             RETURN count(r) AS deleted
             """
-            result = neo4j_conn.execute_query(query, {"prefix": datasource_prefix})
+            params = {"prefix": datasource_prefix}
+            if keep_hash:
+                params["hash"] = keep_hash
+            result = neo4j_conn.execute_query(query, params)
             deleted = result[0].get('deleted', 0) if result else 0
 
             if not defer_cache:

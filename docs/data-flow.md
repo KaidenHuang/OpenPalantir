@@ -221,17 +221,19 @@ CDC 只覆盖数据库行级变更，文档侧的「改了 / 删了」由内容�
                               ↓
   ┌─────────────────────────────────────────────────────────────┐
   │ source_management/refresh_service.refresh_document()          │
-  │  ① 重新生成摘要并落盘                                          │
+  │  ① 重新生成摘要并落盘（取 content_hash 作为本代指纹）           │
   │     LLM 失败即抛出 —— 旧摘要、旧图谱、旧 Wiki 页保持完整          │
-  │  ② recycle.recycle_datasource("DOC://{sid}/{文件}")             │
-  │     先摘边佐证再摘实体佐证，datasources 清空才 DETACH DELETE      │
+  │  ② 按可用模型重新抽取实体关系入库（代际佐证 URI@content_hash）    │
+  │     抽取失败即抛出 —— 此时尚未回收，旧图谱产出完好                 │
+  │  ③ recycle.recycle_datasource("DOC://{sid}/{文件}",              │
+  │       keep_hash=content_hash) —— 代际回收：只摘本来源旧代         │
+  │     佐证，保留刚写入的 URI@content_hash；佐证清空才 DETACH DELETE │
   │     → 被其他文档佐证的实体/关系不受影响                          │
-  │  ③ 按可用模型重新抽取实体关系入库                                │
   │  ④ Wiki 传播：文档页重生成 → 主题页/实体页按 source_hash 重算     │
   │     → wiki_service.prune_orphans() 清理失去依据的页面            │
   └─────────────────────────────────────────────────────────────┘
 
-源文件已删除（reason=removed）时走删除分支：
+源文件已删除（reason=removed）时走删除分支（keep_hash=None 全量回收）：
     回收图谱产出 → 删除摘要 JSON → remove_pages_by_datasource() → prune_orphans()
 ```
 
@@ -444,7 +446,7 @@ LOOP (最多 10 轮):
 | 类型 | 触发接口 | Handler | 执行内容 |
 |------|---------|---------|---------|
 | `document_generate_summary` | `POST /api/sources/{id}/summarize` | DocumentSummaryHandler | PageIndex 摘要树 + 记录 content_hash |
-| `document_refresh` | `POST /api/sources/{id}/refresh`、文档监听 | DocumentRefreshHandler | 重跑摘要 → 回收旧图谱 → 重抽取 → Wiki 刷新（见 §2.4） |
+| `document_refresh` | `POST /api/sources/{id}/refresh`、文档监听 | DocumentRefreshHandler | 重跑摘要 → 抽取（新代佐证）→ 旧代回收 → Wiki 刷新（见 §2.4） |
 | `wiki_generate` | `POST /api/wiki/generate` | WikiGenerateHandler | 文档页 / 主题页 / 实体页批量生成 |
 | `database_schema_analyze` | `POST /api/database/{connection_id}/analyze` | SchemaAnalyzeHandler | 阶段1 Schema 语义标注 |
 | `database_schema_import` | `POST /api/database/{connection_id}/import` | SchemaImportHandler | 阶段2 行级导入图谱 + 可选 auto_start_cdc |

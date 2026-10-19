@@ -137,6 +137,20 @@ class TestRelationshipNormalizeGuard:
         assert row["raw_predicate"] == (
             raw_predicate if raw_predicate != row["predicate"] else "")
 
+    def test_normalize_rel_evidence_defaults_to_datasource(self):
+        """佐证条目默认纯 URI；带代际标记时按 origin URI@hash 原样透传"""
+        from knowledge_graph.relationship_repository import _normalize_rel
+        row, _ = _normalize_rel({"subject": "张三", "object": "研发中心",
+                                 "predicate": "负责", "datasource": "DOC://s1/a.md"})
+        assert row["evidence"] == "DOC://s1/a.md"
+
+    def test_normalize_rel_generational_evidence(self):
+        from knowledge_graph.relationship_repository import _normalize_rel
+        row, _ = _normalize_rel({"subject": "张三", "object": "研发中心",
+                                 "predicate": "负责", "datasource": "DOC://s1/a.md",
+                                 "evidence": "DOC://s1/a.md@abc123"})
+        assert row["evidence"] == "DOC://s1/a.md@abc123"
+
 
 class TestDomainPlumbing:
     """domain 参数从 API 传到任务载荷，再决定注入哪套词表（两条导入路径的入口）"""

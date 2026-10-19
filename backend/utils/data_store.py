@@ -62,7 +62,8 @@ class EntityDataStore:
         entities: List[Dict[str, Any]],
         relationships: List[Dict[str, Any]] = None,
         datasource: str = None,
-        use_create: bool = False
+        use_create: bool = False,
+        evidence_hash: str = None,
     ) -> Tuple[int, int]:
         """一次性保存实体和关系到图谱存储
 
@@ -71,6 +72,9 @@ class EntityDataStore:
             relationships: 关系列表
             datasource: 数据源标识
             use_create: True=关系使用 CREATE（首次导入更快）；False=使用 MERGE（默认，幂等安全）
+            evidence_hash: 来源内容指纹（content_hash 代际标记）——
+                提供时佐证条目落 `{datasource}@{evidence_hash}`，用于文档刷新的
+                「抽取先于回收」新代保留；无代概念的数据源（导入/CDC）不传，佐证为纯 URI。
         """
         entity_count = 0
         rel_count = 0
@@ -79,13 +83,21 @@ class EntityDataStore:
             logger.info("没有需要保存的实体")
             return entity_count, rel_count
 
+        # 佐证条目 = 展示 URI + 可选代缀；主来源字段（datasource）保持纯 URI 供展示
+        evidence_uri = (
+            f"{datasource}@{evidence_hash}"
+            if datasource and evidence_hash else (datasource or "")
+        )
+
         # 词表外 'time' 类型防幻觉阀门在进料缝拦截（repo 层不再过滤，保证 ids 与输入对齐）
         entities = [e for e in entities if (e.get('type') or '').strip().lower() != 'time']
         prepared_entities = []
         name_to_eid: Dict[str, str] = {}  # 原始名 → entity_id（别名解析前）
         for entity in entities:
             ed = EntityData.from_llm_dict(entity, datasource=datasource or "")
-            prepared_entities.append(ed.to_neo4j_dict())
+            prepared = ed.to_neo4j_dict()
+            prepared['evidence'] = evidence_uri
+            prepared_entities.append(prepared)
             name_to_eid[ed.name.strip()] = ed.entity_id
             if ed.byname:
                 name_to_eid[ed.byname.strip()] = ed.entity_id
@@ -156,6 +168,7 @@ class EntityDataStore:
                     'object': object_name,
                     'predicate': relationship.get('p', ''),
                     'datasource': datasource or '',
+                    'evidence': evidence_uri,
                     'occurrence_time': relationship.get('ot', ''),
                     'description': relationship.get('d', ''),
                     'subject_id': subject_id,

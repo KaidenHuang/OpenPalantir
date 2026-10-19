@@ -37,3 +37,23 @@ def union_sources(node: str, src: str) -> str:
 def strip_prefix(node: str, param: str = "$prefix") -> str:
     """SET <node>.datasources = <移除该前缀后的来源列表>"""
     return f"[d IN coalesce({node}.datasources, []) WHERE NOT d STARTS WITH {param}]"
+
+
+def strip_stale_evidence(node: str) -> str:
+    """SET <node>.datasources = <移除该来源旧代产出的佐证列表>
+
+    佐证条目形态 `{URI}@{content_hash}`（代际标记）：
+    - 不是本来源前缀 → 保留（其他来源的佐证不动）
+    - 是本来源前缀且 hash == $hash → 保留（本次刷新刚写入的新代佐证）
+    - 其余（本来源的旧代条目、以及历史遗留的无 @ 纯 URI 条目）→ 摘除
+    配套属性：Cypher 中以 STARTS WITH 判断前缀，hash 以 `@` 后缀精确匹配。
+    """
+    return (
+        f"[d IN coalesce({node}.datasources, []) "
+        f"WHERE NOT d STARTS WITH $prefix OR d ENDS WITH ('@' + $hash)]"
+    )
+
+
+def pure_uri(node: str) -> str:
+    """从佐证条目还原展示用纯 URI（去掉 `@hash` 代缀）—— 常用于 datasource 主字段重算"""
+    return f"split(coalesce(head({node}.datasources), ''), '@')[0]"

@@ -9,7 +9,8 @@ from typing import List, Dict, Any, Optional, Tuple
 from config.neo4j_config import neo4j_conn
 from knowledge_graph.graph_performance import graph_performance
 from knowledge_graph.source_scope import (
-    match_any_prefix, match_either, match_prefix, strip_prefix, union_sources,
+    match_any_prefix, match_either, match_prefix, pure_uri, strip_prefix,
+    strip_stale_evidence, union_sources,
 )
 from system.logger import logger
 from system.metrics import GRAPH_WRITES
@@ -101,6 +102,7 @@ class EntityRepository:
                 'confidence': entity.get('confidence', 1.0),
                 'byname': entity.get('byname'),
                 'datasource': entity.get('datasource', ''),
+                'evidence': entity.get('evidence') or entity.get('datasource', ''),
                 'description': entity.get('description', ''),
                 'attributes': entity.get('attributes', '{}')
             }
@@ -111,7 +113,7 @@ class EntityRepository:
             SET e.name = $name, e.type = $type, e.count = $count,
                 e.confidence = $confidence, e.byname = $byname,
                 e.description = $description, e.attributes = $attributes
-            SET e.datasources = """ + union_sources('e', '$datasource') + """
+            SET e.datasources = """ + union_sources('e', '$evidence') + """
             RETURN e.id as id, e.name as name
             """
             neo4j_conn.execute_query(query, params)
@@ -153,6 +155,7 @@ class EntityRepository:
                     'confidence': entity.get('confidence', 1.0),
                     'byname': entity.get('byname'),
                     'datasource': entity.get('datasource', ''),
+                    'evidence': entity.get('evidence') or entity.get('datasource', ''),
                     'description': entity.get('description', ''),
                     'attributes': entity.get('attributes', '{}')
                 })
@@ -164,7 +167,7 @@ class EntityRepository:
             SET n.name = e.name, n.type = e.type, n.count = e.count,
                 n.confidence = e.confidence, n.byname = e.byname,
                 n.description = e.description, n.attributes = e.attributes
-            SET n.datasources = """ + union_sources('n', 'e.datasource') + """
+            SET n.datasources = """ + union_sources('n', 'e.evidence') + """
             """
             neo4j_conn.execute_query(query, {"entities": entity_list})
 
@@ -753,7 +756,7 @@ class EntityRepository:
             OPTIONAL MATCH (n)-[r]-()
             WITH n, count(r) AS rel_count, """ + strip_prefix('n', '$prefix') + """ AS remaining
             SET n.datasources = remaining
-            SET n.datasource = coalesce(head(remaining), '')
+            SET n.datasource = split(coalesce(head(remaining), ''), '@')[0]
             WITH n, rel_count, remaining
             WHERE size(remaining) = 0 AND rel_count = 0
             DELETE n
@@ -769,24 +772,33 @@ class EntityRepository:
             raise
 
     def recycle_datasource(self, datasource_prefix: str,
-                           defer_cache: bool = False) -> int:
+                           defer_cache: bool = False, keep_hash: str = None) -> int:
         """摘除某来源对全部实体的佐证，佐证清空则删除实体
 
         文档重跑/删除、数据库重新导入前的回收入口：
         被其他来源佐证的实体保留（仅从 datasources 去掉本来源），
         无来源可证的实体连同其边一起删除。
+
+        keep_hash（代际回收）：文档刷新场景专用——
+        只摘「本来源除新代外的全部佐证」，保留刚刚写入的新代佐证（URI@keep_hash），
+        使「摘要 → 抽取 → 回收」的新顺序下抽取得再早也不被本次回收误伤。
+        keep_hash=None 时维持旧行为（全摘）。
         """
         try:
+            strip_expr = strip_stale_evidence('n') if keep_hash else strip_prefix('n')
             query = f"""
             MATCH (n:Entity)
             WHERE {match_prefix('n', '$prefix')}
-            SET n.datasources = {strip_prefix('n')}
-            SET n.datasource = coalesce(head(n.datasources), '')
+            SET n.datasources = {strip_expr}
+            SET n.datasource = {pure_uri('n')}
             WITH n WHERE size(coalesce(n.datasources, [])) = 0
             DETACH DELETE n
             RETURN count(n) AS deleted
             """
-            result = neo4j_conn.execute_query(query, {"prefix": datasource_prefix})
+            params = {"prefix": datasource_prefix}
+            if keep_hash:
+                params["hash"] = keep_hash
+            result = neo4j_conn.execute_query(query, params)
             deleted = result[0].get('deleted', 0) if result else 0
 
             if not defer_cache:

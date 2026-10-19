@@ -345,8 +345,8 @@ CREATE CONSTRAINT IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE
 - **实体/关系 ID**：`entity_id = MD5(name)`，`relationship_id = MD5({subject}_{predicate}_{object})`，由 `models/ids.py` 生成
 - **单一存储**：实体与关系写入 Neo4j，通过全文索引实现搜索
 - **受控本体**：边类型取自 `ontology/packs/` 的 LinkType 词表；谓词归一化**先于** `relationship_id` 计算，未命中兜底为「其他」并记 `raw_predicate`。域视图 = `general ⊕ extends 链 ⊕ 本包`，社区包可 `extends: workforce` 只写增量（校验相对父视图，故可引用父包类型）。社区包在 `backend/data/ontology_packs/`（同名覆盖内置），导入即校验，`registry.version` 变更即令 prompt 缓存失效
-- **两级来源**：节点/边同时带 `datasource`（主来源）与 `datasources`（全部佐证来源）；按来源过滤与回收必须走 `knowledge_graph/source_scope.py` 的片段，`recycle_datasource` 只摘本来源佐证、清空才删
-- **内容失效传播**：摘要 JSON 的 `content_hash`（源文件 MD5）是文档指纹；刷新顺序是先生成摘要 → 后回收图谱 → 再抽取 → 再刷新 Wiki，保证 LLM 失败时旧数据完好
+- **两级来源**：节点/边同时带 `datasource`（主来源，展示与检索用，纯 URI）与 `datasources`（全部佐证条目，代际场景为 `URI@content_hash`）；按来源过滤与回收必须走 `knowledge_graph/source_scope.py` 的片段，`recycle_datasource` 只摘本来源佐证、清空才删；`keep_hash`（代际回收）保留本来源新代佐证
+- **内容失效传播**：摘要 JSON 的 `content_hash`（源文件 MD5）是文档指纹；刷新顺序是先生成摘要 → **抽取（新代佐证 `URI@content_hash`）** → 旧代回收（`keep_hash` 保留新代）→ 再刷新 Wiki —— 抽取/落库失败时旧图谱数据完好，成功才摘除旧代
 - **Wiki 页面**：`wiki_pages` 存 Markdown 正文 + `source_refs`（node_id 锚点），kind 为 document/topic/entity/answer；按 `source_hash` 幂等，LLM 不可用降级为确定性拼装
 - **LLM 集成**：经 `model_management/model_client.py` 统一调用 Ollama API
 - **MCP 工具**：通过 `config/mcp_servers.json` 配置外部 MCP Server，自动纳入 AgenticEngine ReAct 循环

@@ -10,8 +10,15 @@ from knowledge_graph.entity_repository import entity_repo
 from knowledge_graph.relationship_repository import rel_repo
 
 
-def recycle_datasource(datasource_prefix: str, defer_cache: bool = False) -> Dict[str, int]:
-    """回收某来源的全部产出：先摘边佐证，再摘实体佐证（佐证清空即删）"""
-    edges = rel_repo.recycle_datasource(datasource_prefix, defer_cache=defer_cache)
-    entities = entity_repo.recycle_datasource(datasource_prefix, defer_cache=defer_cache)
+def recycle_datasource(datasource_prefix: str, defer_cache: bool = False,
+                       keep_hash: str = None) -> Dict[str, int]:
+    """回收某来源的全部产出：先摘边佐证，再摘实体佐证（佐证清空即删）
+
+    keep_hash（代际回收）：见 entity_repo/rel_repo.recycle_datasource——
+    文档刷新场景只摘本来源旧代佐证，保留新代（URI@keep_hash）。
+    """
+    edges = rel_repo.recycle_datasource(datasource_prefix, defer_cache=defer_cache,
+                                        keep_hash=keep_hash)
+    entities = entity_repo.recycle_datasource(datasource_prefix, defer_cache=defer_cache,
+                                              keep_hash=keep_hash)
     return {"edges": edges, "entities": entities}

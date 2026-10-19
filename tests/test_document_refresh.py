@@ -141,6 +141,50 @@ class TestGraphRecycle:
         assert "WITH r WHERE size(coalesce(r.datasources, [])) = 0" in query
         assert "DETACH" not in query
 
+    def test_generation_recycle_keeps_new_evidence(self):
+        """代际回收（keep_hash）：摘除本来源旧代佐证，保留 URI@keep_hash 新代条目"""
+        from knowledge_graph.entity_repository import EntityRepository
+        from knowledge_graph import entity_repository as er
+
+        conn = MagicMock()
+        conn.execute_query.return_value = [{"deleted": 2}]
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(er, "neo4j_conn", conn)
+            assert EntityRepository().recycle_datasource("DOC://s1/", keep_hash="abc") == 2
+
+        query, params = conn.execute_query.call_args.args
+        assert "WHERE NOT d STARTS WITH $prefix OR d ENDS WITH ('@' + $hash)]" in query
+        assert params == {"prefix": "DOC://s1/", "hash": "abc"}
+        # 主来源重算必须剥掉 @hash 代缀
+        assert "split(coalesce(head(n.datasources), ''), '@')[0]" in query
+
+    def test_relationship_generation_recycle(self):
+        from knowledge_graph.relationship_repository import RelationshipRepository
+        from knowledge_graph import relationship_repository as rr
+
+        conn = MagicMock()
+        conn.execute_query.return_value = [{"deleted": 0}]
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(rr, "neo4j_conn", conn)
+            RelationshipRepository().recycle_datasource("DOC://s1/", keep_hash="h2")
+
+        query, params = conn.execute_query.call_args.args
+        assert "WHERE NOT d STARTS WITH $prefix OR d ENDS WITH ('@' + $hash)]" in query
+        assert params == {"prefix": "DOC://s1/", "hash": "h2"}
+
+    def test_recycle_entrance_passes_keep_hash(self):
+        """组合入口把 keep_hash 透传给边/实体两个回收实现"""
+        from knowledge_graph import recycle
+
+        got = []
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(recycle.rel_repo, "recycle_datasource",
+                       lambda prefix, **kw: (got.append(("rel", kw.get("keep_hash"))), 0)[1])
+            mp.setattr(recycle.entity_repo, "recycle_datasource",
+                       lambda prefix, **kw: (got.append(("ent", kw.get("keep_hash"))), 0)[1])
+            recycle.recycle_datasource("DOC://s1/", keep_hash="h9")
+            assert got == [("rel", "h9"), ("ent", "h9")]
+
     def test_recycle_recycles_edges_then_entities(self):
         from knowledge_graph import recycle
 
@@ -160,10 +204,12 @@ class TestRefreshDocument:
     def _stub_pipeline(self, mp, env, order, recycle_result=None):
         mp.setattr(refresh_service, "_source_base_path", lambda sid, quiet=False: env["src"])
         mp.setattr(refresh_service, "recycle_document",
-                   lambda ds: (order.append("recycle"), recycle_result or {"edges": 1, "entities": 1})[1])
+                   lambda ds, keep_hash=None: (order.append(("recycle", keep_hash)),
+                                               recycle_result or {"edges": 1, "entities": 1})[1])
         mp.setattr(refresh_service, "_extract",
-                   lambda path, ds, domain, parallelism: (order.append("extract"),
-                                                           {"entity_count": 4, "relationship_count": 2})[1])
+                   lambda path, ds, domain, parallelism, evidence_hash=None:
+                      (order.append(("extract", evidence_hash)),
+                       {"entity_count": 4, "relationship_count": 2})[1])
         wiki = MagicMock()
         wiki.generate_document_page.return_value = {"page_id": "p1"}
         wiki.refresh_topics.return_value = [{}]
@@ -179,7 +225,7 @@ class TestRefreshDocument:
         assert result["status"] == "skipped"
         assert result["datasource"] == "DOC://s1/a.md"
 
-    def test_generates_summary_before_recycling(self, env, source_db):
+    def test_extract_precedes_recycle_with_generation_mark(self, env, source_db):
         order = []
         write_doc(env, "a.md", "新内容")
         write_summary(env, "s1", "a.md", md5("旧内容"))
@@ -188,12 +234,12 @@ class TestRefreshDocument:
             self._stub_pipeline(mp, env, order)
 
             def fake_generate(full_path):
-                order.append("generate")
+                order.append(("generate", None))
                 return {"doc_name": "a.md", "structure": [],
                         "content_hash": md5("新内容")}
 
             def fake_save(source_id, file_path, data):
-                order.append("save")
+                order.append(("save", None))
                 return summary_generator.summary_path(source_id, file_path)
 
             mp.setattr(summary_generator, "generate", fake_generate)
@@ -201,13 +247,16 @@ class TestRefreshDocument:
 
             result = refresh_service.refresh_document("s1", "a.md")
 
-        assert order == ["generate", "save", "recycle", "extract"]
+        assert [item[0] for item in order] == ["generate", "save", "extract", "recycle"]
         assert result["status"] == "refreshed"
         assert result["reason"] == "changed"
         assert result["entity_count"] == 4
         assert result["document_page"] == "p1"
         assert result["topic_pages"] == 1
         assert result["entity_pages"] == 2
+        # 代际编排：抽取带新 hash 佐证；回收只摘旧代（keep_hash=新 hash 保留新产出）
+        assert order[2] == ("extract", md5("新内容"))
+        assert order[3] == ("recycle", md5("新内容"))
 
     def test_summary_failure_leaves_old_graph_untouched(self, env, source_db):
         order = []

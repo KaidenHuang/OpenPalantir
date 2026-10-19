@@ -38,10 +38,14 @@ def stale_reason(source_id: str, file_path: str, full_path: str) -> str:
     return ""
 
 
-def recycle_document(datasource: str) -> Dict[str, int]:
-    """回收某文档在图谱中的全部产出（边 + 无其他佐证的实体）"""
+def recycle_document(datasource: str, keep_hash: str = None) -> Dict[str, int]:
+    """回收某文档在图谱中的产出（边 + 无其他佐证的实体）
+
+    keep_hash（代际回收）：保留本来源新代佐证（URI@keep_hash），
+    摘除旧代与历史遗留纯 URI 条目——供「抽取先于回收」的刷新顺序使用。
+    """
     from knowledge_graph.recycle import recycle_datasource
-    recycled = recycle_datasource(datasource)
+    recycled = recycle_datasource(datasource, keep_hash=keep_hash)
     logger.info(f"[refresh] 图谱回收 {datasource}: {recycled}")
     return recycled
 
@@ -62,7 +66,12 @@ def remove_document(source_id: str, file_path: str) -> Dict[str, Any]:
 
 def refresh_document(source_id: str, file_path: str, *, force: bool = False,
                      domain: str = "general", parallelism: int = 8) -> Dict[str, Any]:
-    """重跑一篇文档：摘要 → 图谱回收 → 抽取 → Wiki 刷新"""
+    """重跑一篇文档：摘要 → 抽取（新代佐证）→ 旧代回收 → Wiki 刷新
+
+    回收后置于抽取：LLM/落库失败时旧图谱数据完好（失败即任务失败，
+    下次成功刷新才摘除旧代），不再是「回收后抽取失败 → 图谱被清空」的丢数据顺序。
+    代际佐证（URI@content_hash）保证抽取先写入的新代产出不被随后的回收误伤。
+    """
     from wiki.wiki_service import wiki_service
 
     base_path = _source_base_path(source_id)
@@ -78,12 +87,15 @@ def refresh_document(source_id: str, file_path: str, *, force: bool = False,
     # 1) 先生成摘要 —— 失败即抛出，旧数据保持原样
     summary = summary_generator.generate(full_path)
     summary_path = summary_generator.save(source_id, file_path, summary)
+    new_hash = summary.get("content_hash", "")
 
-    # 2) 摘要已就位，回收旧图谱产出
-    recycled = recycle_document(datasource)
+    # 2) 重新抽取（LLM）—— 新产出带新代佐证（URI@content_hash）落库，失败即抛，
+    #    此时旧图谱数据未动
+    extracted = _extract(summary_path, datasource, domain, parallelism,
+                         evidence_hash=new_hash)
 
-    # 3) 重新抽取（LLM）
-    extracted = _extract(summary_path, datasource, domain, parallelism)
+    # 3) 抽取成功后回收：只摘本来源旧代佐证，刚写入的新代佐证保留
+    recycled = recycle_document(datasource, keep_hash=new_hash)
 
     # 4) Wiki 传播：本页重生成 + 主题/实体页按指纹重算 + 清理孤儿页
     document_page = wiki_service.generate_document_page(datasource)
@@ -151,8 +163,8 @@ def _source_base_path(source_id: str, quiet: bool = False) -> str:
 
 
 def _extract(summary_path: str, datasource: str, domain: str,
-             parallelism: int) -> Dict[str, Any]:
-    """按可用模型重新抽取实体关系"""
+             parallelism: int, evidence_hash: str = None) -> Dict[str, Any]:
+    """按可用模型重新抽取实体关系（evidence_hash → 佐证代际标记）"""
     from source_management.source_service import SourceService
 
     db = SessionLocal()
@@ -166,16 +178,17 @@ def _extract(summary_path: str, datasource: str, domain: str,
     service = SourceService(model_config)
     result = service.extract_from_summary(
         summary_path=summary_path, datasource=datasource,
-        parallelism=parallelism, domain=domain,
+        parallelism=parallelism, domain=domain, evidence_hash=evidence_hash,
     )
 
     # 零实体守卫：摘要结构存在却抽到 0 实体，几乎必然是 LLM 全部调用失败
     # （call_json 失败返回 None → enhancer 只能得到空结果，异常已被吞在客户端层）。
-    # 此时旧图谱刚被回收，静默成功会变成「图谱被清空的假成功」——按失败处理。
+    # 静默成功 = 任务看着没事、图谱实际没有新产出 —— 按失败处理。
+    # 注：本顺序下回收后置，此失败不会清掉旧图谱数据。
     entity_count = (result or {}).get("entity_count", 0)
     if entity_count == 0:
         raise RuntimeError(
             "重新抽取得到 0 个实体（大概率 LLM 不可用），刷新按失败处理；"
-            "请检查模型配置后重跑"
+            "旧图谱产出未回收，请检查模型配置后重跑"
         )
     return result
