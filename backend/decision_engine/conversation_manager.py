@@ -17,14 +17,21 @@ CONVERSATIONS_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "conve
 
 
 class _ConversationManager:
-    def __init__(self):
-        os.makedirs(CONVERSATIONS_DIR, exist_ok=True)
+    """会话持久化：一个 session 一个 JSON
+
+    目录由构造参数决定（测试传临时目录），不是 patch 模块全局——patch 只包住构造那一行，
+    之后读写又落回运行时真实目录。
+    """
+
+    def __init__(self, base_dir: Optional[str] = None):
+        self._dir = base_dir or CONVERSATIONS_DIR
+        os.makedirs(self._dir, exist_ok=True)
         self._cache: Dict[str, ConversationSession] = {}
         # 会话对象的并发守护：读取、追加、落盘共用（决策流量单进程即可，不做 per-session 粒度）
         self._lock = threading.RLock()
 
     def _path(self, session_id: str) -> str:
-        return os.path.join(CONVERSATIONS_DIR, f"{session_id}.json")
+        return os.path.join(self._dir, f"{session_id}.json")
 
     def _load(self, session_id: str) -> Optional[ConversationSession]:
         path = self._path(session_id)
@@ -42,7 +49,7 @@ class _ConversationManager:
     def _save(self, session: ConversationSession):
         """原子写：临时文件 + os.replace，读者永远看不到半截 JSON"""
         path = self._path(session.session_id)
-        fd, tmp = tempfile.mkstemp(prefix="conv_", suffix=".json", dir=CONVERSATIONS_DIR)
+        fd, tmp = tempfile.mkstemp(prefix="conv_", suffix=".json", dir=self._dir)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(session.model_dump(), f, ensure_ascii=False, indent=2)

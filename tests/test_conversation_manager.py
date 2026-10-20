@@ -2,14 +2,12 @@
 ConversationManager 单元测试
 
 测试会话管理的核心功能：创建/恢复/添加轮次/历史截断。
-不依赖外部服务（Neo4j、LLM），使用临时目录隔离文件 IO。
+不依赖外部服务（Neo4j、LLM），文件 IO 用临时目录隔离（base_dir 构造参数）。
 """
-import json
 import os
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
@@ -17,13 +15,22 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 def _make_manager(tmpdir):
     """在临时目录中创建 _ConversationManager 实例"""
     from decision_engine.conversation_manager import _ConversationManager
-    with patch("decision_engine.conversation_manager.CONVERSATIONS_DIR", tmpdir):
-        mgr = _ConversationManager()
-    return mgr
+    return _ConversationManager(base_dir=tmpdir)
 
 
 class TestConversationManager:
     """会话管理器核心功能测试"""
+
+    def test_all_io_stays_inside_base_dir(self):
+        """隔离必须是全程的：以前只 patch 模块全局到构造结束，落盘仍写进 backend/data/conversations"""
+        from decision_engine import conversation_manager as cm
+        from decision_engine.contracts import AnalyzedQuery, DecisionAnswer
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = cm._ConversationManager(base_dir=tmpdir)
+            sid = mgr.get_or_create(domain="general")
+            mgr.add_turn(sid, "问题", AnalyzedQuery(), DecisionAnswer(summary="回答"))
+            assert os.listdir(tmpdir) == [f"{sid}.json"]
+            assert not os.path.exists(os.path.join(cm.CONVERSATIONS_DIR, f"{sid}.json"))
 
     def test_get_or_create_new(self):
         """无 session_id → 创建新会话"""
