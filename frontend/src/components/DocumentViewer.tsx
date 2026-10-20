@@ -829,12 +829,14 @@ const DocumentViewer: React.FC = () => {
 
         {/* Right: content panel */}
         <div className="dv-content-panel">
-          {!selectedFile ? (
-            <div className="dv-empty-state">请选择一个文件</div>
+          {!selectedSourceId ? (
+            <div className="dv-empty-state">请先选择文档源</div>
           ) : (
             <div className="dv-summary-view">
               <div className="dv-file-info">
-                <span className="dv-selected-file">{selectedFile}</span>
+                <span className="dv-selected-file" title={selectedFile || undefined}>
+                  {selectedFile || `未选择文件（当前目录 ${currentPath && currentPath !== '.' ? currentPath : '/'}，可勾选左侧文件批量执行）`}
+                </span>
                 <div className="dv-actions">
                   <Select
                     value={extractDomain}
@@ -982,12 +984,14 @@ const DocumentViewer: React.FC = () => {
                     )}
                   </>
                 ) : (
-                  <div className="dv-empty-state">概要未生成，请点击"生成概要"</div>
+                  <div className="dv-empty-state">
+                    {selectedFile ? '概要未生成，请点击"生成概要"' : '点选左侧文件查看概要，或勾选文件/目录后点批量按钮'}
+                  </div>
                 )}
               </div>
 
               {/* Entities */}
-              {entities.length > 0 && (
+              {selectedFile && entities.length > 0 && (
                 <div className="dv-entities-section">
                   <h5>识别的实体 ({entities.length})</h5>
                   <div className="dv-entities-list">
