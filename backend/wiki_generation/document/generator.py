@@ -58,15 +58,21 @@ def file_md5(path: str) -> str:
         return ""
 
 
-def flatten_nodes(structure: List[dict]) -> List[dict]:
-    """摘要树拍平（DFS），保留有 summary 的节点"""
-    out: List[dict] = []
+def flatten_nodes(structure: List[dict], leaves_only: bool = False
+                  ) -> List[Tuple[int, dict]]:
+    """摘要树拍平（DFS，父节点排在其子节点前），返回 (深度, 节点)
+
+    leaves_only=True 只取叶子：主题发现要的是具体小节内容，整章概览顶着高频词
+    会挤占 MAX_FRAGMENTS 名额，把主题页写成大纲。
+    """
+    out: List[Tuple[int, dict]] = []
 
     def walk(nodes, depth=0):
         for node in nodes or []:
-            if node.get("summary") or node.get("text"):
-                out.append(node)
-            walk(node.get("nodes", []), depth + 1)
+            children = node.get("nodes", [])
+            if node.get("summary") and not (leaves_only and children):
+                out.append((depth, node))
+            walk(children, depth + 1)
 
     walk(structure)
     return out
@@ -84,8 +90,7 @@ def _fallback_document_content(data: dict, sections: List[str]) -> str:
     desc = data.get("doc_description", "")
     if desc:
         lines += [desc, ""]
-    for i, sec in enumerate(sections, 1):
-        lines.append(f"{sec} [{i}]")
+    lines += sections
     return "\n".join(lines)
 
 
@@ -103,11 +108,17 @@ def generate_document_page(datasource: str) -> Optional[Dict]:
     if not nodes:
         return None
 
-    sections = [f"[{i}] {n.get('title', '')}: {n.get('summary', '')}"
-                for i, n in enumerate(nodes, 1)]
-    refs = [{"n": i, "datasource": datasource,
-             "node_id": n.get("node_id", ""), "title": n.get("title", "")}
-            for i, n in enumerate(nodes, 1)]
+    # 父节点带「（本节概览）」标记并按树深缩进：LLM 据此把整章概览当纲、叶子当目，
+    # 否则层级信息在拍平后就丢了，页面会被写成平铺的一长串小节
+    sections = []
+    refs = []
+    for i, (depth, node) in enumerate(nodes, 1):
+        title = node.get("title", "")
+        if node.get("nodes"):
+            title += "（本节概览）"
+        sections.append(f"{'  ' * depth}[{i}] {title}: {node.get('summary', '')}")
+        refs.append({"n": i, "datasource": datasource,
+                     "node_id": node.get("node_id", ""), "title": node.get("title", "")})
 
     prompt = _load_prompt("prompt_document_page.md",
                           doc_name=data.get("doc_name", ""),
@@ -160,7 +171,7 @@ def discover_topics(min_docs: int = 2, top_n: int = 3) -> List[Tuple[str, List[d
             continue
         uuid = path.replace("\\", "/").split("/")[-2]
         ds = f"DOC://{uuid}/{data.get('doc_name', '')}"
-        nodes = flatten_nodes(data.get("structure", []))
+        nodes = [n for _, n in flatten_nodes(data.get("structure", []), leaves_only=True)]
         doc_nodes[ds] = nodes
         tokens = set()
         base_text = f"{data.get('doc_name', '')} {data.get('doc_description', '')}"

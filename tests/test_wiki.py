@@ -117,6 +117,32 @@ class TestDocumentPage:
     def test_no_summary_returns_none(self, wiki_env):
         assert wiki_env.service.generate_document_page("DOC://missing/x.md") is None
 
+    def test_parent_overview_reaches_document_page(self, wiki_env):
+        """父节点概览要进文档页：树导航/检索/页面共用 summary 字段，漏掉就等于没人读"""
+        env = wiki_env
+        write_summary(env.dir, "u1", "团队介绍.md", [
+            make_node("001", "组织架构", "整章概览：下设成员与职责", nodes=[
+                make_node("001-1", "成员", "介绍团队成员"),
+            ]),
+        ], "全员名单与分工")
+        page = env.service.generate_document_page("DOC://u1/团队介绍.md")
+
+        prompt = env.stub.prompts[0]
+        assert "整章概览：下设成员与职责" in prompt
+        assert "（本节概览）" in prompt
+        assert {r["node_id"] for r in page["source_refs"]} == {"001", "001-1"}
+
+    def test_flatten_nodes_carves_hierarchy_with_depth(self, wiki_env):
+        structure = [make_node("001", "组织架构", "概览", nodes=[
+            make_node("001-1", "成员", "成员摘要", nodes=[
+                make_node("001-1-1", "张三", "张三摘要"),
+            ]),
+        ])]
+        assert [(d, n["node_id"]) for d, n in page_generator.flatten_nodes(structure)] == [
+            (0, "001"), (1, "001-1"), (2, "001-1-1")]
+        assert [n["node_id"] for _, n in
+                page_generator.flatten_nodes(structure, leaves_only=True)] == ["001-1-1"]
+
     def test_regenerate_unchanged_skips(self, wiki_env):
         env = wiki_env
         write_summary(env.dir, "u1", "团队介绍.md", [make_node("001", "成员", "介绍团队")], "全员名单")
@@ -167,6 +193,25 @@ class TestTopicPage:
         write_summary(env.dir, "u1", "考核办法.md",
                       [make_node("001", "绩效体系", "说明")], "季度评估细则")
         assert page_generator.discover_topics(min_docs=2) == []
+
+    def test_discover_topics_skips_parent_overview(self, wiki_env):
+        """主题碎片只取叶子：整章概览顶着高频词占位，会把主题页写成大纲"""
+        env = wiki_env
+        write_summary(env.dir, "u1", "团队章程.md", [
+            make_node("001", "团队章程", "阐述绩效导向", nodes=[
+                make_node("001-1", "考勤", "打卡与请假规则"),
+            ]),
+        ], "章程正文")
+        write_summary(env.dir, "u2", "管理制度.md", [
+            make_node("010", "管理制度", "以绩效为准绳", nodes=[
+                make_node("010-1", "报销", "差旅发票粘贴要求"),
+            ]),
+        ], "制度正文")
+        write_summary(env.dir, "u3", "备份指南.md",
+                      [make_node("020", "数据库备份", "备份策略说明")], "运维操作")
+
+        names = [t for t, _ in page_generator.discover_topics(min_docs=2, top_n=3)]
+        assert "绩效" not in names
 
     def test_generate_topic_page_and_dedup(self, wiki_env):
         env = wiki_env
