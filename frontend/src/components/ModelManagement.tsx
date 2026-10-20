@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Input, Button, Select, message, Modal, Form, Spin } from 'antd';
+import { Input, InputNumber, Button, Select, message, Modal, Form, Spin } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { API_CONFIG } from '../config/apiConfig';
 import { httpGet, httpPost } from '../services/httpClient';
@@ -12,7 +12,7 @@ interface ModelPlatform {
   id: string;
   name: string;
   status: 'available' | 'unavailable' | 'unknown';
-  type: 'local' | 'cloud' | 'opencode';
+  type: 'local' | 'cloud';
   enabled: boolean;
 }
 
@@ -20,7 +20,11 @@ interface PlatformConfig {
   apiUrl: string;
   apiKey: string;
   model: string;
+  contextLength: string;
 }
+
+// 与后端 model_management.model_client.DEFAULT_CONTEXT_LENGTH 保持一致：留空时按此预算推算
+const FALLBACK_CONTEXT_LENGTH = 32768;
 
 const ModelManagement: React.FC = () => {
   const { fetchPlatforms, fetchOllamaModels: storeFetchOllama, createModel: storeCreateModel, updateModel: storeUpdateModel } = useModelStore();
@@ -35,7 +39,8 @@ const ModelManagement: React.FC = () => {
   const [config, setConfig] = useState<PlatformConfig>({
     apiUrl: 'https://api.openai.com/v1',
     apiKey: '',
-    model: 'gpt-4'
+    model: 'gpt-4',
+    contextLength: ''
   });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -43,7 +48,7 @@ const ModelManagement: React.FC = () => {
   const [selectedPlatform, setSelectedPlatform] = useState<string>('');
   const [isAddModalVisible, setIsAddModalVisible] = useState(false);
   const [newModelName, setNewModelName] = useState('');
-  const [newModelType, setNewModelType] = useState<'local' | 'cloud' | 'opencode'>('cloud');
+  const [newModelType, setNewModelType] = useState<'local' | 'cloud'>('cloud');
 
   // 从 store 的 models 派生出 UI 用的 platforms 列表
   const platforms = useMemo(() => {
@@ -121,7 +126,8 @@ const ModelManagement: React.FC = () => {
       setConfig({
         apiUrl: platform.api_url || '',
         apiKey: platform.api_key || '',
-        model: platform.models?.[0] || ''
+        model: platform.models?.[0] || '',
+        contextLength: platform.context_length ? String(platform.context_length) : ''
       });
     }
   };
@@ -146,6 +152,12 @@ const ModelManagement: React.FC = () => {
       return;
     }
 
+    const contextLength = Number(config.contextLength);
+    if (config.contextLength && (!Number.isInteger(contextLength) || contextLength <= 0)) {
+      message.error('上下文长度需填写正整数 token 数');
+      return;
+    }
+
     setSaving(true);
     try {
       // 找到对应的模型
@@ -166,16 +178,6 @@ const ModelManagement: React.FC = () => {
         } catch {
           status = 'unavailable';
         }
-      } else if (selectedPlatform === 'opencode') {
-        // OpenCode CLI 模式：无需 API 密钥，直接用后端真实测试
-        const signal = getComponentSignal();
-        const response = await httpPost(API_CONFIG.endpoints.model.testConnection(platform.id), {
-          api_url: '',
-          api_key: '',
-          model: config.model
-        }, { signal });
-        status = response.data.connection_status || 'unknown';
-        message.info(response.data.message || '连接测试完成');
       } else {
         // 对于云端模型，简单检查API地址和密钥
         if (!config.apiKey) {
@@ -191,7 +193,8 @@ const ModelManagement: React.FC = () => {
         api_url: config.apiUrl,
         api_key: config.apiKey,
         models: [config.model],
-        status
+        status,
+        ...(contextLength > 0 ? { context_length: contextLength } : {})
       });
 
       message.success('配置保存成功');
@@ -270,7 +273,13 @@ const ModelManagement: React.FC = () => {
       }, { signal });
 
       if (response.data.status === 'success') {
-        message.success(response.data.message);
+        const probed = response.data.context_length;
+        if (typeof probed === 'number' && probed > 0) {
+          handleConfigChange('contextLength', String(probed));
+          message.success(`${response.data.message}，上下文窗口 ${probed.toLocaleString()} tokens`);
+        } else {
+          message.warning(`${response.data.message}，未能查询到上下文窗口，按 ${FALLBACK_CONTEXT_LENGTH.toLocaleString()} tokens 估算`);
+        }
       } else {
         message.error(response.data.message || '测试连接失败');
       }
@@ -458,7 +467,7 @@ const ModelManagement: React.FC = () => {
                 />
               </div>
 
-              {selectedPlatform !== 'ollama' && selectedPlatform !== 'opencode' && (
+              {selectedPlatform !== 'ollama' && (
                 <div style={{ marginBottom: '20px' }}>
                   <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', color: '#333' }}>API密钥</label>
                   <Input.Password
@@ -466,12 +475,6 @@ const ModelManagement: React.FC = () => {
                     onChange={(e) => handleConfigChange('apiKey', e.target.value)}
                     style={{ width: '100%', borderRadius: 6 }}
                   />
-                </div>
-              )}
-
-              {selectedPlatform === 'opencode' && (
-                <div style={{ marginBottom: '20px', padding: '10px', background: '#f6f8fa', borderRadius: 6, fontSize: 13, color: '#555' }}>
-                  OpenCode CLI 模式：通过本机 <code>opencode run</code> 调用（默认 agent 为只读的 plan，工具已禁用），无需 API 密钥。需本机 OpenCode 已登录账号。
                 </div>
               )}
 
@@ -515,12 +518,32 @@ const ModelManagement: React.FC = () => {
                       <Option value="deepseek-v4-pro">DeepSeek V4 Pro</Option>
                     </>
                   )}
-                  {selectedPlatform === 'opencode' && (
+                  {selectedPlatform === 'openrouter' && (
                     <>
-                      <Option value="opencode/glm-5.3-flash-free">GLM-5.3-Flash Free</Option>
+                      <Option value="minimax/minimax-m3.1-flash:free">MiniMax M3.1 Flash（免费）</Option>
+                      <Option value="nvidia/nemotron-3-ultra-550b-a55b:free">Nemotron 3 Ultra 550B（免费）</Option>
+                      <Option value="poolside/laguna-s-2.1:free">Laguna S 2.1（免费）</Option>
                     </>
                   )}
                 </Select>
+              </div>
+
+              <div style={{ marginBottom: '30px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', color: '#333' }}>
+                  上下文窗口（tokens）
+                </label>
+                <InputNumber
+                  value={config.contextLength ? Number(config.contextLength) : null}
+                  onChange={(value) => handleConfigChange('contextLength', value === null ? '' : String(value))}
+                  min={1}
+                  step={1024}
+                  controls={false}
+                  placeholder={`留空按 ${FALLBACK_CONTEXT_LENGTH.toLocaleString()} 估算`}
+                  style={{ width: '100%', borderRadius: 6 }}
+                />
+                <div style={{ marginTop: '8px', fontSize: '12px', color: '#8c8c8c' }}>
+                  单次摘要请求的输入预算依据此值推算。连接测试会向服务端查询并自动回填；查询不到时沿用此处填写值。
+                </div>
               </div>
 
               <div style={{ display: 'flex', gap: '12px' }}>
@@ -565,7 +588,6 @@ const ModelManagement: React.FC = () => {
                 >
                   <Option value="cloud">云端</Option>
                   <Option value="local">本地</Option>
-                  <Option value="opencode">OpenCode CLI（本机）</Option>
                 </Select>
               </Form.Item>
             </Form>

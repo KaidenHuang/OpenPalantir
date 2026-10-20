@@ -26,7 +26,7 @@ interface ModelState {
   setSelectedPlatform: (platform: string) => void;
   setConfig: (config: Partial<PlatformConfig>) => void;
   fetchOllamaModels: (apiUrl: string, signal?: AbortSignal) => Promise<void>;
-  createModel: (name: string, modelType: 'local' | 'cloud' | 'opencode', signal?: AbortSignal) => Promise<void>;
+  createModel: (name: string, modelType: 'local' | 'cloud', signal?: AbortSignal) => Promise<void>;
   updateModel: (modelId: number, updates: Record<string, unknown>, signal?: AbortSignal) => Promise<void>;
   deleteModel: (modelId: number, signal?: AbortSignal) => Promise<void>;
   testConnection: (modelId: number, signal?: AbortSignal) => Promise<void>;
@@ -61,6 +61,7 @@ export const useModelStore = create<ModelState>()((set, get) => ({
       openai: 'OpenAI',
       siliconflow: 'SiliconFlow',
       deepseek: 'DeepSeek',
+      openrouter: 'OpenRouter',
     };
 
     const platforms: ModelPlatform[] = Object.entries(grouped).map(([key, models]) => ({

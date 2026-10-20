@@ -1,36 +1,24 @@
 """
 模型调用客户端
 
-提供统一的模型调用接口，支持本地模型（Ollama）和云端模型（OpenAI兼容API）。
-支持重试机制、超时控制、JSON格式修复等功能。
+提供统一的模型调用接口，支持本地模型（Ollama）和云端模型（OpenAI兼容API），
+带重试、超时与 JSON 格式修复。
 
 主要方法:
     - call_json(): 调用模型并返回JSON格式响应
+    - call_json_ex(): 同上，额外返回「输出是否被 max_tokens 截断」
+    - call_text(): 调用模型并返回纯文本
     - test_connection(): 测试模型连接是否正常
-
-使用示例:
-    config = ModelConfig(type='local', api_url='http://localhost:11434')
-    client = ModelClient(config)
-    
-    # 调用模型并获取JSON响应
-    result = client.call_json("请提取实体...")
-    
-    # 测试连接
-    is_connected = client.test_connection()
 """
 
-import glob
-import json
 import os
-import shutil
-import subprocess
 import time
 import traceback
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, List, Optional, Tuple, Union
 import requests
 from system.logger import logger
-from utils.json_utils import extract_json as _extract_json_unified, fix_json
+from utils.json_utils import extract_json as _extract_json_unified
 
 
 class _EmbedEndpointMissing(Exception):
@@ -38,135 +26,71 @@ class _EmbedEndpointMissing(Exception):
     pass
 
 
-def _resolve_opencode_cli() -> str:
-    """定位本机 opencode CLI。
+@dataclass
+class LlmReply:
+    """一次调用的结果：正文 + 是否被 max_tokens 掐断 + 已生成 token 数
 
-    优先级：环境变量 OPENCODE_CLI → PATH（opencode-cli / opencode）
-    → OpenCode Desktop 内置 CLI（Windows 下 %APPDATA%\\ai.opencode.desktop\\cli\\*）。
+    截断标志只能随返回值走：get_model_client() 是跨线程共享的缓存单例，摘要与
+    批量抽取又用 asyncio.gather 并发，记在实例属性上会串台。
     """
-    explicit = os.environ.get('OPENCODE_CLI')
-    if explicit and os.path.exists(explicit):
-        return explicit
-    for name in ("opencode-cli", "opencode"):
-        found = shutil.which(name)
-        if found:
-            return found
-    candidates = glob.glob(os.path.join(
-        os.environ.get('APPDATA', ''), 'ai.opencode.desktop', 'cli', '*', 'opencode-cli.exe'
-    ))
-    if candidates:
-        return sorted(candidates)[-1]
-    raise RuntimeError(
-        "未找到 opencode CLI：请将 CLI 加入 PATH，或设置环境变量 OPENCODE_CLI 指向可执行文件"
-    )
+    text: str = ""
+    truncated: bool = False
+    generated_tokens: int = 0
 
 
-def _ensure_opencode_workdir() -> str:
-    """确保 opencode run 的工作目录存在，并写入工具拒绝配置（仅首次）。"""
-    workdir = os.environ.get('OPENCODE_CLI_WORKDIR')
-    if not workdir:
-        workdir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            'data', 'opencode_bridge_ws'
-        )
-    os.makedirs(workdir, exist_ok=True)
-    config_path = os.path.join(workdir, 'opencode.json')
-    if not os.path.exists(config_path):
-        config = {
-            "$schema": "https://opencode.ai/config.json",
-            "permissions": [
-                {"action": "shell", "resource": "*", "effect": "deny"},
-                {"action": "edit", "resource": "*", "effect": "deny"},
-                {"action": "webfetch", "resource": "*", "effect": "deny"},
-                {"action": "websearch", "resource": "*", "effect": "deny"},
-                {"action": "subagent", "resource": "*", "effect": "deny"}
-            ]
-        }
-        try:
-            with open(config_path, 'w', encoding='utf-8') as f:
-                json.dump(config, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.warning(f"[opencode] 写入工作目录 opencode.json 失败: {e}")
-    return workdir
+# 探测不到服务端窗口时的兜底值（token）：够单节点正文一次调用，又不至于让本地模型爆显存
+DEFAULT_CONTEXT_LENGTH = 32768
 
 
 @dataclass
 class ModelConfig:
-    """
-    模型配置数据类
-    
-    用于封装模型配置信息，便于在模块间传递。
-    
-    Attributes:
-        type: 模型类型，'local' 或 'cloud'
-        models: 支持的模型列表
-        api_url: API地址
-        api_key: API密钥
-        priority: 优先级
-        model_name: 当前使用的模型名称（默认取models列表第一个）
-        max_retries: 最大重试次数
-        retry_delay: 重试间隔（秒）
-        timeout: 请求超时时间（秒）
+    """模型配置：type 为 'local'（Ollama）或 'cloud'（OpenAI 兼容 API）。
+
+    context_length 是服务端上下文窗口（token），探测不到用 DEFAULT_CONTEXT_LENGTH；
+    timeout 单位为秒，retry_delay 单位为秒。
     """
     type: str = 'local'
     models: List[str] = field(default_factory=lambda: ['qwen2.5:7b'])
     api_url: str = 'http://localhost:11434'
     api_key: str = ''
-    priority: str = 'local'
     model_name: Optional[str] = None
+    context_length: int = DEFAULT_CONTEXT_LENGTH
     max_retries: int = 3
     retry_delay: float = 1.0
     timeout: int = 600
     embedding_model: Optional[str] = None
 
     def __post_init__(self):
-        """初始化后处理，设置默认模型名称"""
         if not self.model_name and self.models:
             self.model_name = self.models[0]
         if not self.embedding_model:
             self.embedding_model = os.environ.get('EMBED_MODEL', 'bge-m3')
-    
+
     @classmethod
     def from_dict(cls, config: Dict[str, Any]) -> 'ModelConfig':
-        """
-        从字典创建ModelConfig实例
-
-        Args:
-            config: 配置字典
-
-        Returns:
-            ModelConfig实例
-        """
-        model_type = config.get('model_type') or config.get('type', 'local')
+        """由内部配置字典创建（键名 `type`；库记录的 `model_type` 在出口处已映射）"""
         return cls(
-            type=model_type,
-            models=config.get('models', None) or (
-                ['opencode/glm-5.3-flash-free'] if model_type == 'opencode' else ['qwen2.5:7b']
-            ),
+            type=config.get('type', 'local'),
+            models=config.get('models') or ['qwen2.5:7b'],
             api_url=config.get('api_url', 'http://localhost:11434'),
             api_key=config.get('api_key', ''),
-            priority=config.get('priority', 'local'),
             model_name=config.get('model_name'),
+            context_length=int(config.get('context_length') or DEFAULT_CONTEXT_LENGTH),
             max_retries=config.get('max_retries', 3),
             retry_delay=config.get('retry_delay', 1.0),
             timeout=config.get('timeout', 600),
             embedding_model=config.get('embedding_model')
         )
-    
+
     def to_dict(self) -> Dict[str, Any]:
-        """
-        转换为字典
-        
-        Returns:
-            Dict: 配置字典
-        """
+        """转换为配置字典"""
         return {
             'type': self.type,
             'models': self.models,
             'api_url': self.api_url,
             'api_key': self.api_key,
-            'priority': self.priority,
             'model_name': self.model_name,
+            'context_length': self.context_length,
             'max_retries': self.max_retries,
             'retry_delay': self.retry_delay,
             'timeout': self.timeout
@@ -174,216 +98,104 @@ class ModelConfig:
 
 
 class ModelClient:
-    """
-    模型调用客户端
+    """统一模型调用客户端（本地 Ollama / 云端 OpenAI 兼容），带重试、超时与 JSON 修复。"""
     
-    提供统一的模型调用接口，支持本地模型（Ollama）和云端模型（OpenAI兼容API）。
-    
-    Features:
-        - 支持本地模型（Ollama）和云端模型（OpenAI兼容API）
-        - 自动重试机制
-        - JSON格式修复
-        - 超时控制
-        - 详细的日志记录
-    
-    使用示例:
-        config = ModelConfig(type='local', api_url='http://localhost:11434')
-        client = ModelClient(config)
-        response = client.call("请分析这段文本...")
-    """
-    
-    def __init__(self, config: Any = None):
+    def __init__(self, config: Optional[Union[ModelConfig, Dict[str, Any]]] = None):
         """
         初始化模型客户端
         
         Args:
-            config: 模型配置，可以是ModelConfig实例、字典或None
-                   如果为None，使用默认配置
+            config: 模型配置，ModelConfig 实例、字典或 None（使用默认配置）
         """
         if config is None:
-            self.config = ModelConfig()
-        elif isinstance(config, ModelConfig):
-            self.config = config
+            config = ModelConfig()
         elif isinstance(config, dict):
-            self.config = ModelConfig.from_dict(config)
-        else:
-            # 尝试从对象属性获取配置
-            self.config = ModelConfig(
-                type=getattr(config, 'type', 'local'),
-                models=getattr(config, 'models', ['qwen2.5:7b']),
-                api_url=getattr(config, 'api_url', 'http://localhost:11434'),
-                api_key=getattr(config, 'api_key', ''),
-                priority=getattr(config, 'priority', 'local')
-            )
+            config = ModelConfig.from_dict(config)
+        self.config = config
     
     def _with_retry(self, fn, label: str):
-        """通用重试循环。fn() 应返回结果或在失败时抛出异常。"""
-        last_error = None
-        last_exception = None
+        """通用重试循环。fn() 应返回结果或在失败时抛出异常；次数耗尽返回 None。"""
         for attempt in range(self.config.max_retries):
             try:
                 logger.info(f"[{label}] 尝试 {attempt + 1}/{self.config.max_retries}")
                 return fn()
-            except requests.exceptions.Timeout as e:
-                last_error = f"请求超时: {e}"
-                last_exception = e
             except requests.exceptions.RequestException as e:
-                last_error = f"请求异常: {e}"
-                last_exception = e
+                logger.warning(f"[{label}] 尝试 {attempt + 1} 失败: 请求异常: {e}")
             except Exception as e:
-                last_error = f"未知异常: {e}"
-                last_exception = e
-                logger.warning(f"[{label}] 异常堆栈: {traceback.format_exc()}")
-            logger.warning(f"[{label}] 尝试 {attempt + 1} 失败: {last_error}")
+                logger.warning(f"[{label}] 尝试 {attempt + 1} 失败: 未知异常: {e} "
+                               f"| 堆栈: {traceback.format_exc()}")
             if attempt < self.config.max_retries - 1:
                 time.sleep(self.config.retry_delay)
-        logger.error(f"[{label}] {self.config.max_retries} 次尝试后失败: {last_error}")
-        if last_exception:
-            logger.error(f"[{label}] 异常详情: {repr(last_exception)}")
+        logger.error(f"[{label}] {self.config.max_retries} 次尝试后失败")
         return None
 
-    def call_raw(self, prompt: str, system_prompt: str = "你是一个AI助手。",
-                 temperature: float = 0, max_tokens: int = 8192) -> str:
-        """调用模型并返回原始文本（不做 JSON 解析），供 summary_generation 等模块使用。"""
-        if self.config.type == "local":
-            return self._call_local_model(prompt, "json", temperature, max_tokens)
-        elif self.config.type == "opencode":
-            return self._call_opencode_cli(prompt, system_prompt)
-        else:
-            return self._call_cloud_model(prompt, system_prompt, "json_object", temperature, max_tokens)
+    def _warn_if_truncated(self, reply: LlmReply, max_tokens: int, label: str) -> None:
+        """截断留痕：内容看起来完整，实则是半截结果，只进日志不回调用方等于没告警"""
+        if reply.truncated:
+            logger.warning(f"[{label}] 输出达到 max_tokens={max_tokens} 被截断"
+                           f"（已生成 {reply.generated_tokens} token），结果可能不完整")
 
     def call_text(self, prompt: str, system_prompt: str = "你是一个专业的文档写作助手。",
                   temperature: float = 0.3, max_tokens: int = 8192) -> str:
-        """调用模型返回纯文本（Markdown 等长文），供 Wiki 页面生成等模块使用。"""
-        if self.config.type == "local":
-            return self._call_local_model(prompt, "text", temperature, max_tokens)
-        elif self.config.type == "opencode":
-            return self._call_opencode_cli(prompt, system_prompt)
-        else:
-            return self._call_cloud_model(prompt, system_prompt, "text", temperature, max_tokens)
+        """调用模型返回纯文本（Markdown 等长文），供 Wiki 页面生成等模块使用。
+
+        本地模型走 format="text"：调用方要的是白话（摘要、Wiki 正文），套上 JSON 约束
+        会把引号和花括号一起写进库里。
+        """
+        reply = self._dispatch(prompt, system_prompt, "text", temperature, max_tokens)
+        self._warn_if_truncated(reply, max_tokens, "text")
+        return reply.text
 
     def call_json(
-        self, 
-        prompt: str, 
+        self,
+        prompt: str,
         system_prompt: Optional[str] = None,
         temperature: float = 0,
         max_tokens: int = 8192
     ) -> Optional[Dict[str, Any]]:
-        """
-        调用模型并返回JSON格式的响应
-        
-        根据配置的模型类型自动选择本地模型或云端模型进行调用。
-        自动处理JSON解析和格式修复。
-        
-        Args:
-            prompt: 用户提示词
-            system_prompt: 系统提示词（仅云端模型使用）
-            temperature: 温度参数
-            max_tokens: 最大生成token数
-            
-        Returns:
-            Dict: 解析后的JSON对象，解析失败返回None
-        """
-        # 根据模型类型选择正确的格式参数
-        # 本地模型（Ollama）使用 "json"
-        # 云端模型（OpenAI兼容）使用 "json_object"
-        # opencode CLI：prompt 自带指令，不做服务端格式约束
-        expected_format = "json_object" if self.config.type == "cloud" else "json"
+        """调用模型并返回 JSON 解析结果；解析失败返回 None。
 
-        # 调用底层模型API
-        if self.config.type == "local":
-            response_text = self._call_local_model(prompt, expected_format, temperature, max_tokens)
-        elif self.config.type == "opencode":
-            response_text = self._call_opencode_cli(prompt, system_prompt or "你是一个AI助手。")
-        else:
-            response_text = self._call_cloud_model(prompt, system_prompt or "你是一个AI助手。", expected_format, temperature, max_tokens)
-        
-        if not response_text:
-            return None
-        
-        # 使用统一 JSON 提取入口
-        result = _extract_json_unified(response_text)
-        if result is not None:
-            logger.info(f"JSON解析成功，类型: {type(result).__name__}")
-        else:
-            logger.warning(f"JSON提取失败，原始响应长度: {len(response_text)}")
-            logger.info(f"原始响应前500字符: {response_text[:500]}")
-        return result
+        只关心「有没有结果」时用这个；要分清额度不够与模型吐垃圾，用 call_json_ex。
+        """
+        return self.call_json_ex(prompt, system_prompt, temperature, max_tokens)[0]
 
-    def _call_opencode_cli(
+    def call_json_ex(
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
-    ) -> str:
-        """调用本机 OpenCode CLI（opencode run），用于 'opencode' 类型模型。
+        temperature: float = 0,
+        max_tokens: int = 8192
+    ) -> Tuple[Optional[Dict[str, Any]], bool]:
+        """(解析结果, 输出是否被截断)
 
-        - 模型 ID 来自 model_name（如 opencode/glm-5.3-flash-free）
-        - 工作目录默认 backend/data/opencode_bridge_ws，目录内 opencode.json
-          拒绝 shell/edit/webfetch/websearch/subagent 等工具，保证纯文本生成
-        - 子进程解析 --format json 事件流，聚合 type=text 的正文
+        两个信号必须分开：截断说明加额度重发有用，解析失败而没截断说明模型吐的是
+        不合格式的文本，加额度没用——调用方据此才能决定「砍半重发」还是「按无标注降级」。
 
-        注意：Windows 命令行长度上限约 32K 字符，超长 prompt 会调用失败。
+        云端不做服务端格式约束（response_format 各家支持度不一，OpenAI 还要求消息里
+        出现 "json" 字样），JSON 一律靠 prompt 约束 + 统一提取修复；本地的 format 有效。
         """
-        def _do_call():
-            cli = _resolve_opencode_cli()
-            model = self.config.model_name or (
-                self.config.models[0] if self.config.models else None
-            )
-            if not model:
-                raise ValueError("opencode 类型模型缺少模型 ID（models 为空）")
+        reply = self._dispatch(prompt, system_prompt or "你是一个AI助手。", "json",
+                               temperature, max_tokens)
+        self._warn_if_truncated(reply, max_tokens, "json")
 
-            workdir = _ensure_opencode_workdir()
-            if system_prompt:
-                text_prompt = f"{system_prompt}\n\n{prompt}"
-            else:
-                text_prompt = prompt
+        if not reply.text:
+            return None, reply.truncated
 
-            try:
-                result = subprocess.run(
-                    [cli, "run", "--format", "json", "--agent", "plan", "--model", model, text_prompt],
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=max(self.config.timeout, 300),
-                    cwd=workdir,
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-                )
-            except subprocess.TimeoutExpired as e:
-                raise RuntimeError(f"opencode run 超时（>{max(self.config.timeout, 300)}s）: {e}")
+        result = _extract_json_unified(reply.text)
+        if result is not None:
+            logger.info(f"JSON解析成功，类型: {type(result).__name__}")
+        else:
+            logger.warning(f"JSON提取失败，原始响应长度: {len(reply.text)}"
+                           + ("（输出被 max_tokens 截断）" if reply.truncated else ""))
+            logger.info(f"原始响应前500字符: {reply.text[:500]}")
+        return result, reply.truncated
 
-            if not result.stdout:
-                stderr_tail = (result.stderr or "").strip()[-300:]
-                raise RuntimeError(f"opencode run 无输出 (exit={result.returncode}): {stderr_tail}")
-
-            texts: List[str] = []
-            errors: List[str] = []
-            for line in result.stdout.splitlines():
-                line = line.strip()
-                if not line or not line.startswith("{"):
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                event_type = event.get("type")
-                if event_type == "text":
-                    text = (event.get("part") or {}).get("text") or ""
-                    if text:
-                        texts.append(text)
-                elif event_type == "error":
-                    err = event.get("error") or {}
-                    errors.append(err.get("message") or "opencode 运行失败")
-
-            if not texts and errors:
-                raise RuntimeError(f"opencode 运行失败: {'; '.join(errors[:3])}")
-            if not texts:
-                raise ValueError("opencode 响应内容为空")
-
-            logger.info(f"opencode CLI 响应成功，响应长度: {len(''.join(texts))}")
-            return "".join(texts)
-
-        return self._with_retry(_do_call, "opencode/run") or ""
+    def _dispatch(self, prompt: str, system_prompt: str, expected_format: str,
+                  temperature: float, max_tokens: int) -> LlmReply:
+        """按模型类型分派底层调用；expected_format 只对本地（Ollama）生效"""
+        if self.config.type == "local":
+            return self._call_local_model(prompt, expected_format, temperature, max_tokens)
+        return self._call_cloud_model(prompt, system_prompt, temperature, max_tokens)
 
     def _call_local_model(
         self,
@@ -391,8 +203,12 @@ class ModelClient:
         expected_format: str = "json",
         temperature: float = 0,
         max_tokens: int = 8192
-    ) -> str:
-        """调用本地模型API（Ollama）"""
+    ) -> LlmReply:
+        """调用本地模型API（Ollama）
+
+        参数必须放进 options：/api/generate 只认 options.num_predict / options.temperature /
+        options.num_ctx，顶层同名字段会被静默忽略（输出失去上限、temperature 不生效）。
+        """
         def _do_call():
             response = requests.post(
                 f"{self.config.api_url}/api/generate",
@@ -401,29 +217,59 @@ class ModelClient:
                     "prompt": prompt,
                     "format": expected_format,
                     "stream": False,
-                    "max_tokens": max_tokens,
-                    "temperature": temperature
+                    "options": {
+                        "num_predict": max_tokens,
+                        "temperature": temperature,
+                        "num_ctx": self.config.context_length
+                    }
                 },
                 timeout=self.config.timeout
             )
             if response.status_code == 200:
-                text = response.json().get('response', '')
+                payload = response.json()
+                text = payload.get('response', '')
                 if text:
                     logger.info(f"本地模型响应成功，响应长度: {len(text)}")
-                    return text
+                    return LlmReply(
+                        text=text,
+                        truncated=payload.get("done_reason") == "length",
+                        generated_tokens=int(payload.get("eval_count") or 0),
+                    )
                 raise ValueError("响应内容为空")
             raise RuntimeError(f"HTTP {response.status_code}: {response.text[:200]}")
 
-        return self._with_retry(_do_call, "local/generate") or ""
+        return self._with_retry(_do_call, "local/generate") or LlmReply()
     
+    def _post_cloud(self, request_params: Dict[str, Any]) -> Dict[str, Any]:
+        """云端唯一的 HTTP 出口：鉴权头、状态判定、取 payload 只在这一处
+
+        200 但 body 不是对话响应（网关把错误吞成 200、返回空体或 HTML）时抛带响应
+        片段的 RuntimeError。让调用方 `json()["choices"]` 抛裸 KeyError 的话，
+        日志里只剩一个键名，看不出是哪一个请求、服务端到底回了什么。
+        """
+        response = requests.post(
+            f"{self.config.api_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.config.api_key}",
+                "Content-Type": "application/json"
+            },
+            json=request_params,
+            timeout=self.config.timeout
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"HTTP {response.status_code}: {response.text[:200]}")
+        payload = response.json()
+        if not isinstance(payload, dict) or not payload.get("choices"):
+            raise RuntimeError(f"HTTP 200 但响应没有 choices: {response.text[:200]}")
+        return payload
+
     def _call_cloud_model(
         self,
         prompt: str,
         system_prompt: str,
-        expected_format: str = "json_object",
         temperature: float = 0,
         max_tokens: int = 8192
-    ) -> str:
+    ) -> LlmReply:
         """调用云端模型API（OpenAI兼容）"""
         request_params = {
             "model": self.config.model_name,
@@ -437,53 +283,39 @@ class ModelClient:
         }
 
         def _do_call():
-            response = requests.post(
-                f"{self.config.api_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.config.api_key}",
-                    "Content-Type": "application/json"
-                },
-                json=request_params,
-                timeout=self.config.timeout
-            )
-            if response.status_code == 200:
-                text = response.json()['choices'][0]['message']['content']
-                if text:
-                    logger.info(f"云端模型响应成功，响应长度: {len(text)}")
-                    return text
+            payload = self._post_cloud(request_params)
+            choice = payload["choices"][0]
+            text = choice.get('message', {}).get('content', '')
+            if not text:
                 raise ValueError("响应内容为空")
-            raise RuntimeError(f"HTTP {response.status_code}: {response.text[:200]}")
+            logger.info(f"云端模型响应成功，响应长度: {len(text)}")
+            usage = payload.get("usage") or {}
+            return LlmReply(
+                text=text,
+                truncated=choice.get("finish_reason") == "length",
+                generated_tokens=int(usage.get("completion_tokens") or 0),
+            )
 
-        return self._with_retry(_do_call, "cloud/chat") or ""
+        return self._with_retry(_do_call, "cloud/chat") or LlmReply()
     
     def test_connection(self) -> bool:
-        """
-        测试模型连接是否正常
+        """测试模型连接是否正常
 
-        Returns:
-            bool: 连接正常返回True，否则返回False
+        直接走底层 API：连通性探测只要极短输出，被 max_tokens 掐断属预期，
+        截断告警挂在公开方法上，这里不该产生。底层失败已由 _with_retry 收敛为
+        空 LlmReply，无需在此再包一层异常。
         """
-        try:
-            # 直接调用底层模型API进行连接测试
-            if self.config.type == "local":
-                response = self._call_local_model("Hello", "text", 0, 10)
-            elif self.config.type == "opencode":
-                response = self._call_opencode_cli("Reply with a single word: ok", "你是一个AI助手。")
-            else:
-                # 使用较高的 max_tokens (100) 以支持带 reasoning 的模型（如 DeepSeek V4）
-                response = self._call_cloud_model("Hello", "你是一个AI助手。", "text", 0, 100)
-            return bool(response)
-        except Exception as e:
-            logger.error(f"测试连接失败: {e}")
-            return False
+        if self.config.type == "local":
+            reply = self._call_local_model("Hello", "text", 0, 10)
+        else:
+            # 使用较高的 max_tokens (100) 以支持带 reasoning 的模型（如 DeepSeek V4）
+            reply = self._call_cloud_model("Hello", "你是一个AI助手。", 0, 100)
+        return bool(reply.text)
 
     def embed(self, texts: List[str]) -> Optional[List[List[float]]]:
         """批量计算文本向量（embedding 模型）。失败返回 None，调用方需优雅降级。"""
         if not texts:
             return []
-        if self.config.type == "opencode":
-            # CLI 调用方式无 embedding 端点，直接降级
-            return None
         model = self.config.embedding_model
         if not model:
             return None
@@ -585,39 +417,8 @@ class ModelClient:
         """
         if self.config.type == "local":
             return self._call_local_chat(messages, tools, system_prompt, temperature, max_tokens, tool_choice)
-        elif self.config.type == "opencode":
-            return self._call_opencode_chat(messages, system_prompt)
         else:
             return self._call_cloud_chat(messages, tools, system_prompt, temperature, max_tokens, tool_choice)
-
-    def _call_opencode_chat(
-        self,
-        messages: List[Dict[str, Any]],
-        system_prompt: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        """opencode 类型不支持 tool calling 协商：把消息序列化为文本 prompt，
-        返回纯文本回复（tool_calls 恒为空）。决策引擎收到空 tool_calls 时会
-        把 content 当作最终回答，循环可正常收敛。"""
-        blocks: List[str] = []
-
-        def _append(role: str, content: Any) -> None:
-            if isinstance(content, list):
-                content = "\n".join(
-                    item.get("text", "") if isinstance(item, dict) else str(item)
-                    for item in content
-                )
-            if content:
-                blocks.append(f"{role}: {content}")
-
-        if system_prompt:
-            blocks.append(f"system: {system_prompt}")
-        for msg in messages:
-            _append(msg.get("role", "user"), msg.get("content"))
-        blocks.append("assistant:")
-        prompt = "\n\n".join(blocks)
-
-        text = self._call_opencode_cli(prompt)
-        return {"content": text, "tool_calls": []}
 
     def _call_local_chat(
         self,
@@ -686,24 +487,13 @@ class ModelClient:
             request_params["tool_choice"] = tool_choice
 
         def _do_call():
-            response = requests.post(
-                f"{self.config.api_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.config.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=request_params,
-                timeout=self.config.timeout,
-            )
-            if response.status_code == 200:
-                msg = response.json()["choices"][0].get("message", {})
-                return {"content": msg.get("content", ""), "tool_calls": msg.get("tool_calls", [])}
-            raise RuntimeError(f"HTTP {response.status_code}: {response.text[:200]}")
+            msg = self._post_cloud(request_params)["choices"][0].get("message", {})
+            return {"content": msg.get("content", ""), "tool_calls": msg.get("tool_calls", [])}
 
         return self._with_retry(_do_call, "cloud/chat")
 
 
-# ModelClient 全局工厂：版本化缓存单例 —— 配置（类型/模型名/地址/密钥）变化即重建，
+# ModelClient 全局工厂：版本化缓存单例 —— 配置（类型/模型名/地址/密钥/上下文窗口）变化即重建，
 # 未变化则复用。解决「改模型配置何时生效」无 locality 的问题：所有调用点一处刷新。
 _client_cache: Optional[ModelClient] = None
 _client_cache_sig: tuple = ()
@@ -720,8 +510,10 @@ def get_model_client() -> Optional[ModelClient]:
         config = ModelService.get_available_model(db)
         if not config:
             return None
+        # context_length 必须在签名里：探测/手填改完窗口后，旧实例还带着上一个 num_ctx
+        # 与输入预算继续跑，摘要会按过小的窗口切块，且没有任何报错迹象。
         sig = (config.get('type'), config.get('model_name'), tuple(config.get('models') or []),
-               config.get('api_url'), config.get('api_key'))
+               config.get('api_url'), config.get('api_key'), config.get('context_length'))
         if _client_cache is not None and _client_cache_sig == sig:
             return _client_cache
         _client_cache = ModelClient(config)

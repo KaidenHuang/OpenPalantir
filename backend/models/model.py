@@ -3,6 +3,7 @@ from sqlalchemy.sql import func
 from config.database import Base, SessionLocal
 from system.logger import logger
 
+
 class ModelInfo(Base):
     __tablename__ = "model_info"
 
@@ -14,6 +15,7 @@ class ModelInfo(Base):
     enabled = Column(Boolean, default=False)
     api_url = Column(String, default="")
     api_key = Column(String, default="")
+    context_length = Column(Integer, default=None)  # 服务端探测到的上下文窗口；NULL=未探测
     create_time = Column(DateTime(timezone=True), server_default=func.now())
     update_time = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
@@ -31,6 +33,7 @@ class ModelInfo(Base):
             'enabled': self.enabled,
             'api_url': self.api_url,
             'api_key': mask_api_key(self.api_key),
+            'context_length': self.context_length,
             'model_name': self.models[0] if self.models else None
         }
 
@@ -52,21 +55,6 @@ def init_models():
     """初始化默认模型和配置"""
     db = SessionLocal()
     try:
-        # 数据库迁移：添加 enabled 列，删除 priority 列
-        from sqlalchemy import inspect, text
-        inspector = inspect(db.bind)
-        columns = [col['name'] for col in inspector.get_columns('model_info')]
-        if 'enabled' not in columns:
-            db.execute(text("ALTER TABLE model_info ADD COLUMN enabled BOOLEAN DEFAULT 0"))
-            logger.info("迁移: 添加 enabled 列到 model_info 表")
-        if 'priority' in columns:
-            try:
-                db.execute(text("ALTER TABLE model_info DROP COLUMN priority"))
-                logger.info("迁移: 从 model_info 表删除 priority 列")
-            except Exception as e:
-                logger.warning(f"迁移: 删除 priority 列失败（可能 SQLite 版本过低）: {e}")
-        db.commit()
-
         # 检查是否已有模型记录
         existing_models = db.query(ModelInfo).count()
         if existing_models == 0:
@@ -109,12 +97,16 @@ def init_models():
                     api_key=""
                 ),
                 ModelInfo(
-                    name="OpenCode CLI",
-                    type="opencode",
+                    name="OpenRouter",
+                    type="cloud",
                     status="unknown",
-                    models=["opencode/glm-5.3-flash-free"],
+                    models=[
+                        "minimax/minimax-m3.1-flash:free",
+                        "nvidia/nemotron-3-ultra-550b-a55b:free",
+                        "poolside/laguna-s-2.1:free",
+                    ],
                     enabled=False,
-                    api_url="",
+                    api_url="https://openrouter.ai/api/v1",
                     api_key=""
                 ),
             ]

@@ -6,30 +6,23 @@
 
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
-from models.model import ModelInfo
+from model_management.context_probe import probe_context_length
+from model_management.model_client import ModelClient
+from models.model import API_KEY_MASK, ModelInfo
 from system.logger import logger
 from datetime import datetime
 
 
+# 创建模型时未填 api_url 的按类型默认值
+DEFAULT_API_URLS = {
+    'local': 'http://localhost:11434',
+    'cloud': 'https://api.openai.com/v1',
+}
+
+
 class ModelService:
-    """
-    模型配置服务类
-    
-    提供模型配置的增删改查操作，支持本地模型（Ollama）和云端模型（OpenAI兼容API）。
-    
-    Attributes:
-        None
-        
-    Methods:
-        create_model: 创建新的模型配置
-        get_model: 根据ID获取模型配置
-        get_model_by_name: 根据名称获取模型配置
-        get_all_models: 获取所有模型配置
-        update_model: 更新模型配置
-        delete_model: 删除模型配置
-        get_active_model: 获取当前激活的模型配置
-    """
-    
+    """模型配置 CRUD 服务，支持本地模型（Ollama）和云端模型（OpenAI 兼容 API）。"""
+
     @staticmethod
     def create_model(db: Session, model_data: Dict[str, Any]) -> ModelInfo:
         """
@@ -41,10 +34,11 @@ class ModelService:
                 - name: 模型名称（必需）
                 - type: 模型类型，'local' 或 'cloud'（必需）
                 - models: 支持的模型列表（可选）
-                - api_url: API地址（可选）
+                - api_url: API地址（可选，缺省按类型取默认值）
                 - api_key: API密钥（可选）
                 - enabled: 是否启用（可选，默认False）
                 - status: 状态（可选）
+                - context_length: 上下文窗口 token 数（可选，缺省待探测）
                 
         Returns:
             ModelInfo: 创建的模型配置对象
@@ -60,12 +54,13 @@ class ModelService:
         try:
             db_model = ModelInfo(
                 name=model_data['name'],
-                type=model_data.get('type', 'cloud'),
+                type=model_data['type'],
                 status=model_data.get('status', 'unknown'),
                 models=model_data.get('models', []),
                 enabled=model_data.get('enabled', False),
-                api_url=model_data.get('api_url', ''),
-                api_key=model_data.get('api_key', '')
+                api_url=model_data.get('api_url') or DEFAULT_API_URLS.get(model_data['type'], ''),
+                api_key=model_data.get('api_key', ''),
+                context_length=model_data.get('context_length')
             )
             db.add(db_model)
             db.commit()
@@ -87,31 +82,9 @@ class ModelService:
             model_id: 模型ID
             
         Returns:
-            ModelInfo: 模型配置对象，不存在则返回None
+            ModelInfo: 模型配置对象，不存在则返回None（DB 故障直接上抛，不冒充「不存在」）
         """
-        try:
-            return db.query(ModelInfo).filter(ModelInfo.id == model_id).first()
-        except Exception as e:
-            logger.error(f"获取模型配置失败: {e}")
-            return None
-    
-    @staticmethod
-    def get_model_by_name(db: Session, name: str) -> Optional[ModelInfo]:
-        """
-        根据名称获取模型配置
-        
-        Args:
-            db: 数据库会话
-            name: 模型名称
-            
-        Returns:
-            ModelInfo: 模型配置对象，不存在则返回None
-        """
-        try:
-            return db.query(ModelInfo).filter(ModelInfo.name == name).first()
-        except Exception as e:
-            logger.error(f"根据名称获取模型配置失败: {e}")
-            return None
+        return db.query(ModelInfo).filter(ModelInfo.id == model_id).first()
     
     @staticmethod
     def get_all_models(db: Session) -> List[ModelInfo]:
@@ -124,11 +97,7 @@ class ModelService:
         Returns:
             List[ModelInfo]: 模型配置列表
         """
-        try:
-            return db.query(ModelInfo).all()
-        except Exception as e:
-            logger.error(f"获取所有模型配置失败: {e}")
-            return []
+        return db.query(ModelInfo).all()
     
     @staticmethod
     def update_model(db: Session, model_id: int, model_data: Dict[str, Any]) -> Optional[ModelInfo]:
@@ -150,8 +119,8 @@ class ModelService:
                 return None
             
             # 更新允许修改的字段
-            updatable_fields = ['name', 'type', 'status', 'models', 'enabled', 'api_url', 'api_key']
-            from models.model import API_KEY_MASK
+            updatable_fields = ['name', 'type', 'status', 'models', 'enabled', 'api_url', 'api_key',
+                                'context_length']
             for key, value in model_data.items():
                 if key in updatable_fields:
                     if key == 'api_key' and isinstance(value, str) and API_KEY_MASK in value:
@@ -197,75 +166,6 @@ class ModelService:
             raise
     
     @staticmethod
-    def get_active_model(db: Session) -> Optional[ModelInfo]:
-        """
-        获取当前激活的模型配置
-        
-        优先返回状态为'active'的模型，如果没有则返回第一个本地模型。
-        
-        Args:
-            db: 数据库会话
-            
-        Returns:
-            ModelInfo: 激活的模型配置对象，不存在则返回None
-        """
-        try:
-            # 优先查找状态为active的模型
-            active_model = db.query(ModelInfo).filter(ModelInfo.status == 'active').first()
-            if active_model:
-                return active_model
-            
-            # 如果没有active模型，返回第一个本地模型
-            local_model = db.query(ModelInfo).filter(ModelInfo.type == 'local').first()
-            if local_model:
-                return local_model
-            
-            # 如果没有本地模型，返回第一个模型
-            return db.query(ModelInfo).first()
-        except Exception as e:
-            logger.error(f"获取激活模型失败: {e}")
-            return None
-    
-    @staticmethod
-    def get_model_config_dict(db: Session, model_id: Optional[int] = None, model_name: Optional[str] = None) -> Dict[str, Any]:
-        """
-        获取模型配置字典
-        
-        根据ID或名称获取模型配置，返回字典格式，便于传递给ModelClient。
-        
-        Args:
-            db: 数据库会话
-            model_id: 模型ID（可选）
-            model_name: 模型名称（可选）
-            
-        Returns:
-            Dict: 模型配置字典，包含以下字段：
-                - type: 模型类型
-                - models: 支持的模型列表
-                - api_url: API地址
-                - api_key: API密钥
-                - priority: 优先级
-        """
-        model = None
-        if model_id:
-            model = ModelService.get_model(db, model_id)
-        elif model_name:
-            model = ModelService.get_model_by_name(db, model_name)
-        else:
-            model = ModelService.get_active_model(db)
-        
-        if model:
-            return model.to_dict()
-        
-        # 返回默认配置
-        return {
-            'type': 'local',
-            'models': ['qwen2.5:7b'],
-            'api_url': 'http://localhost:11434',
-            'api_key': '',
-        }
-    
-    @staticmethod
     def enable_model(db: Session, model_id: int) -> Optional[ModelInfo]:
         """
         启用指定模型，同时禁用其他所有模型（单active约束）
@@ -297,7 +197,7 @@ class ModelService:
             raise
 
     @staticmethod
-    def get_available_model(db: Session) -> Dict[str, Any]:
+    def get_available_model(db: Session) -> Optional[Dict[str, Any]]:
         """
         获取已启用的可用模型配置
 
@@ -307,70 +207,44 @@ class ModelService:
             db: 数据库会话
 
         Returns:
-            Dict: 已启用可用模型的配置字典
-
-        Raises:
-            ValueError: 没有已启用的可用模型时抛出
+            Dict: 已启用可用模型的配置字典（api_key 为真实密钥）；
+                  没有启用中的可用模型时返回 None（DB 故障直接上抛，不冒充「无模型」）
         """
-        try:
-            # 查询已启用的可用模型（enabled=True 且 status="available"）
-            available_models = db.query(ModelInfo).filter(
-                ModelInfo.enabled == True,
-                ModelInfo.status == "available"
-            ).all()
+        available_models = db.query(ModelInfo).filter(
+            ModelInfo.enabled == True,
+            ModelInfo.status == "available"
+        ).all()
 
-            if not available_models:
-                logger.error("没有可用的已启用模型")
-                raise ValueError("没有可用的已启用模型，请先在模型管理中启用一个可用模型")
-
-            # 返回第一个（也是唯一一个）启用模型
-            selected_model = available_models[0]
-            logger.info(f"发现可用模型: {selected_model.name}")
-            
-            # 返回模型配置字典
-            return selected_model.to_dict()
-            
-        except Exception as e:
-            logger.error(f"获取可用模型失败: {e}")
+        if not available_models:
+            logger.error("没有可用的已启用模型，请先在模型管理中启用一个可用模型")
             return None
-    
-    @staticmethod
-    def check_model_available(db: Session) -> bool:
-        """
-        检查是否有可用的模型
-        
-        Args:
-            db: 数据库会话
-            
-        Returns:
-            bool: 有可用模型返回True，否则返回False
-        """
-        try:
-            count = db.query(ModelInfo).filter(
-                ModelInfo.status == "available",
-                ModelInfo.enabled == True
-            ).count()
-            return count > 0
-        except Exception as e:
-            logger.error(f"检查可用模型失败: {e}")
-            return False
+
+        # 单启用约束（enable_model 保证），取第一个
+        selected_model = available_models[0]
+        logger.info(f"发现可用模型: {selected_model.name}")
+
+        # 内部消费方需要真实密钥，to_dict 的掩码值仅用于界面展示
+        config = selected_model.to_dict()
+        # REST/界面契约用 model_type，内部配置统一用 type —— 映射只在这条出口做一次
+        config["type"] = config.pop("model_type")
+        config["api_key"] = selected_model.api_key
+        return config
 
     @staticmethod
     def test_and_update_connection(
         db: Session, model_id: int, api_url: str, api_key: str,
         model_name: str = None
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """测试模型连接并更新状态。
 
         封装：获取模型 → 构建 test_config → 实例化 ModelClient → 测试 → 更新状态
-        """
-        from model_management.model_client import ModelClient
 
+        连接可用时顺带向服务端探测上下文窗口并落库；探测不到则保留库中记录值。
+        """
         model_info = ModelService.get_model(db, model_id)
         if not model_info:
             raise ValueError("模型不存在")
 
-        from models.model import API_KEY_MASK
         if not api_key or API_KEY_MASK in api_key:
             # 掩码回显 / 空密钥 → 用库里的真实密钥测试
             api_key = model_info.api_key or ''
@@ -380,17 +254,32 @@ class ModelService:
             "models": model_info.models,
             "api_url": api_url,
             "api_key": api_key,
-            "model_name": model_name or (model_info.models[0] if model_info.models else None)
+            "model_name": model_name or (model_info.models[0] if model_info.models else None),
+            "context_length": model_info.context_length,
         }
 
         client = ModelClient(test_config)
         connection_status = "available" if client.test_connection() else "unavailable"
         message = "连接测试成功" if connection_status == "available" else "连接测试失败"
 
-        ModelService.update_model(db, model_id, {"status": connection_status})
+        updates = {"status": connection_status}
+        probed = None
+        if connection_status == "available":
+            probed = probe_context_length(test_config)
+            if probed:
+                updates["context_length"] = probed
+                logger.info(f"探测到模型 {test_config['model_name']} 上下文窗口: {probed}")
+            else:
+                logger.warning(
+                    f"未能探测到模型 {test_config['model_name']} 的上下文窗口，"
+                    f"沿用库中记录值 {model_info.context_length}"
+                )
+
+        ModelService.update_model(db, model_id, updates)
         logger.info(f"测试模型连接完成: model_id={model_id}, status={connection_status}")
 
         return {
             "connection_status": connection_status,
             "message": message,
+            "context_length": probed or model_info.context_length,
         }
