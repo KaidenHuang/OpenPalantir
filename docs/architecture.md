@@ -180,10 +180,10 @@ main.py (FastAPI 应用入口)
 | `ontology/` | 受控本体注册表、谓词归一化与治理 | YAML 本体包、词表校验、prompt 注入、只读聚合治理报告、包导入导出 |
 | `decision_engine/` | 智能决策 | 统一 Agentic RAG（ReAct 循环）、种子检索、双层记忆、Skill+MCP 工具管理 |
 | `source_registry/` | ① 数据源注册与生命周期 | 文档源注册/软删/恢复/目录浏览；连接 CRUD/测连/库列表 |
-| `content_extraction/` | ② 按格式提取结构/正文/页码 + 库表 Schema | pymupdf4llm、python-docx、python-pptx、Markdown 章节解析、SQLAlchemy dialects（无 LLM） |
-| `summary_generation/` | ③ 摘要树生成（叶子 summary / 父 prefix_summary + 页码区间）+ 文档摘要落盘与指纹；库表业务标注与概要 | LLM 节点摘要、内容指纹（DOC:// 来源 URI） |
-| `entity_extraction/` | ④ 实体/关系/属性抽取 | 文档侧 LLM prompt 工程 + JSON 修复；数据库侧行实体/属性表/外键关系 |
-| `wiki_generation/` | ⑤ LLM Wiki 页面生成与编辑（文档页 / 主题页 / 实体页 / 答案沉淀） | 摘要树聚合、实体档案拼装、`source_hash` 幂等 |
+| `content_extraction/` | ② 按格式提取结构/正文/页码 + 库表 Schema | pymupdf4llm、python-docx、python-pptx、Markdown 章节解析、openpyxl/csv 表档案（xlsx/xlsm/csv/tsv，一个 sheet 一节）、SQLAlchemy dialects（无 LLM） |
+| `summary_generation/` | ③ 摘要树生成（自底向上：叶子与父节点均带 summary + 自身正文 + 页码区间，输入超窗口预算时节点内切块归并）+ 文档摘要落盘与指纹；表格文件按 token 窗口一次请求出「每表摘要 + 逐列标注」；库表业务标注与概要 | LLM 节点摘要、内容指纹（DOC:// 来源 URI） |
+| `entity_extraction/` | ④ 实体/关系/属性抽取 | 文档侧 LLM prompt 工程 + JSON 修复；表格侧纯规则装配列实体（零 LLM，重读源文件 + 落库前指纹校验）；数据库侧行实体/属性表/外键关系 |
+| `wiki_generation/` | ⑤ LLM Wiki 页面生成与编辑（文档页 / 主题页 / 实体页 / 答案沉淀） | 摘要树拍平（含父节点概览，主题碎片只取叶子）、实体档案拼装、`source_hash` 幂等 |
 | `pipeline/` | 跨阶段调度（失效传播、指纹监听） | 指纹比对、按佐证回收、Wiki 下游刷新、轮询派发 |
 | `model_management/` | LLM 统一调用 | Ollama API、OpenAI-compatible API |
 | `task_management/` | 异步任务队列 | 线程池、状态追踪、handler 契约分发 |

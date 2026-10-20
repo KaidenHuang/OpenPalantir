@@ -421,8 +421,21 @@ Prometheus 格式的监控指标。
 
 **Request Body**: `{"file": "章节/红楼梦.txt"}` → `{"task_id", "message"}`；文件缺失/路径越界/类型不支持 → 400。
 
+### `POST /api/sources/{source_id}/summarize-batch`
+批量生成摘要（异步任务 `document_batch_summary`）：`files` 缺省时按全源递归枚举，条目可为目录（后端展开为其中全部可解析文件）；`force=false` 时已生成且指纹一致的文件自动跳过。
+
+**Request Body**: `{"files": ["a.md", "sub/"], "force": false, "concurrency": 4, "label": "sub/"}`（`files` 省略 = 全源；空数组 = 400；`label` 为前端按勾选语义给的展示标签，任务列表数据源优先显示它）→ `{"task_id", "message"}`。
+
+任务结果含成败清单：`{total, succeeded, skipped, failed, failures: [{file, reason}]}`；单文件失败不终止整批，模型不可用整批失败。
+
 ### `POST /api/sources/{source_id}/extract`
-从已生成的摘要树抽取实体与关系写入图谱（谓词按本体词表归一化）。
+从已生成的摘要树抽取实体与关系写入图谱（谓词按本体词表归一化）。改造后为**异步任务**（`document_batch_extract`，单文件即 `files=[file]` 的批量特例），返回 `{"task_id", "message"}`，进度经 `/ws/tasks` 推送。
+
+### `POST /api/sources/{source_id}/extract-batch`
+批量从摘要提取实体关系（异步任务 `document_batch_extract`）：`files` 语义同 `summarize-batch`（`label` 亦为其展示标签）；缺摘要的文件记入 failures 继续；`domain`/`parallelism`/`concurrency` 可选。抽到 0 实体不再等于失败——守卫看的是**批次是否全灭**：调用全部失败才判 LLM 不可用并让任务失败，调用成功但产出 0 实体（纯数据表、全是属性列、③ 降级无标注）属合法空产出，计入成功。批量写图成功后刷新主题页与实体页 Wiki（失败不影响已写图谱）；本批一个实体都没新增时跳过这次刷新（刷 Wiki 要扫全图），结果里 `wiki_pages` 为 `null` 即表示未刷新。
+
+### `GET /api/sources/{source_id}/inventory`
+源内可处理文件的状态清单（批量操作面板用）：`{files: [{path, has_summary, extracted_count}]}`，其中 `extracted_count` 为该文件作为主来源的实体数（一次 Cypher 聚合，Neo4j 不可用时降级为 0）。
 
 ### `POST /api/sources/{source_id}/refresh`
 重跑一篇文档：重新生成摘要 → 回收本来源的图谱佐证 → 重新抽取 → Wiki 下游刷新（异步任务 `document_refresh`，顺序保证 LLM 失败时旧数据完好）。

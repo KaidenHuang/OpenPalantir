@@ -268,11 +268,12 @@ Body: {"database_name": "mydb"}
 **操作步骤**：
 
 1. 进入「模型管理」标签页
-2. 系统预置了四个模型配置：
+2. 系统预置了五个模型配置：
    - **Ollama**：本地模型（需安装 Ollama，默认 http://localhost:11434）
    - **OpenAI**：云端模型（需提供 API Key）
    - **DeepSeek**：云端模型（需提供 API Key）
    - **硅基流动**：云端模型（需提供 API Key）
+   - **OpenRouter**：云端模型聚合网关（需提供 API Key，默认 https://openrouter.ai/api/v1，模型 ID 形如 `minimax/minimax-m3.1-flash:free`；预置的三个均为 `:free` 模型，账号无余额也可调用）
 3. 配置正确的 API URL 和密钥
 4. 点击「测试连接」验证
 5. 启用需要使用的模型

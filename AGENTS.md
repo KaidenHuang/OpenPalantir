@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-OpenPalantir 是基于 AI 的数据分析与知识图谱构建系统：支持文档（PDF/Word/PPT/MD）与数据库（MySQL/PostgreSQL/SQLite）数据源，通过规则引擎和 LLM 构建摘要、提取实体与关系存入 Neo4j，提供图谱分析（路径/社区/中心性/趋势）与问答型智能决策。UI 为中文。
+OpenPalantir 是基于 AI 的数据分析与知识图谱构建系统：支持文档（PDF/Word/PPT/MD/Excel/CSV）与数据库（MySQL/PostgreSQL/SQLite）数据源，通过规则引擎和 LLM 构建摘要、提取实体与关系存入 Neo4j，提供图谱分析（路径/社区/中心性/趋势）与问答型智能决策。UI 为中文。
 
 **早期开发阶段**——**不要实现数据迁移脚本或向后兼容处理**。Schema 变更直接删除 `backend/data/sqlite/database.db` 重启即可；进程锁 DB 时执行 `taskkill /F /IM python.exe` 后重启。后端报错先查 `./logs/backend.log`。
 
@@ -45,9 +45,9 @@ OpenPalantir 是基于 AI 的数据分析与知识图谱构建系统：支持文
   - `api/routes/` -- REST API 端点定义（薄壳，业务归组件）
   - `config/` -- 数据库连接、Neo4j、引擎与环境配置
   - `source_registry/` -- ① 注册数据源（文档源/数据库连接的注册、生命周期、测连、源目录浏览）
-  - `content_extraction/` -- ② 内容提取（纯解析，无 LLM）：文档 → 章节树 + 页码；数据库 → 表/字段/主外键/视图
-  - `summary_generation/` -- ③ 摘要生成（唯一 LLM 环节）：文档摘要树 + 落盘/指纹；库表业务标注 + 概要
-  - `entity_extraction/` -- ④ 实体抽取：文档批次 LLM 抽实体/关系/属性；数据库行实体/属性表/外键关系
+  - `content_extraction/` -- ② 内容提取（纯解析，无 LLM）：文档 → 章节树 + 页码，表格文件 → 一个 sheet 一节 + 确定性表档案；数据库 → 表/字段/主外键/视图
+  - `summary_generation/` -- ③ 摘要生成（唯一 LLM 环节）：文档摘要树 + 落盘/指纹，表格一次请求出「每表摘要 + 逐列标注」；库表业务标注 + 概要
+  - `entity_extraction/` -- ④ 实体抽取：文档批次 LLM 抽实体/关系/属性，表格分支纯规则装配列实体（零 LLM，重读源文件）；数据库行实体/属性表/外键关系
   - `wiki_generation/` -- ⑤ Wiki 生成（文档页 / 跨文档主题页 / 图谱实体页 / 问答沉淀）
   - `pipeline/` -- 跨阶段调度薄层（内容失效传播 `refresh` + 指纹轮询监听 `watcher`）
   - `knowledge_graph/` -- Neo4j 图谱操作（CRUD、分区、性能优化、来源回收、语义行装配）
@@ -68,7 +68,7 @@ OpenPalantir 是基于 AI 的数据分析与知识图谱构建系统：支持文
 - **`tests/`** -- 测试套件（pytest）
 - **`scripts/`** -- 服务管理脚本（启动/停止 Neo4j、Redis、Debezium）
 - **`data/`** -- 运行时数据（SQLite 数据库、摘要、上传文件）
-- **`docs/`** -- 项目文档
+- **`docs/`** -- 对外文档；过程产出（方案、计划、评审）不入库，见「文档分层与过程产出」
 
 ## 核心设计约束
 
@@ -81,6 +81,7 @@ OpenPalantir 是基于 AI 的数据分析与知识图谱构建系统：支持文
 - **Wiki 页面**：`wiki_pages` 表存 Markdown 正文 + `source_refs` 引用锚点，kind 为 document/topic/entity/answer；实体页 datasource 为 `ENT://{entity_id}/{name}`；生成按 `source_hash` 幂等跳过，LLM 不可用降级为确定性拼装。
 - **来源归属**：实体节点与关系边都带两级来源——`datasource`（主来源，展示与检索用）与 `datasources`（全部佐证来源）。按来源过滤/回收必须走 `knowledge_graph/source_scope.py` 的 Cypher 片段（以 `datasources` 判定），否则重跑一个来源会连带删掉其他来源的佐证。来源 URI 出口：文档 `DOC://{source_id}/{文件相对路径}`、实体页 `ENT://{entity_id}/{name}`、数据库 `DBS://{conn}/{db}[/{table}]`。
 - **内容失效传播**：摘要 JSON 内的 `content_hash`（源文件 MD5）是文档指纹，`pipeline/refresh.py` 据此判定 changed/removed/未变更；刷新顺序是**先生成摘要 → 抽取（代际佐证 `URI@content_hash`）→ 旧代回收（`keep_hash` 保留新代，`recycle_datasource` 只摘本来源佐证，清空才删）→ Wiki**，抽取/落库失败时旧图谱数据完好。文档级监听 `pipeline/watcher.py` 轮询派发 `document_refresh` 任务，与只管数据库的 CDC 对称。**详见 `docs/data-flow.md`。**
+- **表格文件分支**：Excel/CSV 按文档类型处理（不伪造数据库连接、不接 `DBS://`），一个 sheet = 摘要树一个叶子，界面只借数据库侧的「表卡 + 字段列表」形状。④ 的表格分支**显式重读源文件**（明细行不进摘要 JSON，否则摘要文件变成数据副本），因此有两条硬约束：取行只能走 `content_extraction.document.table_reader.iter_table_rows`（表头判定必须与 ② 同一份代码，否则 ③ 标注的列名错位），且落库前必须校验源文件 MD5 == 摘要 `content_hash`，不一致直接终止写库。**列角色、实体类型、列间关系全在 ③ 的标注里，④ 只做装配 + 上限守卫（`COLUMN_ENTITY_LIMIT`/`SHEET_ENTITY_LIMIT`/`MAX_ROWS_READ`）+ 本体校验，零 LLM。**不做：行实体、跨 sheet 关系、ER 图、表格 CDC。详见 `docs/data-flow.md` 的「表格文件分支」一节。
 - **本体治理与社区包**：内置包在 `ontology/packs/`，社区/自定义包在 `backend/data/ontology_packs/`（域包同名以后者为准、**基底包 `general` 只认内置目录**，运行时数据、不入库）；导入即走与内置包相同的校验链（`validate_pack`），导出 YAML 可原样回读。注册表 `version` 每次包注册/reload 自增，`ontology/prompt.py` 以 `(version, domain)` 为缓存键——社区包导入后新词表立刻进 prompt，无需重启。治理查询只读聚合，统一入口 `ontology/governance.py`（兜底占比、词表外谓词、定义域值域违规、游离/占位实体、无来源产出、别名候选），经 `/api/ontology/report` 暴露。
 - **配置来源**：`backend/.env`（后端）、`frontend/src/config/apiConfig.ts`（前端 API 端点）。
 - **MCP 工具**：通过 `config/mcp_servers.json` 配置外部 MCP Server，工具自动纳入 AgenticEngine ReAct 循环。
@@ -184,7 +185,7 @@ cd backend && python -m pytest ../tests/test_extraction_quality.py -v -s
 | 文档 | 内容 |
 |------|------|
 | [docs/architecture.md](docs/architecture.md) | 系统架构、后端模块结构、前端组件树、存储分层、ID 规范 |
-| [docs/data-flow.md](docs/data-flow.md) | 文档分析/数据库导入/CDC/决策引擎的业务流程与数据流转 |
+| [docs/data-flow.md](docs/data-flow.md) | 文档分析/数据库导入/CDC/决策引擎的业务流程与数据流转，含表格文件（Excel/CSV）分支口径 |
 | [docs/cdc-setup.md](docs/cdc-setup.md) | CDC 增量同步：新环境配置、完整启动顺序、关键设计 |
 | [docs/development-guide.md](docs/development-guide.md) | 开发环境搭建、添加功能、代码规范 |
 | [docs/ontology-guide.md](docs/ontology-guide.md) | 本体包写法、`extends` 扩展链、谓词归一化如何改变落库数据、治理报告怎么读 |

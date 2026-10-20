@@ -110,7 +110,7 @@ backend/
 │   │   ├── decision.py            # 决策引擎对话（scope + 引用）
 │   │   ├── database.py            # 数据库连接与导入
 │   │   ├── cdc.py                 # CDC 配置与启停
-│   │   ├── source.py              # 数据源管理 + summarize/refresh/stale
+│   │   ├── source.py              # 数据源管理 + summarize/extract(+batch)/refresh/stale/inventory
 │   │   ├── wiki.py                # Wiki 页面 CRUD / 生成 / 答案发布
 │   │   ├── ontology.py            # 本体包导入导出 + 治理报告 + 中文词表接口
 │   │   ├── model.py               # LLM 模型配置
@@ -190,8 +190,9 @@ backend/
 │
 ├── summary_generation/            # ③ 摘要生成（唯一的 LLM 环节）
 │   ├── document/
-│   │   ├── summarizer.py          # ExtractedDocument → 摘要树（叶子 summary，父 prefix_summary）
-│   │   ├── tree_utils.py          # node_id / 子树正文聚合 / 页码区间
+│   │   ├── summarizer.py          # ExtractedDocument → 摘要树（自底向上，叶子与父节点均 summary + 自身 text）
+│   │   ├── tree_utils.py          # node_id / 节点输入内容组装 / 页码区间
+│   │   ├── text_budget.py         # 输入预算（按 context_length 推算）+ 句子边界切块 / 兜底截断
 │   │   ├── llm.py                 # ModelClient 调用 + token 估算
 │   │   ├── store.py               # 摘要落盘/指纹/DOC:// 来源 URI/遍历（原 summary_generator）
 │   │   └── prompts/               # 节点摘要 / 文档描述模板
@@ -243,9 +244,11 @@ backend/
 │
 ├── task_management/               # 异步任务管理
 │   ├── task_manager.py            # 任务调度器（HANDLERS 契约注册表分发；唯一落库缝）
-│   └── handlers/                  # 任务处理器（base.py = task_type/payload 显式契约）
-│       ├── base.py                # 处理器基类
+│   └── handlers/                  # 任务处理器（base.py = task_type/payload 显式契约 + run_files_concurrently 并发骨架）
+│       ├── base.py                # 处理器基类 + 批量任务文件间并发骨架
 │       ├── document_summary.py    # 文档摘要
+│       ├── document_batch_summary.py  # 批量摘要（files 缺省=全源；文件间并发、指纹跳过）
+│       ├── document_batch_extract.py  # 批量实体抽取（单文件 /extract 亦走此 handler；零实体守卫 + 批量后刷 Wiki）
 │       ├── document_refresh.py    # 文档失效重跑（摘要→回收→重抽取→Wiki）
 │       ├── wiki_generate.py       # Wiki 页面批量生成
 │       ├── schema_analyze.py      # Schema 分析
@@ -253,7 +256,8 @@ backend/
 │       └── cdc_start.py           # CDC 启动
 │
 ├── model_management/              # LLM 模型管理
-│   ├── model_client.py            # Ollama API 客户端
+│   ├── model_client.py            # 统一调用客户端（本地 Ollama / 云端 OpenAI 兼容）；返回值 LlmReply 带截断标志
+│   ├── context_probe.py           # 向服务端探测上下文窗口，探不到回落默认 32K
 │   ├── model_service.py           # 模型服务
 │   └── __init__.py                # 模型类型定义
 │
@@ -282,7 +286,7 @@ backend/
 │   └── task_ws.py                 # 任务进度 WebSocket（/ws/tasks）
 │
 └── utils/                         # 工具函数
-    ├── json_utils.py              # JSON 序列化
+    ├── json_utils.py              # JSON 序列化 / LLM 回复的提取与修复
     └── path_guard.py              # 路径安全（safe_join：源内相对路径越界拒绝）
 ```
 
@@ -364,7 +368,7 @@ CREATE CONSTRAINT IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE
 | `/api/filesystem` | `api/routes/filesystem.py` | 文件系统操作 |
 | `/api/wiki` | `api/routes/wiki.py` | Wiki 页面 CRUD / 生成 / 答案发布 |
 | `/api/ontology` | `api/routes/ontology.py` | 本体包查询与导入导出、中文词表（`/vocabulary`）、治理报告 |
-| `/api` | `api/routes/source.py` | 数据源管理（含 `summarize` / `refresh` / `stale`） |
+| `/api` | `api/routes/source.py` | 数据源管理（含 `summarize` / `extract-batch` / `refresh` / `stale` / `inventory`） |
 | — | `api/routes/database.py` | 数据库连接与导入 |
 | — | `api/routes/cdc.py` | CDC 增量同步配置 |
 | `/ws/tasks` | `websocket/task_ws.py` | 任务进度 WebSocket |
@@ -380,7 +384,7 @@ CREATE CONSTRAINT IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE
 - **两级来源**：节点/边同时带 `datasource`（主来源，展示与检索用，纯 URI）与 `datasources`（全部佐证条目，代际场景为 `URI@content_hash`）；按来源过滤与回收必须走 `knowledge_graph/source_scope.py` 的片段，`recycle_datasource` 只摘本来源佐证、清空才删；`keep_hash`（代际回收）保留本来源新代佐证
 - **内容失效传播**：摘要 JSON 的 `content_hash`（源文件 MD5）是文档指纹；刷新顺序是先生成摘要 → **抽取（新代佐证 `URI@content_hash`）** → 旧代回收（`keep_hash` 保留新代）→ 再刷新 Wiki —— 抽取/落库失败时旧图谱数据完好，成功才摘除旧代
 - **Wiki 页面**：`wiki_pages` 存 Markdown 正文 + `source_refs`（node_id 锚点），kind 为 document/topic/entity/answer；按 `source_hash` 幂等，LLM 不可用降级为确定性拼装
-- **LLM 集成**：经 `model_management/model_client.py` 统一调用 Ollama API
+- **LLM 集成**：经 `model_management/model_client.py` 统一调用；要 JSON 走 `call_json` / `call_json_ex`（后者额外给出「输出被 max_tokens 截断」标记，缩批重发据此判定），要白话走 `call_text`。**截断标志只能随返回值走**——`get_model_client()` 是跨线程共享的缓存单例，并发批次记在实例属性上会串台。输入预算 `text_budget.input_budget(model_config, output_reserve)` 的减数必须等于该次调用真正发的 `max_tokens`：按 2048 装箱却给批量标注留 8192 输出，超出的部分会被 Ollama 从**输入尾部**裁掉，症状是「尾部表格没标注」且日志不提窗口。
 - **MCP 工具**：通过 `config/mcp_servers.json` 配置外部 MCP Server，自动纳入 AgenticEngine ReAct 循环
 - **Agentic 引擎**：统一 ReAct 循环（max_turns=15，可在 `decision_engine.yaml` 调整），种子检索提供初始上下文，上下文窗口自动压缩
 - **CDC 增量同步**：基于 Debezium Server + Redis Streams，设计与操作详见 `cdc/AGENTS.md`

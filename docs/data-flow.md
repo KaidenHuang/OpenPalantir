@@ -9,9 +9,10 @@
 这是系统最核心的流程，将非结构化文档转化为结构化知识图谱。
 
 ```
-[用户选择文档源] → POST /api/sources/{id}/summarize (摘要任务)
-                 → POST /api/sources/{id}/extract   (实体关系抽取)
-                 → POST /api/wiki/generate          (Wiki 页面生成)
+[用户选择文档源] → POST /api/sources/{id}/summarize        (单文件摘要任务)
+                 → POST /api/sources/{id}/summarize-batch  (批量摘要任务：全源枚举 / 清单+目录展开)
+                 → POST /api/sources/{id}/extract          (实体抽取任务，单文件；/extract-batch 为批量)
+                 → POST /api/wiki/generate                 (Wiki 页面生成)
                                                           ↓
   ┌─────────────────────────────────────────────────────────────┐
   │ 阶段1：文档解析                                              │
@@ -34,10 +35,10 @@
   │  └─ .txt  → 单章节兜底                                          │
   │ 再由 summary_generation/document 做 LLM 摘要（唯一的 LLM 环节）： │
   │  ├─ 叶子节点 → summary + 正文 text                              │
-  │  ├─ 父节点 → prefix_summary（含子树正文聚合）                    │
+  │  ├─ 父节点 → summary（子树概览）+ 自身正文 text，输入为子节点摘要列表  │
   │  ├─ 页码区间聚合（PDF 节点带 page_start/page_end）                │
   │  └─ 保存到 data/summaries/DOC/{uuid}/                        │
-  │ 输出: 摘要树 JSON（title/node_id/page_start/page_end/…）          │
+  │ 输出: 摘要树 JSON（title/node_id/kind/page_start/page_end/…）     │
   └─────────────────────────────────────────────────────────────┘
                           ↓
   ┌─────────────────────────────────────────────────────────────┐
@@ -80,6 +81,57 @@
 - 每块独立调用 LLM 提取实体
 - 结果去重合并（基于 entity_id 唯一性）
 - 分块间关系通过实体名称模糊匹配补全
+
+### 表格文件分支（xlsx / xlsm / csv / tsv）
+
+上图是正文分支。表格文件走同一条管线的同一套接口（摘要落盘、抽取任务、代际回收、
+Wiki），只在 ②③④ 三个阶段各换一条分支；下面三段就是它的口径，改实现前先看对应模块
+的模块注释（`table_reader.py` / `table_batcher.py` + `summarizer.py` 表格分支 /
+`table_service.py`），那里写的是「为什么必须这样」。
+
+```
+② 内容提取（content_extraction/document/table_reader.py，纯解析）
+   ├─ 一个工作表 = 一个 level-1 章节（kind=table），CSV/TSV 恒为单表 Sheet1
+   ├─ 章节正文是确定性「表档案」：规模 + 列清单与推断类型 + 前 2 行样本
+   │   （明细行不进正文，否则摘要树退化成数据副本）
+   ├─ CSV 按 utf-8-sig → gbk → big5 试编码，分隔符由 Sniffer 在 , ; \t | 里猜
+   └─ 跳过项留痕 meta.skipped_sheets（空表 / 单列 / 超 30 表 / 渲染超 40 万字符），
+      结构留痕 meta.sheets（③ 压预算重渲染时按它取，只看文本推不出砍到第几列）
+
+③ 摘要生成（summary_generation/document/table_batcher.py，唯一 LLM 环节）
+   ├─ 分派只看 ② 的节级声明：每个章节都 kind=table 才走表格调度（不按扩展名反推），
+   │   落盘时聚合成文档级 kind，④ 据此分派
+   ├─ 按 token 窗口把整批 sheet 装进一次请求，一次出「每表摘要 + 逐列标注」
+   │   —— 不拆单个 sheet，列闭合与跨列关系都要求一张表在同一次调用里判完
+   ├─ 列标注：r = entity | attribute | none，实体列另给归一类型 t 与主列 primary，
+   │   列间关系 rels（{s:列名, p:谓词, o:列名}）
+   └─ 落盘 JSON 每个节点透传 kind，文档级 kind 是它的聚合；表格叶子另带
+      table_columns 与 table_meta；标注失败降级时 table_columns 为空列表 +
+      table_meta.skipped_reason 留痕
+
+④ 实体抽取（entity_extraction/document/table_service.py，零 LLM）
+   │  分派：摘要文档级 kind=table → 本节；否则走正文 LLM 抽取分支。
+   │  这一分支显式违反「④ 不重读源文件」：全表行值是数据不是文章，塞进摘要 JSON
+   │  会让摘要文件变成几十 MB 的数据副本。换来两条硬约束——
+   │  1) 取行只走 iter_table_rows，表头判定与 ② 同一份代码，否则 ③ 标注的列名错位；
+   │  2) 落库前校验源文件 MD5 == 摘要 content_hash，不等直接终止（半新半旧比失败
+   │     更难查，且继续写会让下一轮代际回收把新版本产出当旧代摘掉）。
+   ├─ 实体列的 distinct 取值 → 实体：名 = 裸取值，entity_id = MD5(名)
+   │   所以跨 sheet / 跨列的同一业务对象天然是同一个节点
+   ├─ 值过滤：长度 < 2、纯数字、停用词（合计/小计/平均/总计/暂无/N-A/NA/N/A/-）
+   ├─ 属性只挂主列实体；主列取值为空或被过滤 → 该行属性整行丢弃，不做向上填充
+   ├─ 列间关系按行装配成边（同一三元组只落一条）；端点被上限挤掉则计入丢弃
+   ├─ 上限守卫：单列 distinct > 5000 → 该列降级为属性（订单号、时间戳不是业务对象）；
+   │   单表实体总数 > 20000 → 只保主列；行数上限 50000（与 ② 同一常量）
+   ├─ 列标注的 t 落库前过本体校验，词表外落 other 并把原值记在 attributes.raw_type
+   └─ 结果不回传实体明细（可达数万），图谱就是落点；界面走图查询
+
+界面：文档详情区借用数据库侧的「表卡 + 字段列表」形状展示 sheet 与列标注，
+      数据仍来自现有 sources 摘要接口，不接 DBS:// 端点。
+
+不做：行实体（一行一节点）、跨 sheet 关系、sheet 级表类型分类、ER 图、表格 CDC
+      （文件没有 binlog，watcher 的指纹轮询已覆盖内容失效）。
+```
 
 ---
 
@@ -452,6 +504,8 @@ LOOP (最多 10 轮):
 | 类型 | 触发接口 | Handler | 执行内容 |
 |------|---------|---------|---------|
 | `document_generate_summary` | `POST /api/sources/{id}/summarize` | DocumentSummaryHandler | content_extraction 结构提取 + LLM 摘要树 + 记录 content_hash |
+| `document_batch_summary` | `POST /api/sources/{id}/summarize-batch` | DocumentBatchSummaryHandler | 全源枚举/清单展开 → 文件间并发生成摘要（force=false 时指纹一致跳过），返回成败清单 |
+| `document_batch_extract` | `POST /api/sources/{id}/extract`、`/extract-batch` | DocumentBatchExtractHandler | 按摘要逐文件抽取（files 支持目录展开；文件间并发、缺摘要记 failure 继续；批次全部调用成功但产出 0 实体判为合法空产出、计入成功），批量后有新增实体才刷新 Wiki（0 产出跳过这次全图扫描，结果里 wiki_pages 为 null） |
 | `document_refresh` | `POST /api/sources/{id}/refresh`、文档监听 | DocumentRefreshHandler | 重跑摘要 → 抽取（新代佐证）→ 旧代回收 → Wiki 刷新（见 §2.4） |
 | `wiki_generate` | `POST /api/wiki/generate` | WikiGenerateHandler | 文档页 / 主题页 / 实体页批量生成 |
 | `database_schema_analyze` | `POST /api/database/{connection_id}/analyze` | SchemaAnalyzeHandler | 阶段1 Schema 语义标注 |

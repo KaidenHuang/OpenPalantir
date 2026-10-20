@@ -1,18 +1,20 @@
 # 示例数据集 | Examples
 
-这里是「一键 demo」的素材：三篇互相引用的虚构文档 + 一个示例社区本体包。全部内容虚构，可自由复制修改。
+这里是「一键 demo」的素材：三篇互相引用的虚构文档 + 两篇同主题的表格文件 + 一个示例社区本体包。全部内容虚构，可自由复制修改。
 
 ```
 examples/
-├── docs/                    # 示例文档（Markdown，同主题跨文档）
-│   ├── 组织架构说明.md        # 人员 / 小组 / 职级 / 汇报关系
-│   ├── 季度评审记录.md        # 评审事件、结论、待办
-│   └── 发布与CI手册.md        # 系统组件、负责人、依赖与稳定性指标
+├── docs/                          # 示例文档（同主题跨文档）
+│   ├── 组织架构说明.md              # 人员 / 小组 / 职级 / 汇报关系
+│   ├── 季度评审记录.md              # 评审事件、结论、待办
+│   ├── 发布与CI手册.md              # 系统组件、负责人、依赖与稳定性指标
+│   ├── 人员名册.xlsx               # 表格样例：两个 sheet（员工 / 部门），演示列标注与跨 sheet 合并
+│   └── 外部顾问.csv               # 表格样例（GBK 无 BOM），演示中文 CSV 的编码嗅探
 └── ontology/
-    └── rd_efficiency.yaml   # 示例社区本体包（extends: workforce）
+    └── rd_efficiency.yaml         # 示例社区本体包（extends: workforce）
 ```
 
-三篇文档故意共享同一批实体（张明、李芳、周雨、平台工程部、数据平台组、指标服务、CI 流水线……），这样才能看出 Wiki 的两级生成：**文档页**按摘要树改写，**跨文档主题页 / 实体页**把散落在多篇文档里的同一实体聚合成一页。
+三篇文档故意共享同一批实体（张明、李芳、周雨、平台工程部、数据平台组、指标服务、CI 流水线……），这样才能看出 Wiki 的两级生成：**文档页**按摘要树改写，**跨文档主题页 / 实体页**把散落在多篇文档里的同一实体聚合成一页。两篇表格文件复用同一批部门与人名，走的是另一条分支：③ 只标注「哪列是实体、哪列是属性、列间什么关系」，④ 按纯规则把列取值装配成实体与边（零 LLM），所以它们与文档分支产出同名实体节点（`entity_id = MD5(名)`）会自然合并成一个。
 
 ## 一键跑通
 
@@ -48,6 +50,6 @@ python scripts/demo/run_demo.py --help
 
 ## 换成自己的文档
 
-把 `--docs` 指向任何本地目录即可（支持 `.md/.txt/.pdf/.docx/.pptx`，PDF/Word 需要 MinerU 或对应解析依赖，见 [INSTALL.md](../INSTALL.md)）。文档主题与本体域越贴近，`fallback_ratio` 越低——这正是 `GET /api/ontology/report` 里 `alias_candidates` 要回答的问题：哪些原始谓词高频掉进兜底，该补进哪个 LinkType 的 `aliases`。
+把 `--docs` 指向任何本地目录即可（支持 `.md/.txt/.pdf/.docx/.pptx/.xlsx/.xlsm/.csv/.tsv`，可解析格式的权威清单由 `GET /api/sources/formats` 给出；PDF/Word 需要 MinerU 或对应解析依赖，见 [INSTALL.md](../INSTALL.md)）。文档主题与本体域越贴近，`fallback_ratio` 越低——这正是 `GET /api/ontology/report` 里 `alias_candidates` 要回答的问题：哪些原始谓词高频掉进兜底，该补进哪个 LinkType 的 `aliases`。
 
 写自己的领域包见 [docs/ontology-guide.md](../docs/ontology-guide.md) 第 6 节。
