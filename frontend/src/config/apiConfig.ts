@@ -89,8 +89,11 @@ export const API_CONFIG = {
       restore: (sourceId: string) => `${API_BASE_URL}/api/sources/${sourceId}/restore`,
       browse: (sourceId: string) => `${API_BASE_URL}/api/sources/${sourceId}/browse`,
       summarize: (sourceId: string) => `${API_BASE_URL}/api/sources/${sourceId}/summarize`,
+      summarizeBatch: (sourceId: string) => `${API_BASE_URL}/api/sources/${sourceId}/summarize-batch`,
       summary: (sourceId: string) => `${API_BASE_URL}/api/sources/${sourceId}/summary`,
       extract: (sourceId: string) => `${API_BASE_URL}/api/sources/${sourceId}/extract`,
+      extractBatch: (sourceId: string) => `${API_BASE_URL}/api/sources/${sourceId}/extract-batch`,
+      inventory: (sourceId: string) => `${API_BASE_URL}/api/sources/${sourceId}/inventory`,
       entities: (sourceId: string) => `${API_BASE_URL}/api/sources/${sourceId}/entities`,
     },
     wiki: {

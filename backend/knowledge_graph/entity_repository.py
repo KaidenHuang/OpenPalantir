@@ -854,6 +854,24 @@ class EntityRepository:
             "MATCH (n:Entity) WHERE size(coalesce(n.datasources, [])) = 0 RETURN count(n) AS count")
         return result[0]['count'] if result else 0
 
+    def count_entities_by_datasource_prefix(self, prefix: str) -> Dict[str, int]:
+        """按来源佐证归属计数（以 `datasources` 判定，去掉 `@hash` 代缀后按纯 URI 分组）
+
+        供批量场景的状态清单使用（一次 Cypher 聚合整个源的文件级抽取量），
+        Neo4j 不可用时由调用方降级。
+        """
+        try:
+            result = neo4j_conn.execute_query(
+                f"MATCH (n:Entity) WHERE {match_prefix('n', '$prefix')} "
+                "UNWIND [d IN n.datasources WHERE d STARTS WITH $prefix "
+                "| split(d, '@')[0]] AS uri "
+                "RETURN uri AS datasource, count(DISTINCT n.id) AS count",
+                {"prefix": prefix})
+            return {(r['datasource'] or ''): r['count'] for r in result}
+        except Exception as e:
+            logger.error(f"按 datasource 前缀统计实体失败: {e}")
+            return {}
+
     # ── 回填 ──
 
     def backfill_byname(self) -> int:

@@ -82,6 +82,26 @@ export interface FileEntry {
   modified?: string;
 }
 
+/** 批量操作面板的文件状态（inventory） */
+export interface FileStat {
+  path: string;
+  has_summary: boolean;
+  extracted_count: number;
+}
+
+/** 批量任务的成败统计（handler result） */
+export interface BatchStats {
+  status?: string;
+  total: number;
+  succeeded: number;
+  skipped: number;
+  failed: number;
+  failures: { file: string; reason: string }[];
+  entity_count?: number;
+  relationship_count?: number;
+  wiki_pages?: Record<string, number>;
+}
+
 export interface SummaryData {
   doc_name?: string;
   structure?: Record<string, unknown>[];
@@ -134,13 +154,14 @@ export interface ModelPlatform {
 export interface ModelInfo {
   id: number;
   name: string;
-  model_type: 'local' | 'cloud' | 'opencode';
+  model_type: 'local' | 'cloud';
   platform: string;
   enabled: boolean;
   api_url?: string;
   api_key?: string;
   models?: string[];
   status?: 'available' | 'unavailable' | 'unknown';
+  context_length?: number;
 }
 
 export interface PlatformConfig {

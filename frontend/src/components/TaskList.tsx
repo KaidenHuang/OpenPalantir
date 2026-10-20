@@ -31,6 +31,8 @@ const TaskList: React.FC = () => {
     switch (type) {
       case 'document_generate_summary': return '文档概要生成';
       case 'document_refresh': return '文档刷新';
+      case 'document_batch_summary': return '文档批量摘要';
+      case 'document_batch_extract': return '文档实体提取';
       case 'wiki_generate': return 'Wiki 生成';
       case 'database_schema_analyze': return '数据库Schema分析';
       case 'database_schema_import': return '数据库Schema导入';

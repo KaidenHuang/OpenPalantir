@@ -7,7 +7,7 @@
 import { create } from 'zustand';
 import { httpGet, httpPost, httpDelete } from '../services/httpClient';
 import { API_CONFIG } from '../config/apiConfig';
-import type { DocumentSource, Entity, FileEntry, SummaryData } from './types';
+import type { DocumentSource, Entity, FileEntry, SummaryData, FileStat } from './types';
 
 interface SourceState {
   // 数据
@@ -19,6 +19,7 @@ interface SourceState {
   summary: SummaryData | null;
   entities: Entity[];
   taskId: string | null;
+  inventory: Record<string, FileStat>;
 
   // 缓存
   _lastFetched: number;
@@ -35,9 +36,13 @@ interface SourceState {
   deleteSource: (sourceId: string, signal?: AbortSignal) => Promise<void>;
   restoreSource: (sourceId: string, signal?: AbortSignal) => Promise<void>;
   summarize: (sourceId: string, filePath: string, signal?: AbortSignal) => Promise<string>;
+  summarizeBatch: (sourceId: string, files: string[] | null, force: boolean, label: string | undefined, signal?: AbortSignal) => Promise<string>;
+  extractBatch: (sourceId: string, files: string[] | null, domain: string, label: string | undefined, signal?: AbortSignal) => Promise<string>;
+  fetchInventory: (sourceId: string, signal?: AbortSignal) => Promise<Record<string, FileStat>>;
   setTaskId: (id: string | null) => void;
   setSummary: (data: SummaryData | null) => void;
   setEntities: (data: Entity[]) => void;
+  setInventory: (data: Record<string, FileStat>) => void;
 }
 
 export const useSourceStore = create<SourceState>()((set, get) => ({
@@ -49,6 +54,7 @@ export const useSourceStore = create<SourceState>()((set, get) => ({
   summary: null,
   entities: [],
   taskId: null,
+  inventory: {},
   _lastFetched: 0,
   _staleTime: 30_000,
 
@@ -117,7 +123,45 @@ export const useSourceStore = create<SourceState>()((set, get) => ({
     return response.data.task_id as string;
   },
 
+  summarizeBatch: async (sourceId, files, force = false, label, signal?: AbortSignal) => {
+    const body: Record<string, unknown> = { force };
+    if (files) body.files = files;
+    if (label) body.label = label;
+    const response = await httpPost(
+      API_CONFIG.endpoints.source.summarizeBatch(sourceId),
+      body,
+      { signal }
+    );
+    return response.data.task_id as string;
+  },
+
+  extractBatch: async (sourceId, files, domain = 'general', label, signal?: AbortSignal) => {
+    const body: Record<string, unknown> = { domain };
+    if (files) body.files = files;
+    if (label) body.label = label;
+    const response = await httpPost(
+      API_CONFIG.endpoints.source.extractBatch(sourceId),
+      body,
+      { signal }
+    );
+    return response.data.task_id as string;
+  },
+
+  fetchInventory: async (sourceId, signal?: AbortSignal) => {
+    const map: Record<string, FileStat> = {};
+    try {
+      const response = await httpGet(API_CONFIG.endpoints.source.inventory(sourceId), { signal });
+      for (const item of (response.data.files || []) as FileStat[]) {
+        map[item.path] = item;
+      }
+    } catch {
+      // inventory 不可用时降级为空映射（状态藏不显示，不阻塞浏览）
+    }
+    return map;
+  },
+
   setTaskId: (id) => set({ taskId: id }),
   setSummary: (data: SummaryData | null) => set({ summary: data }),
   setEntities: (data: Entity[]) => set({ entities: data }),
+  setInventory: (data) => set({ inventory: data }),
 }));

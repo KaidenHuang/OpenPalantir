@@ -33,6 +33,14 @@ const TaskDetails: React.FC<TaskDetailsProps> = ({ taskId }) => {
     switch (type) {
       case 'relationship_extraction': return '关系提取';
       case 'document_upload': return '文档上传';
+      case 'document_generate_summary': return '文档概要生成';
+      case 'document_refresh': return '文档刷新';
+      case 'document_batch_summary': return '文档批量摘要';
+      case 'document_batch_extract': return '文档实体提取';
+      case 'wiki_generate': return 'Wiki 生成';
+      case 'database_schema_analyze': return '数据库Schema分析';
+      case 'database_schema_import': return '数据库Schema导入';
+      case 'database_cdc_start': return 'CDC 增量同步';
       default: return type;
     }
   };

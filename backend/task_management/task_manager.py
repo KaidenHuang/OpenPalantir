@@ -138,7 +138,9 @@ def _datasource_uri_from_payload(payload: Dict[str, Any]) -> Optional[str]:
     """任务「数据源 URL」原始派生（ID 段为 SPI 内部 ID）：`{TYPE}://{ID}/...`。
 
     - Wiki 任务：payload 已携带 DOC:// 数据源 URI，原样透传
-    - 文档任务：DOC://{source_id}/{相对路径}
+    - 文档单文件任务：DOC://{source_id}/{相对路径}
+    - 文档批量任务（payload 带 files 键）：DOC://{source_id}
+      （目标文件集合多而散，URI 只到源层面，明细看任务 result）
     - 数据库任务：DBS://{连接}[/{库名}]
     展示层由 _humanize_uri 把 ID 段替换为注册名称。
     """
@@ -150,6 +152,8 @@ def _datasource_uri_from_payload(payload: Dict[str, Any]) -> Optional[str]:
     file_path = payload.get("file_path") or payload.get("file")
     if source_id and file_path:
         return f"DOC://{source_id}/{file_path}"
+    if source_id and "files" in payload:
+        return f"DOC://{source_id}"
 
     connection_id = payload.get("connection_id")
     if connection_id:
@@ -174,14 +178,29 @@ def _humanize_uri(uri: str, aliases: Dict[str, str]) -> str:
 
 
 def _datasource_label_from_payload(
-    payload: Dict[str, Any], conn_aliases: Optional[Dict[str, Dict[str, Optional[str]]]] = None
+    payload: Dict[str, Any], conn_aliases: Optional[Dict[str, Dict[str, Optional[str]]]] = None,
+    doc_aliases: Optional[Dict[str, str]] = None,
 ) -> Optional[str]:
     """任务「数据源」标签的唯一派生出口，按任务来源类型取值：
+    - 文档批量任务（payload 带 files 键）→ 文档源名（N 个文件 / 全源）
     - 文档任务（file_path/file）→ 文件名
     - Wiki 任务（DOC:// datasource）→ 目标文件名
     - 数据库任务（connection_id）→ 库名（连接名），库名缺失经连接记录补全
     - 其他任务 → None（前端显示 '-'）
     """
+    if payload.get("source_id") and "files" in payload:
+        # 批量任务（单文件提取也走批量 handler，files=[path]）。
+        # batch_label 由前端按「勾选语义」计算（如目录路径 / 已选 N 项），
+        # 优先展示 —— payload 里的 files 是原始条目（可能含目录），条目数 ≠ 文件数
+        custom = payload.get("batch_label")
+        if isinstance(custom, str) and custom.strip():
+            return custom.strip()
+        files = payload.get("files")
+        source_name = (doc_aliases or {}).get(payload.get("source_id")) or payload.get("source_id")
+        if isinstance(files, list) and files:
+            return f"{source_name}（{len(files)} 个文件）"
+        return f"{source_name}（全源）"
+
     doc_name = _document_name_from_payload(payload)
     if doc_name:
         return doc_name
@@ -235,7 +254,7 @@ class TaskManager:
             aliases.update(_document_source_alias_map())
 
         for task in tasks:
-            task.datasource_label = _datasource_label_from_payload(task.payload, conn_aliases)
+            task.datasource_label = _datasource_label_from_payload(task.payload, conn_aliases, aliases)
             uri = _datasource_uri_from_payload(task.payload)
             task.datasource_uri = _humanize_uri(uri, aliases) if uri else None
 
@@ -421,7 +440,7 @@ class TaskManager:
                 task = self.tasks[task_id]
                 
                 # 如果任务已完成或已失败，不需要停止
-                if task.status in ["completed", "failed", "stopped"]:
+                if task.status in _TERMINAL_STATUSES:
                     logger.warning(f"[stop_task] 任务状态不允许停止: task_id={task_id}, status={task.status}")
                     return False
                 
@@ -596,8 +615,10 @@ class TaskManager:
                     found = True
                     if status is not None:
                         row.status = status
-                    if result:
-                        row.result = str(result)
+                    if result is not None:
+                        # 结构化结果统一 JSON 化：前端按 JSON 解析（repr 单引号串不可靠）
+                        row.result = result if isinstance(result, str) \
+                            else json.dumps(result, ensure_ascii=False)
                     if error:
                         row.error = error
                     if progress is not None:

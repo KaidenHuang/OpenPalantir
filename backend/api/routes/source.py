@@ -1,6 +1,7 @@
 """文档源路由 —— HTTP 层薄壳，数据访问在 source_registry，产物读取在 summary_generation"""
 import json
 import os
+from typing import List, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -9,9 +10,12 @@ from config.database import get_db
 from summary_generation.document import store as summary_generator
 from model_management.model_service import ModelService
 from source_registry.document.registry import document_source_registry
-from source_registry.document.scanner import browse_directory
+from source_registry.document.scanner import browse_directory, list_supported_files
 from system.logger import logger
-from task_management.handlers import DocumentRefreshHandler, DocumentSummaryHandler
+from task_management.handlers import (DocumentBatchExtractHandler,
+                                      DocumentBatchSummaryHandler,
+                                      DocumentRefreshHandler,
+                                      DocumentSummaryHandler)
 
 router = APIRouter()
 
@@ -129,6 +133,26 @@ def browse_source(source_id: str, prefix: str = "", db: Session = Depends(get_db
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+def _validated_files(data: dict) -> Optional[List[str]]:
+    """批量 payload 的 files 校验：None/缺省 = 全源；空数组 = 400 拒绝（防误提交全空任务）"""
+    files = data.get("files")
+    if files is None:
+        return None
+    if not isinstance(files, list) or any(not isinstance(f, str) or not f.strip() for f in files):
+        raise HTTPException(status_code=400, detail="files 必须为非空字符串数组，或省略该字段表示全源")
+    if not files:
+        raise HTTPException(status_code=400, detail="files 不能为空数组；省略该字段表示全源处理")
+    return [f.replace("\\", "/").strip() for f in files]
+
+
+def _require_model(db: Session) -> dict:
+    """LLM 环节前置检查：批量任务应在提交而非执行 5 分钟后才发现模型不可用"""
+    model_config = ModelService.get_available_model(db)
+    if not model_config:
+        raise HTTPException(status_code=503, detail="没有可用的模型，请先在模型管理中启用一个模型")
+    return model_config
+
+
 @router.post("/sources/{source_id}/summarize")
 def summarize_file(source_id: str, data: dict = Body(...), db: Session = Depends(get_db)):
     """为源中的某个文件生成概要（通过异步任务执行）"""
@@ -163,6 +187,36 @@ def summarize_file(source_id: str, data: dict = Body(...), db: Session = Depends
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@router.post("/sources/{source_id}/summarize-batch")
+def summarize_batch(source_id: str, data: dict = Body(...), db: Session = Depends(get_db)):
+    """批量生成摘要（异步任务）：files 缺省=全源递归枚举；条目可为目录（后端展开）"""
+    try:
+        files = _validated_files(data)
+        document_source_registry.require(db, source_id)
+        _require_model(db)
+        # label：前端对勾选语义的描述（如目录路径 / 已选 N 项），任务列表数据源标签优先展示它
+        label = data.get("label")
+        payload = {
+            "source_id": source_id,
+            "files": files,
+            "force": bool(data.get("force", False)),
+            "concurrency": data.get("concurrency"),
+            "batch_label": label.strip() if isinstance(label, str) and label.strip() else None,
+        }
+        from task_management.task_manager import task_manager
+        task_id = task_manager.create_task(DocumentBatchSummaryHandler.TASK_TYPE, payload)
+        logger.info(f"批量摘要任务已创建: task_id={task_id}, source_id={source_id}, "
+                    f"files={len(files) if files else '全源'}")
+        return {"task_id": task_id, "message": "批量摘要任务已提交"}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"提交批量摘要任务失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 @router.post("/sources/{source_id}/refresh")
 def refresh_file(source_id: str, data: dict = Body(...), db: Session = Depends(get_db)):
     """重跑一篇文档：摘要 → 图谱回收 → 重新抽取 → Wiki 刷新（异步任务）"""
@@ -176,8 +230,8 @@ def refresh_file(source_id: str, data: dict = Body(...), db: Session = Depends(g
             "source_id": source_id,
             "file_path": file_path,
             "force": bool(data.get("force", False)),
-            "domain": data.get("domain", "general"),
-            "parallelism": data.get("parallelism", 8),
+            "domain": data.get("domain"),
+            "parallelism": data.get("parallelism"),
         }
         from task_management.task_manager import task_manager
         task_id = task_manager.create_task(DocumentRefreshHandler.TASK_TYPE, payload)
@@ -233,7 +287,7 @@ def get_summary(source_id: str, file: str, db: Session = Depends(get_db)):
 
 @router.post("/sources/{source_id}/extract")
 def extract_from_summary(source_id: str, data: dict = Body(...), db: Session = Depends(get_db)):
-    """从已生成的概要中提取实体和关系"""
+    """从已生成的概要中提取实体和关系（异步任务执行；单文件即批量任务的特例 files=[file]）"""
     try:
         file_path = data.get("file", "").strip()
         if not file_path:
@@ -246,28 +300,92 @@ def extract_from_summary(source_id: str, data: dict = Body(...), db: Session = D
             raise HTTPException(status_code=400, detail=str(e))
         if not os.path.isfile(summary_abs_path):
             raise HTTPException(status_code=404, detail="概要不存在，请先生成概要")
+        _require_model(db)
 
-        model_config = ModelService.get_available_model(db)
-        if not model_config:
-            raise HTTPException(status_code=503, detail="没有可用的模型，请先在模型管理中启用一个模型")
-
-        from entity_extraction.document.service import DocumentExtractionService
-
-        datasource = summary_generator.datasource_for(source_id, file_path)
-        service = DocumentExtractionService(model_config)
-        result = service.extract_from_summary(
-            summary_path=summary_abs_path,
-            datasource=datasource,
-            parallelism=data.get("parallelism", 8),
-            domain=data.get("domain", "general"),
-        )
-        return {"status": "success", "file": file_path, **result}
+        payload = {
+            "source_id": source_id,
+            "files": [file_path],
+            "domain": data.get("domain"),
+            "parallelism": data.get("parallelism"),
+        }
+        from task_management.task_manager import task_manager
+        task_id = task_manager.create_task(DocumentBatchExtractHandler.TASK_TYPE, payload)
+        logger.info(f"实体提取任务已创建: task_id={task_id}, source_id={source_id}, file={file_path}")
+        return {"task_id": task_id, "message": "实体提取任务已提交"}
     except HTTPException:
         raise
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.error(f"提取实体关系失败: {str(e)}")
+        logger.error(f"提交实体提取任务失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/sources/{source_id}/extract-batch")
+def extract_batch(source_id: str, data: dict = Body(...), db: Session = Depends(get_db)):
+    """批量从摘要提取实体关系（异步任务）：缺摘要的文件记 failure 继续，整批结果含成败清单"""
+    try:
+        files = _validated_files(data)
+        document_source_registry.require(db, source_id)
+        _require_model(db)
+        label = data.get("label")
+        payload = {
+            "source_id": source_id,
+            "files": files,
+            "domain": data.get("domain"),
+            "parallelism": data.get("parallelism"),
+            "concurrency": data.get("concurrency"),
+            "batch_label": label.strip() if isinstance(label, str) and label.strip() else None,
+        }
+        from task_management.task_manager import task_manager
+        task_id = task_manager.create_task(DocumentBatchExtractHandler.TASK_TYPE, payload)
+        logger.info(f"批量实体提取任务已创建: task_id={task_id}, source_id={source_id}, "
+                    f"files={len(files) if files else '全源'}")
+        return {"task_id": task_id, "message": "批量实体提取任务已提交"}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"提交批量实体提取任务失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/sources/{source_id}/inventory")
+def source_inventory(source_id: str, db: Session = Depends(get_db)):
+    """源内可处理文件的状态清单：是否已生成摘要、已抽取实体数（批量操作面板用）"""
+    try:
+        source = document_source_registry.require_alive(db, source_id)
+        if source.source_type != "local":
+            raise HTTPException(status_code=400, detail="仅本地文档源支持文件状态清单")
+
+        files = list_supported_files(source.path)
+        extracted_counts = {}
+        try:
+            from knowledge_graph.entity_repository import entity_repo
+            extracted_counts = entity_repo.count_entities_by_datasource_prefix(f"DOC://{source_id}/")
+        except Exception as e:
+            logger.warning(f"[inventory] 实体计数查询失败（按 0 展示）: {e}")
+
+        items = []
+        for rel in files:
+            try:
+                has_summary = os.path.isfile(summary_generator.summary_path(source_id, rel))
+            except ValueError:
+                has_summary = False
+            datasource = summary_generator.datasource_for(source_id, rel)
+            items.append({
+                "path": rel,
+                "has_summary": has_summary,
+                "extracted_count": extracted_counts.get(datasource, 0),
+            })
+        return {"status": "success", "source_id": source_id, "files": items}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"获取文件状态清单失败: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

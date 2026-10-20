@@ -998,19 +998,22 @@
   gap: 16px;
 }
 
-.database-management .tables-section h3 {
+.database-management .tables-section h3,
+.document-viewer .tables-section h3 {
   margin: 0 0 12px 0;
   font-size: 15px;
   color: #333;
 }
 
-.database-management .tables-grid {
+.database-management .tables-grid,
+.document-viewer .tables-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 12px;
 }
 
-.database-management .table-card {
+.database-management .table-card,
+.document-viewer .table-card {
   padding: 12px;
   border: 1px solid #e8e8e8;
   border-radius: 6px;
@@ -1018,24 +1021,28 @@
   transition: all 0.2s;
 }
 
-.database-management .table-card:hover {
+.database-management .table-card:hover,
+.document-viewer .table-card:hover {
   border-color: #007bff;
   box-shadow: 0 2px 8px rgba(0, 123, 255, 0.15);
 }
 
-.database-management .table-card.selected {
+.database-management .table-card.selected,
+.document-viewer .table-card.selected {
   border-color: #007bff;
   background-color: #f8fcff;
 }
 
-.database-management .table-header {
+.database-management .table-header,
+.document-viewer .table-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 6px;
 }
 
-.database-management .table-name {
+.database-management .table-name,
+.document-viewer .table-name {
   font-weight: 600;
   font-size: 13px;
   color: #333;
@@ -1049,28 +1056,33 @@
   border-radius: 10px;
 }
 
-.database-management .table-role {
+.database-management .table-role,
+.document-viewer .table-role {
   font-size: 11px;
   padding: 1px 6px;
   border-radius: 10px;
 }
 
-.database-management .table-role-entity {
+.database-management .table-role-entity,
+.document-viewer .table-role-entity {
   background-color: #e7f3ff;
   color: #0069d9;
 }
 
-.database-management .table-role-junction {
+.database-management .table-role-junction,
+.document-viewer .table-role-junction {
   background-color: #fff3e0;
   color: #e65100;
 }
 
-.database-management .table-role-attribute {
+.database-management .table-role-attribute,
+.document-viewer .table-role-attribute {
   background-color: #e8f5e9;
   color: #2e7d32;
 }
 
-.database-management .table-description {
+.database-management .table-description,
+.document-viewer .table-description {
   margin: 6px 0;
   font-size: 12px;
   color: #666;
@@ -1081,7 +1093,8 @@
   overflow: hidden;
 }
 
-.database-management .table-meta {
+.database-management .table-meta,
+.document-viewer .table-meta {
   display: flex;
   gap: 8px;
   font-size: 11px;
@@ -1089,13 +1102,15 @@
   flex-wrap: wrap;
 }
 
-.database-management .table-relations {
+.database-management .table-relations,
+.document-viewer .table-relations {
   margin-top: 8px;
   padding-top: 6px;
   border-top: 1px solid #eee;
 }
 
-.database-management .relation-line {
+.database-management .relation-line,
+.document-viewer .relation-line {
   font-size: 11px;
   margin-bottom: 3px;
   display: flex;
@@ -1103,12 +1118,14 @@
   gap: 4px;
 }
 
-.database-management .relation-label {
+.database-management .relation-label,
+.document-viewer .relation-label {
   color: #999;
   flex-shrink: 0;
 }
 
-.database-management .relation-tag {
+.database-management .relation-tag,
+.document-viewer .relation-tag {
   display: inline-block;
   padding: 0 5px;
   background: #f0f5ff;
@@ -1133,17 +1150,20 @@
   margin-top: 2px;
 }
 
-.database-management .columns-section {
+.database-management .columns-section,
+.document-viewer .columns-section {
   margin-top: 16px;
 }
 
-.database-management .columns-section h3 {
+.database-management .columns-section h3,
+.document-viewer .columns-section h3 {
   margin: 0 0 12px 0;
   font-size: 15px;
   color: #333;
 }
 
-.database-management .columns-table {
+.database-management .columns-table,
+.document-viewer .columns-table {
   width: 100%;
   border-collapse: collapse;
   background-color: white;
@@ -1153,20 +1173,24 @@
 }
 
 .database-management .columns-table th,
-.database-management .columns-table td {
+.database-management .columns-table td,
+.document-viewer .columns-table th,
+.document-viewer .columns-table td {
   padding: 10px 14px;
   text-align: left;
   border-bottom: 1px solid #f0f0f0;
   font-size: 13px;
 }
 
-.database-management .columns-table th {
+.database-management .columns-table th,
+.document-viewer .columns-table th {
   background-color: #f8f9fa;
   font-weight: 600;
   color: #555;
 }
 
-.database-management .columns-table tr:hover {
+.database-management .columns-table tr:hover,
+.document-viewer .columns-table tr:hover {
   background-color: #f8f9fa;
 }
 
@@ -1841,7 +1865,49 @@
 .dv-file-tree {
   flex: 1;
   overflow: auto;
-  padding: 8px 0;
+  padding: 8px 12px 8px 4px;
+}
+
+/* 文件名单行显示：图标与状态 Tag 不参与收缩，超长文件名末尾省略号 */
+.dv-file-tree .ant-tree .ant-tree-node-content-wrapper {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding-right: 6px;
+}
+
+.dv-file-tree .ant-tree .ant-tree-node-content-wrapper .ant-tree-iconEle {
+  flex: none;
+}
+
+.dv-file-tree .ant-tree .ant-tree-node-content-wrapper .ant-tree-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.dv-file-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dv-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dv-file-title .ant-tag {
+  flex: none;
+  margin-inline-end: 0;
+}
+
+/* 浏览模式是单层目录导航（点目录即切换视图，无 children 数据），展开箭头无意义 */
+.dv-file-tree .ant-tree-switcher {
+  display: none;
 }
 
 /* Content panel (right) */
@@ -1976,6 +2042,30 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+/* 表格文件的 sheet 卡与字段列表：形状与数据库表卡一致，共用上面那批类名 */
+.dv-sheets-section {
+  margin-top: 12px;
+}
+
+.dv-sheets-section h5 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #555;
+}
+
+.document-viewer .table-role-none {
+  background-color: #f5f5f5;
+  color: #888;
+}
+
+.document-viewer .primary-tag {
+  font-size: 11px;
+  padding: 1px 6px;
+  background-color: #fff1f0;
+  color: #cf1322;
+  border-radius: 10px;
 }
 
 /* Wiki 页面 Markdown 渲染 */

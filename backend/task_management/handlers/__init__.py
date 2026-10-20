@@ -9,6 +9,8 @@ from .schema_import import SchemaImportHandler
 from .cdc_start import CdcStartHandler
 from .document_summary import DocumentSummaryHandler
 from .document_refresh import DocumentRefreshHandler
+from .document_batch_summary import DocumentBatchSummaryHandler
+from .document_batch_extract import DocumentBatchExtractHandler
 from .wiki_generate import WikiGenerateHandler
 
 __all__ = [
@@ -19,6 +21,8 @@ __all__ = [
     "CdcStartHandler",
     "DocumentSummaryHandler",
     "DocumentRefreshHandler",
+    "DocumentBatchSummaryHandler",
+    "DocumentBatchExtractHandler",
     "WikiGenerateHandler",
 ]
 
@@ -26,6 +30,7 @@ __all__ = [
 HANDLERS: dict = {
     h.TASK_TYPE: h for h in (
         SchemaAnalyzeHandler, SchemaImportHandler, CdcStartHandler,
-        DocumentSummaryHandler, DocumentRefreshHandler, WikiGenerateHandler,
+        DocumentSummaryHandler, DocumentRefreshHandler,
+        DocumentBatchSummaryHandler, DocumentBatchExtractHandler, WikiGenerateHandler,
     )
 }

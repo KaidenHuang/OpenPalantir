@@ -424,8 +424,11 @@ class TestRefreshRoutes:
         assert resp.json()["task_id"] == "t9"
         task_type, payload = task_manager.create_task.call_args.args
         assert task_type == "document_refresh"
+        # 路由只转发客户端显式给的值，未给的留空由 handler 契约补默认（默认值只写一份）
         assert payload == {"source_id": "s1", "file_path": "a.md",
-                           "force": True, "domain": "medical", "parallelism": 8}
+                           "force": True, "domain": "medical", "parallelism": None}
+        handler = DocumentRefreshHandler()
+        assert handler.payload_value(SimpleNamespace(payload=payload), "parallelism") == 8
 
     def test_refresh_requires_file_and_existing_source(self, client, source_db):
         assert client.post("/api/sources/s1/refresh", json={}).status_code == 400
