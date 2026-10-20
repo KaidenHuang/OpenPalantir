@@ -1,6 +1,6 @@
 """④ 实体抽取（文档侧）—— 摘要树 → 分批正文
 
-摘要 JSON 的 structure 是章节树：叶子带 text，父节点带 prefix_summary。
+摘要 JSON 的 structure 是章节树：叶子与父节点都带 summary + 自身正文 text，父节点另带 nodes。
 这里把它摊平成「顺序的正文段」，再按 token/字符预算合并成批次：
 批次是 LLM 调用的单位，既不能太大（超上下文）也不能太小（浪费调用）。
 """

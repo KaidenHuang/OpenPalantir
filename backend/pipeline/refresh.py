@@ -177,7 +177,10 @@ def _source_base_path(source_id: str, quiet: bool = False) -> str:
 def _extract(summary_path: str, datasource: str, domain: str,
              parallelism: int, evidence_hash: str = None) -> Dict[str, Any]:
     """按可用模型重新抽取实体关系（evidence_hash → 佐证代际标记）"""
-    from entity_extraction.document.service import DocumentExtractionService
+    from entity_extraction.document.service import (
+        DocumentExtractionService,
+        guard_llm_available,
+    )
 
     db = SessionLocal()
     try:
@@ -193,14 +196,8 @@ def _extract(summary_path: str, datasource: str, domain: str,
         parallelism=parallelism, domain=domain, evidence_hash=evidence_hash,
     )
 
-    # 零实体守卫：摘要结构存在却抽到 0 实体，几乎必然是 LLM 全部调用失败
-    # （call_json 失败返回 None → enhancer 只能得到空结果，异常已被吞在客户端层）。
-    # 静默成功 = 任务看着没事、图谱实际没有新产出 —— 按失败处理。
+    # 零实体守卫（判据见 guard_llm_available）：批次全灭才判 LLM 不可用。
+    # call_json 失败返回 None → enhancer 只能得到空结果，异常已被吞在客户端层，
+    # 所以"调用是否全灭"要由批次计数给出，不能靠结果数反推。
     # 注：本顺序下回收后置，此失败不会清掉旧图谱数据。
-    entity_count = (result or {}).get("entity_count", 0)
-    if entity_count == 0:
-        raise RuntimeError(
-            "重新抽取得到 0 个实体（大概率 LLM 不可用），刷新按失败处理；"
-            "旧图谱产出未回收，请检查模型配置后重跑"
-        )
-    return result
+    return guard_llm_available(result, "重新抽取")

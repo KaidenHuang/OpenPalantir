@@ -146,6 +146,11 @@ def _repair_entity_relationship(text: str) -> Optional[str]:
     """针对实体/关系 JSON 格式的修复：提取完整对象后重建 JSON。"""
     entities_match = re.search(r'"entities"\s*:\s*(\[)', text)
     rel_match = re.search(r'"relationships"\s*:\s*(\[)', text)
+    if not entities_match and not rel_match:
+        # 不是实体/关系形态就不要动它：这条修复链无条件重建 {"entities": [], "relationships": []}，
+        # 会把任何半截 JSON（如表格标注）"修"成一个看似合法的抽取空结果，调用方据此
+        # 以为模型答完了、只是没内容，于是既不重试也不告警。
+        return None
 
     entities_objects: List[str] = []
     rel_objects: List[str] = []

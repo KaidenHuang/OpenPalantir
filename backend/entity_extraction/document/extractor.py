@@ -160,7 +160,8 @@ class LLMEntityEnhancer:
                     relationships = self._get_relationships(response_json)
                     logger.debug(f"提取到的实体: {entities}")
                     logger.debug(f"提取到的关系: {relationships}")
-                    return {"entities": entities, "relationships": relationships}
+                    return {"entities": entities, "relationships": relationships,
+                            "batch_failed": False}
                 else:
                     # 模型返回空但文本足够长，在句子边界切半后分别重试
                     if len(text) > 2000:
@@ -178,8 +179,14 @@ class LLMEntityEnhancer:
                                 seen.add(key)
                                 deduped.append(e)
                         logger.info(f"切半重试完成，共提取 {len(deduped)} 个实体和 {len(relationships)} 个关系")
-                        return {"entities": deduped, "relationships": relationships}
-                    return {"entities": [], "relationships": []}
+                        # 两半都调用失败才算这一批失败；一半成功一半失败仍有可用产出
+                        both_failed = (bool(left.get("batch_failed"))
+                                       and bool(right.get("batch_failed")))
+                        return {"entities": deduped, "relationships": relationships,
+                                "batch_failed": both_failed}
+                    # 空 JSON 对象（{}）是模型答"没有"，不是调用失败：只有 None 算失败
+                    return {"entities": [], "relationships": [],
+                            "batch_failed": response_json is None}
             else:
                 # 文本过长，需要分块处理
                 logger.info(f"文本长度 {len(text)} 超过限制 {max_chunk_length}，开始分块处理")
@@ -230,6 +237,7 @@ class LLMEntityEnhancer:
             
             all_entities = []
             all_relationships = []
+            chunks_failed = 0
             
             for i in range(num_chunks):
                 start_pos = i * max_chunk_length
@@ -272,6 +280,9 @@ class LLMEntityEnhancer:
                     
                     all_entities.extend(chunk_entities)
                     all_relationships.extend(chunk_relationships)
+                else:
+                    chunks_failed += 1
+                    logger.warning(f"第 {i+1}/{num_chunks} 块调用失败或无响应")
             
             # 去重实体（基于名称和类型）
             unique_entities = []
@@ -284,7 +295,8 @@ class LLMEntityEnhancer:
             
             logger.info(f"分块处理完成，共提取 {len(unique_entities)} 个实体和 {len(all_relationships)} 个关系（去重前: {len(all_entities)} 个实体）")
             
-            return {"entities": unique_entities, "relationships": all_relationships}
+            return {"entities": unique_entities, "relationships": all_relationships,
+                    "batch_failed": chunks_failed >= num_chunks}
 
         except Exception as e:
             logger.error(f"分块处理实体和关系提取失败: {e}")

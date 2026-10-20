@@ -83,10 +83,11 @@ def stored_content_hash(path: str) -> str:
         return ""
 
 
-def generate(full_path: str) -> dict:
+def generate(full_path: str, domain: str = "general") -> dict:
     """生成文档摘要：阶段②内容提取 → 阶段③ LLM 节点摘要 → 记录源文件指纹
 
     文件类型是否支持由 extract_content 判定（不支持时抛 ValueError）。
+    domain 决定表格分支注入的实体/关系词表，与④ 抽取用同一个域才对得上。
     """
     from content_extraction import extract_content
     from summary_generation.document import summarize_document
@@ -96,7 +97,7 @@ def generate(full_path: str) -> dict:
     # 反序（先生成后取指纹）会让"改文件掐秒"漏检使旧内容永久假有效。
     content_hash = file_content_hash(full_path)
     extracted = extract_content(full_path)
-    result = summarize_document(extracted)
+    result = summarize_document(extracted, domain=domain)
     result["content_hash"] = content_hash
     return result
 

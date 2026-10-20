@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "实体/关系抽取评测集：examples/docs 三篇示例文档的人工标注。entities 为必须召回的金标（t 为可接受的 ObjectType key，命中任一算类型正确）；optional 为文档中确实存在、允许模型额外抽取但不要求召回的名称，用于把名称覆盖率算成 precision 侧指标。relations 的结构召回只看实体对（方向无关），p 列用于统计归一化后的谓词正确率。",
+  "description": "实体/关系抽取评测集：examples/docs 示例文档的人工标注。entities 为必须召回的金标（t 为可接受的 ObjectType key，命中任一算类型正确）；optional 为文档中确实存在、允许模型额外抽取但不要求召回的名称，用于把名称覆盖率算成 precision 侧指标。relations 的结构召回只看实体对（方向无关），p 列用于统计归一化后的谓词正确率。branch=table 的样例是表格文件：它们的图谱产出走 ④ 的纯规则装配（不经 LLM），sheets 段就是人工代标的 ③ 列标注（列角色/归一类型/主列/列间关系），规则用例据此逐行装配；正文样例仍按 LLM 分支评测。",
   "docs": [
     {
       "file": "examples/docs/组织架构说明.md",
@@ -95,6 +95,77 @@
         {"s": "发布工具", "o": "指标服务", "p": ["依赖"]},
         {"s": "CI流水线", "o": "制品库", "p": ["依赖"]},
         {"s": "张明", "o": "度量看板", "p": ["管理"]}
+      ]
+    },
+    {
+      "file": "examples/docs/人员名册.xlsx",
+      "domain": "workforce",
+      "branch": "table",
+      "sheets": [
+        {
+          "title": "员工",
+          "columns": [
+            {"n": "姓名", "r": "entity", "t": "employee", "d": "员工姓名", "primary": true},
+            {"n": "部门", "r": "entity", "t": "department", "d": "员工所在部门", "primary": false},
+            {"n": "职级", "r": "attribute", "d": "职级序列", "primary": false}
+          ],
+          "rels": [{"s": "姓名", "p": "任职于", "o": "部门"}]
+        },
+        {
+          "title": "部门",
+          "columns": [
+            {"n": "部门", "r": "entity", "t": "department", "d": "部门名称", "primary": true},
+            {"n": "上级部门", "r": "entity", "t": "department", "d": "该部门的上级", "primary": false}
+          ],
+          "rels": [{"s": "部门", "p": "属于", "o": "上级部门"}]
+        }
+      ],
+      "entities": [
+        {"n": "王涛", "t": ["employee"]},
+        {"n": "张明", "t": ["employee"]},
+        {"n": "平台工程部", "t": ["department"]},
+        {"n": "数据平台组", "t": ["department"]},
+        {"n": "工程效能组", "t": ["department"]}
+      ],
+      "optional": ["职级", "L5", "L3"],
+      "relations": [
+        {"s": "王涛", "o": "平台工程部", "p": ["任职于", "属于"]},
+        {"s": "张明", "o": "数据平台组", "p": ["任职于", "属于"]},
+        {"s": "数据平台组", "o": "平台工程部", "p": ["属于"]},
+        {"s": "工程效能组", "o": "平台工程部", "p": ["属于"]}
+      ]
+    },
+    {
+      "file": "examples/docs/外部顾问.csv",
+      "domain": "workforce",
+      "branch": "table",
+      "sheets": [
+        {
+          "title": "Sheet1",
+          "columns": [
+            {"n": "姓名", "r": "entity", "t": "employee", "d": "顾问姓名", "primary": true},
+            {"n": "公司", "r": "entity", "t": "organization", "d": "顾问所属外包公司", "primary": false},
+            {"n": "服务部门", "r": "entity", "t": "department", "d": "顾问服务的部门", "primary": false}
+          ],
+          "rels": [
+            {"s": "姓名", "p": "关联", "o": "公司"},
+            {"s": "姓名", "p": "任职于", "o": "服务部门"}
+          ]
+        }
+      ],
+      "entities": [
+        {"n": "李芳", "t": ["employee"]},
+        {"n": "陈立", "t": ["employee"]},
+        {"n": "云启科技", "t": ["organization"]},
+        {"n": "工程效能组", "t": ["department"]},
+        {"n": "数据平台组", "t": ["department"]}
+      ],
+      "optional": ["服务部门"],
+      "relations": [
+        {"s": "李芳", "o": "云启科技", "p": ["关联", "其他"]},
+        {"s": "陈立", "o": "云启科技", "p": ["关联", "其他"]},
+        {"s": "李芳", "o": "工程效能组", "p": ["任职于", "属于"]},
+        {"s": "陈立", "o": "数据平台组", "p": ["任职于", "属于"]}
       ]
     }
   ]

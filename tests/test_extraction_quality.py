@@ -8,7 +8,10 @@
 - test_golden_labels_are_in_controlled_ontology：金标本身必须落在受控本体词表内，
   且标注的名称确实出现在源文档中。不依赖模型，任何环境都会执行。
 - test_extraction_meets_quality_floor：真实调用模型抽取并打分，
-  没有可用模型时整体 skip，不阻塞 CI。
+  没有可用模型时整体 skip，不阻塞 CI。只跑正文样例。
+- test_table_samples_build_the_golden_graph：表格样例的图谱产出不经过 LLM（④ 的
+  纯规则装配），所以金标另带人工代标的列标注当 ③ 的产物，落库打桩后逐项比对。
+  不依赖模型与 Neo4j，任何环境都会执行。
 
 打分口径：
 - 实体召回按规范化名称精确匹配金标必须项；类型正确率只在召回到的实体上统计。
@@ -51,12 +54,29 @@ def _load_golden() -> list[dict[str, Any]]:
 
 
 def _doc_text(golden: dict[str, Any]) -> str:
-    with open(_ROOT / golden["file"], encoding="utf-8") as f:
-        return f.read()
+    """金标名称的存在性与评测喂入都按 ② 的提取结果判定：xlsx 是二进制、中文 CSV
+    常是 GBK，直读源文件要么崩要么乱码，而且 ③/④ 看到的本来就不是原始字节。
+
+    标题必须一起拼：② 把 `#` 行拆成 section.title，正文 text 里没有它们，
+    而示例文档的标题正是实体名（「数据平台组进展」），漏喂会凭空压低召回。
+    """
+    from content_extraction.document import extract_content
+
+    doc = extract_content(str(_ROOT / golden["file"]))
+
+    def walk(section) -> list[str]:
+        return [section.title, section.text] + [
+            t for child in section.children for t in walk(child)]
+
+    return "\n".join(t for section in doc.sections for t in walk(section))
 
 
 GOLDEN_DOCS = _load_golden()
-GOLDEN_IDS = [Path(d["file"]).name for d in GOLDEN_DOCS]
+# 表格样例的图谱由 ④ 的规则装配产出，不经 LLM，因此不进正文评测集
+PROSE_DOCS = [d for d in GOLDEN_DOCS if d.get("branch") != "table"]
+TABLE_DOCS = [d for d in GOLDEN_DOCS if d.get("branch") == "table"]
+PROSE_IDS = [Path(d["file"]).name for d in PROSE_DOCS]
+TABLE_IDS = [Path(d["file"]).name for d in TABLE_DOCS]
 
 
 def _type_index(domain: str) -> dict[str, str]:
@@ -243,7 +263,7 @@ def _dump_report() -> None:
 
 @pytest.mark.integration
 @pytest.mark.slow
-@pytest.mark.parametrize("golden", GOLDEN_DOCS, ids=GOLDEN_IDS)
+@pytest.mark.parametrize("golden", PROSE_DOCS, ids=PROSE_IDS)
 def test_extraction_meets_quality_floor(golden, enhancer):
     text = _doc_text(golden)
     result = enhancer.extract_entities_and_relationships(text, domain=golden["domain"])
@@ -270,3 +290,64 @@ def test_extraction_meets_quality_floor(golden, enhancer):
         f"关系结构召回 {metrics['relation_recall']:.2f} 低于下限 {MIN_RELATION_RECALL}，"
         f"漏抽: {metrics['relation_miss']}"
     )
+
+
+def _summary_from_golden(golden: dict[str, Any], path: Path) -> dict[str, Any]:
+    """金标的列标注 → ③ 落盘的表格摘要形状（④ 的输入契约）"""
+    from content_extraction.document import extract_content
+    from content_extraction.document.models import KIND_TABLE
+    from summary_generation.document import store as summary_generator
+
+    doc = extract_content(str(path))
+    leaves = [{"title": sheet["title"], "kind": KIND_TABLE, "summary": "", "text": "",
+               "table_columns": sheet["columns"],
+               "table_meta": {"row_count": 0, "col_count": len(sheet["columns"]),
+                              "rels": sheet["rels"], "skipped_reason": None}}
+              for sheet in golden["sheets"]]
+    return {"doc_name": doc.doc_name, "format": doc.format, "kind": KIND_TABLE,
+            "content_hash": summary_generator.file_content_hash(str(path)),
+            "structure": leaves}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("golden", TABLE_DOCS, ids=TABLE_IDS)
+def test_table_samples_build_the_golden_graph(golden, monkeypatch):
+    """真实样例表格 → ② 提取 → ④ 规则装配：语义行必须与金标逐条相同
+
+    规则是确定性的，所以这里判的是「完全一致」而不是召回下限：漏一条或多一条
+    都说明 reader 的表头判定、值过滤或上限守卫变了。落库打桩，不碰 Neo4j。
+    """
+    from entity_extraction.document import table_service
+    from knowledge_graph.entity_data_store import EntityDataStore
+
+    path = _ROOT / golden["file"]
+    box: dict[str, Any] = {}
+
+    def fake_save_all(entities, relationships=None, datasource=None, **kwargs):
+        box["entities"] = entities
+        box["relationships"] = relationships or []
+        return len(entities), len(relationships or [])
+
+    monkeypatch.setattr(EntityDataStore, "save_all", staticmethod(fake_save_all))
+    monkeypatch.setattr(table_service, "resolve_source_file", lambda datasource: str(path))
+
+    result = table_service.import_tables(
+        _summary_from_golden(golden, path),
+        f"DOC://golden/{path.name}",
+        domain=golden["domain"],
+    )
+    entities = box.get("entities", [])
+    relationships = box.get("relationships", [])
+
+    metrics = _score(golden, entities, relationships)
+    print(f"\n[表格基线] {path.name} 实体 {len(entities)} 关系 {len(relationships)} "
+          f"越界名 {metrics['unknown_names']} 漏抽 {metrics['entity_miss']}")
+
+    assert metrics["entity_recall"] == 1.0, f"金标实体漏抽: {metrics['entity_miss']}"
+    assert not metrics["unknown_names"], f"装配出金标之外的实体: {metrics['unknown_names']}"
+    assert metrics["off_taxonomy_type_rate"] == 0.0, metrics["off_taxonomy_types"]
+    assert metrics["relation_recall"] == 1.0, f"金标关系漏建: {metrics['relation_miss']}"
+    assert ({(r["s"], r["o"]) for r in relationships}
+            == {(r["s"], r["o"]) for r in golden["relations"]}), "多建了金标之外的关系"
+    assert result["table_report"]["sheets"] == [s["title"] for s in golden["sheets"]]
+    assert (result["entity_count"], result["relationship_count"]) == (len(entities), len(relationships))
