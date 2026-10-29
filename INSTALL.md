@@ -19,6 +19,34 @@
 | 内存 | 4 GB | 8 GB+ |
 | 磁盘 | 10 GB | 50 GB+（取决于数据量） |
 
+### 1.1 Tesseract OCR（可选，PDF 图内文字与扫描件）
+
+PDF 正文与表格靠 pymupdf 自带的 layout 模型，**不需要** tesseract。以下两种情况才需要：
+
+- `DOC_IMAGE_MODE=ocr`：把 PDF 插图里的文字抽出来写进正文；
+- 扫描件 PDF（整页是图片）：不装就只能报错，装了才能提取。
+
+```bash
+# Linux (Ubuntu / Debian)
+sudo apt install -y tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng
+
+# Windows（任选其一）
+winget install --id UB-Mannheim.TesseractOCR
+choco install tesseract
+```
+
+Windows 装完把安装目录（默认 `C:\Program Files\Tesseract-OCR`）加进 `PATH`，并确认语言包：
+
+```bash
+tesseract --list-langs
+```
+
+没装 tesseract 时系统不会失败：`DOC_IMAGE_MODE=ocr` 自动降级为占位符并打 warning；
+只有扫描件会直接抛错（错误信息里带上面的安装命令）。
+
+插图落盘在 `backend/data/summaries/images/{source_id}/`，与摘要同目录结构，删摘要时一起删。
+体积取决于 PDF 里插图多少（每张按 150dpi 的 PNG 存），清理方式就是删摘要或删该目录。
+
 ---
 
 ## 2. Linux 安装
@@ -199,6 +227,11 @@ CACHE_TTL=3600
 | `OPENAI_API_KEY` | 否 | - | OpenAI API 密钥 |
 | `SILICONFLOW_API_KEY` | 否 | - | SiliconFlow API 密钥 |
 | `DEEPSEEK_API_KEY` | 否 | - | DeepSeek API 密钥 |
+| `DOC_WATCH_ENABLED` | 否 | `0` | 设为 `1` 时轮询监听文档源，自动刷新变更/删除的文档 |
+| `DOC_WATCH_INTERVAL` | 否 | `60` | 文档监听轮询间隔（秒） |
+| `DOC_IMAGES_ENABLED` | 否 | `1` | PDF 插图是否落盘；`0` 完全不处理图片 |
+| `DOC_IMAGE_MODE` | 否 | `placeholder` | PDF 插图挡位：`placeholder` 留占位 / `ocr` 写入图内文字 |
+| `DOC_OCR_LANG` | 否 | `chi_sim+eng` | tesseract 语言包组合 |
 
 ---
 

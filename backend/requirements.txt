@@ -3,13 +3,14 @@ fastapi>=0.104.1
 uvicorn[standard]>=0.24.0
 
 # 文档处理
-PyPDF2>=3.0.1
+# pymupdf/pymupdf4llm 锁 1.28.x：PDF 转换依赖 layout(GNN) 路径与 helpers.document_layout.parse_document
+# 的参数语义，升级前需复核 converters/pdf_converter.py
+pymupdf>=1.28.2,<1.29
+pymupdf4llm>=1.28.2,<1.29
 python-docx>=0.8.11
 python-pptx>=1.0.2
 Pillow>=10.1.0
 markdown>=3.5.1
-pymupdf>=1.24.0
-pymupdf4llm>=0.0.17
 openpyxl>=3.1.0
 
 # 自然语言处理

@@ -199,6 +199,28 @@ class TestGraphRecycle:
         assert calls == ["edges", "entities"]
 
 
+class TestImagesStorage:
+
+    def test_images_dir_lives_under_summaries_images(self, env):
+        path = summary_generator.images_dir("s1", "sub/a.pdf")
+        expected = os.path.join(env["root"], "images", "s1", "sub", "a.pdf.images")
+        assert os.path.abspath(path) == os.path.abspath(expected)
+
+    def test_remove_deletes_summary_and_images(self, env):
+        summary_file = write_summary(env, "s1", "a.pdf", "h")
+        images = summary_generator.images_dir("s1", "a.pdf")
+        os.makedirs(images)
+        with open(os.path.join(images, "x.png"), "wb") as f:
+            f.write(b"1")
+
+        assert summary_generator.remove("s1", "a.pdf") is True
+        assert not os.path.isfile(summary_file)
+        assert not os.path.isdir(images)
+
+    def test_remove_returns_false_when_nothing_to_delete(self, env):
+        assert summary_generator.remove("s1", "nope.pdf") is False
+
+
 class TestRefreshDocument:
 
     def _stub_pipeline(self, mp, env, order, recycle_result=None):
@@ -233,7 +255,7 @@ class TestRefreshDocument:
         with pytest.MonkeyPatch.context() as mp:
             self._stub_pipeline(mp, env, order)
 
-            def fake_generate(full_path):
+            def fake_generate(full_path, *, source_id, file_path, domain="general"):
                 order.append(("generate", None))
                 return {"doc_name": "a.md", "structure": [],
                         "content_hash": md5("新内容")}
@@ -299,7 +321,8 @@ class TestRefreshDocument:
         with pytest.MonkeyPatch.context() as mp:
             self._stub_pipeline(mp, env, order)
             mp.setattr(summary_generator, "generate",
-                       lambda p: {"doc_name": "a.md", "structure": [], "content_hash": md5("内容")})
+                       lambda p, **kwargs: {"doc_name": "a.md", "structure": [],
+                                            "content_hash": md5("内容")})
             mp.setattr(summary_generator, "save",
                        lambda sid, rel, data: summary_generator.summary_path(sid, rel))
             result = refresh.refresh_document("s1", "a.md", force=True)

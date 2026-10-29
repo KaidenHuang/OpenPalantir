@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 from typing import Tuple
 
 from system.logger import logger
@@ -71,6 +72,15 @@ def source_summary_dir(source_id: str) -> str:
     return os.path.join(SUMMARY_ROOT, "DOC", source_id)
 
 
+def images_dir(source_id: str, file_path: str) -> str:
+    """某文档的插图目录 —— 与摘要同根同键，删摘要时一起删"""
+    if not re.fullmatch(r"[0-9a-zA-Z][0-9a-zA-Z_-]*", source_id):
+        raise ValueError(f"非法 source_id: {source_id}")
+    from utils.path_guard import safe_join
+
+    return safe_join(SUMMARY_ROOT, "images", source_id, f"{file_path}.images")
+
+
 def stored_content_hash(path: str) -> str:
     """摘要文件中记录的源文件指纹；摘要不存在或损坏时为空"""
     if not os.path.isfile(path):
@@ -83,11 +93,13 @@ def stored_content_hash(path: str) -> str:
         return ""
 
 
-def generate(full_path: str, domain: str = "general") -> dict:
+def generate(full_path: str, *, source_id: str, file_path: str,
+             domain: str = "general") -> dict:
     """生成文档摘要：阶段②内容提取 → 阶段③ LLM 节点摘要 → 记录源文件指纹
 
     文件类型是否支持由 extract_content 判定（不支持时抛 ValueError）。
     domain 决定表格分支注入的实体/关系词表，与④ 抽取用同一个域才对得上。
+    source_id/file_path 决定插图落盘目录（PDF 插图与摘要同根同键，非 PDF 不用）。
     """
     from content_extraction import extract_content
     from summary_generation.document import summarize_document
@@ -96,7 +108,7 @@ def generate(full_path: str, domain: str = "general") -> dict:
     # 落盘的是新摘要+旧指纹 → 下轮刷新判 stale 重跑（安全的误报方向）；
     # 反序（先生成后取指纹）会让"改文件掐秒"漏检使旧内容永久假有效。
     content_hash = file_content_hash(full_path)
-    extracted = extract_content(full_path)
+    extracted = extract_content(full_path, images_dir=images_dir(source_id, file_path))
     result = summarize_document(extracted, domain=domain)
     result["content_hash"] = content_hash
     return result
@@ -113,13 +125,19 @@ def save(source_id: str, file_path: str, data: dict) -> str:
 
 
 def remove(source_id: str, file_path: str) -> bool:
-    """删除摘要文件（源文件已不存在时的清理）"""
+    """删除摘要文件及其插图目录（源文件已不存在时的清理）"""
     path = summary_path(source_id, file_path)
-    if not os.path.isfile(path):
-        return False
-    os.remove(path)
-    logger.info(f"[summary] 摘要已删除: {path}")
-    return True
+    removed = False
+    if os.path.isfile(path):
+        os.remove(path)
+        logger.info(f"[summary] 摘要已删除: {path}")
+        removed = True
+    image_root = images_dir(source_id, file_path)
+    if os.path.isdir(image_root):
+        shutil.rmtree(image_root, ignore_errors=True)
+        logger.info(f"[summary] 插图目录已删除: {image_root}")
+        removed = True
+    return removed
 
 
 def iter_doc_summaries() -> list:

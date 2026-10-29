@@ -94,7 +94,8 @@ def refresh_document(source_id: str, file_path: str, *, force: bool = False,
         return {"status": "skipped", "datasource": datasource, "reason": "未变更"}
 
     # 1) 先生成摘要 —— 失败即抛出，旧数据保持原样
-    summary = summary_generator.generate(full_path)
+    summary = summary_generator.generate(full_path, source_id=source_id,
+                                         file_path=file_path, domain=domain)
     summary_path = summary_generator.save(source_id, file_path, summary)
     new_hash = summary.get("content_hash", "")
 

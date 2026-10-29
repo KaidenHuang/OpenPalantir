@@ -31,7 +31,8 @@ class DocumentSummaryHandler(TaskHandler):
         )
 
         try:
-            result = summary_generator.generate(full_path)
+            result = summary_generator.generate(full_path, source_id=source_id,
+                                                file_path=file_path)
             progress_callback(80)
 
             summary_generator.save(source_id, file_path, result)

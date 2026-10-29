@@ -15,29 +15,24 @@
                  → POST /api/wiki/generate                 (Wiki 页面生成)
                                                           ↓
   ┌─────────────────────────────────────────────────────────────┐
-  │ 阶段1：文档解析                                              │
-  │ DocumentProcessor.process_document(path)                     │
-  │  ├─ .txt  → 直接读取文本                                     │
-  │  ├─ .pdf  → PyPDF2 逐页提取                                  │
-  │  ├─ .docx → python-docx 段落提取                             │
-  │  ├─ .md   → markdown 解析                                    │
-  │  └─ .jpg/.png → pytesseract OCR 识别                         │
-  │ 输出: {content: "全文文本", metadata: {file_type, word_count}} │
+  │ 阶段1：内容提取（content_extraction/document，纯解析，无 LLM）    │
+  │ extract_content(path, images_dir) → ExtractedDocument         │
+  │  ├─ .pdf  → pymupdf4llm(layout) 按页转 Markdown，表格→表档案、   │
+  │  │          插图→图片占位/OCR；扫描件走 tesseract 逐页 OCR       │
+  │  ├─ .docx → python-docx 标题样式 → 章节层级                     │
+  │  ├─ .pptx → python-pptx 每页幻灯片一节（幻灯片序号=页码）          │
+  │  ├─ .md   → Markdown 章节解析（与 PDF 共用 md_parser）           │
+  │  ├─ .txt  → 单章节兜底                                          │
+  │  └─ .xlsx/.csv → 一个工作表一节 + 表档案（见「表格文件分支」）      │
+  │ 输出: 章节树（title/level/text/page_start/page_end/kind）        │
   └─────────────────────────────────────────────────────────────┘
                           ↓
   ┌─────────────────────────────────────────────────────────────┐
-  │ 阶段2：内容提取 + 摘要树生成                                     │
-  │ 先纯解析提取结构（content_extraction，无 LLM）：                  │
-  │  ├─ .pdf  → pymupdf4llm 按页转 Markdown（页码锚点）              │
-  │  ├─ .docx → python-docx 标题样式 → 章节层级                      │
-  │  ├─ .pptx → python-pptx 每页幻灯片一节（幻灯片序号=页码）          │
-  │  ├─ .md   → Markdown 章节解析（与 PDF 共用 md_parser）           │
-  │  └─ .txt  → 单章节兜底                                          │
-  │ 再由 summary_generation/document 做 LLM 摘要（唯一的 LLM 环节）： │
+  │ 阶段2：摘要树生成（summary_generation/document，唯一 LLM 环节）  │
   │  ├─ 叶子节点 → summary + 正文 text                              │
   │  ├─ 父节点 → summary（子树概览）+ 自身正文 text，输入为子节点摘要列表  │
   │  ├─ 页码区间聚合（PDF 节点带 page_start/page_end）                │
-  │  └─ 保存到 data/summaries/DOC/{uuid}/                        │
+  │  └─ 保存到 data/summaries/DOC/{source_id}/                     │
   │ 输出: 摘要树 JSON（title/node_id/kind/page_start/page_end/…）     │
   └─────────────────────────────────────────────────────────────┘
                           ↓
@@ -132,6 +127,41 @@ Wiki），只在 ②③④ 三个阶段各换一条分支；下面三段就是�
 不做：行实体（一行一节点）、跨 sheet 关系、sheet 级表类型分类、ER 图、表格 CDC
       （文件没有 binlog，watcher 的指纹轮询已覆盖内容失效）。
 ```
+
+### PDF 分支（表格与插图）
+
+PDF 与表格文件不同：**PDF 里的表只进正文**，不建行实体、不接 `DBS://`，也不改 ③④ 的
+文档级分派（prose / table）—— 一篇 PDF 的章节树里没有 `kind=table` 节点，因此永远走
+正文分支。实现见 `content_extraction/document/pdf_tables.py`、`pdf_images.py`、
+`converters/pdf_converter.py`。
+
+```
+② 内容提取（一句 pymupdf4llm layout(GNN) 解析，文本与结构同源）
+   ├─ 表格：layout 给出的 table 框 → 与 xlsx 同一套「表档案」文本（规模 + 列清单与
+   │   推断类型 + 前 2 行样本），精确替换掉该页对应的管道表 Markdown；
+   │   同一页 GNN 零表时才用 page.find_tables(strategy="lines") 兜底，
+   │   兜底结果没有对应 Markdown 块，表档案追加到页尾
+   ├─ 续表：上一表在相邻页、本表贴页顶（< 40pt）、归一列名逐列全等 → 合并数据行、
+   │   丢掉重复表头；列名不全等不合并，留痕在 meta.potential_continuations
+   ├─ 表题暂不识别，标题一律「第 N 页 表 i」；单篇上限 20 张表、单元格太少/只有表头
+   │   的表直接跳过，留痕 meta.skipped_tables
+   ├─ 插图：picture 框按 bbox 面积占页面 < 5% 丢弃（页眉图标一类），其余落盘；
+   │   DOC_IMAGE_MODE=placeholder 正文留 ![](图片路径)，ocr 则换成「> 图内文字：…」
+   ├─ 扫描件：全文为空或字符/页 < 30 → 逐页 tesseract OCR（200dpi）；
+   │   没装 tesseract 直接抛带安装指引的错误，不静默产出空摘要
+   └─ 页码：layout 的 page_number 是 1-based，喂给 md_parser 前减 1（md_parser 再加 1）
+
+插图落盘：data/summaries/images/{source_id}/{文件相对路径}.images/
+   —— 与摘要 JSON 同根同键，一次生成先在 `.tmp` 目录写，成功才整体替换正式目录，
+   失败保持旧图不动；store.remove() 删摘要时连图片目录一起删
+```
+
+配置（`backend/.env`）：`DOC_IMAGES_ENABLED=1` 控总开关，`DOC_IMAGE_MODE=placeholder|ocr`
+选挡位，`DOC_OCR_LANG=chi_sim+eng` 选语言包。`vision` 挡位留到后续版本（需要多模态模型）。
+
+**改 ② 后存量 PDF 不会自动变**：摘要里的 `content_hash` 是源文件 MD5，源文件没动指纹就不变，
+批量摘要任务会按原样跳过（`pipeline/refresh.py` 同理）。要拿到新的表格/插图产出，用批量摘要
+任务带 `force=True` 重跑，不需要删摘要或清库。
 
 ---
 

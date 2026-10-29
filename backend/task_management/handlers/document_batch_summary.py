@@ -48,7 +48,8 @@ class DocumentBatchSummaryHandler(TaskHandler):
                 raise ValueError("文件不存在")
             if not force and _summary_fresh(source_id, rel, full_path):
                 return False  # 幂等跳过：摘要存在且 content_hash 与源一致
-            result = summary_generator.generate(full_path)
+            result = summary_generator.generate(full_path, source_id=source_id,
+                                                file_path=rel)
             summary_generator.save(source_id, rel, result)
             return True
 

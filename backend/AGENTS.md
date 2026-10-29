@@ -28,10 +28,10 @@ OpenPalantir 后端是数据分析与知识图谱构建系统的服务端，基�
 | 图数据库 | Neo4j 4.4（`neo4j` Python driver） |
 | 缓存 / 消息 | Redis（RESP2 协议，`protocol=2`） |
 | 任务队列 | 内置线程调度（`task_manager`，早期不需要独立 broker） |
-| 文档处理 | PyPDF2、python-docx、python-pptx、Pillow、markdown、pymupdf4llm（PDF→Markdown 结构提取） |
+| 文档处理 | pymupdf + pymupdf4llm（PDF→Markdown、表格/插图结构化）、python-docx、python-pptx、openpyxl、Pillow、markdown |
 | LLM 调用 | ModelClient（Ollama API 兼容，支持本地/云端模型） |
 | 图计算 | NetworkX、scikit-learn、python-louvain |
-| OCR | pytesseract |
+| OCR | pytesseract（PDF 图内文字与扫描件，语言包 `DOC_OCR_LANG`） |
 | 监控 | Prometheus Client |
 | 测试 | pytest、pytest-asyncio、pytest-cov |
 
