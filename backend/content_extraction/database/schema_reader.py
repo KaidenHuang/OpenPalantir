@@ -33,7 +33,8 @@ def extract_schema_for_connection(connection_id: str, tables: Optional[List[str]
     finally:
         db.close()
 
-    if database_name:
+    # SQLite 的配置库名是文件路径、Oracle 是服务名，均不做「切库」覆盖
+    if database_name and cfg.get("type", "").lower() not in ("sqlite", "oracle"):
         cfg = {**cfg, "database": database_name}
 
     engine = create_engine_for(cfg)

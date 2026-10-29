@@ -27,7 +27,7 @@ class SchemaImportHandler(TaskHandler):
     REQUIRED_KEYS = ("connection_id",)
     OPTIONAL_DEFAULTS = {"batch_size": 5000, "row_limit": 0,
                          "neo4j_batch_size": 20000, "use_merge": False,
-                         "auto_start_cdc": False}
+                         "auto_start_cdc": False, "database_name": None}
 
     def execute(self, task, progress_callback: Callable[[int], None]) -> Dict:
         logger.info(
@@ -60,22 +60,28 @@ class SchemaImportHandler(TaskHandler):
             logger.info("步骤1: 从本地数据库获取Schema和连接信息")
             db = SessionLocal()
             try:
-                from content_extraction.database.store import schema_store
+                from content_extraction.database.store import normalize_db_name, schema_store
                 from source_registry.database.registry import (
                     database_source_registry,
                     dict_from_connection,
                 )
 
-                schema = schema_store.get_schema(db, connection_id)
                 conn = database_source_registry.get(db, connection_id)
                 conn_config = dict_from_connection(conn) if conn else None
                 analyzed_dbs = schema_store.get_analyzed_databases(db, connection_id)
                 analyzed_db_names = [ad.database_name for ad in analyzed_dbs]
+
+                target_db_name = normalize_db_name(
+                    self.payload_value(task, "database_name")
+                    or (conn_config or {}).get("database")
+                    or (analyzed_db_names[0] if analyzed_db_names else None),
+                    (conn_config or {}).get("type"))
+                schema = schema_store.get_schema(db, connection_id, target_db_name)
             finally:
                 db.close()
 
             if not schema["tables"]:
-                raise ValueError("未找到Schema信息，请先执行分析任务")
+                raise ValueError(f"未找到 {target_db_name or ''} 的Schema信息，请先执行分析任务")
 
             columns_by_table: Dict[str, List[Dict]] = {}
             for col in schema["columns"]:
@@ -151,7 +157,7 @@ class SchemaImportHandler(TaskHandler):
             except Exception as e:
                 logger.warning(f"创建 Neo4j 索引失败（可能已存在）: {e}")
 
-            database_name_for_uri = analyzed_db_names[0] if analyzed_db_names else ""
+            database_name_for_uri = target_db_name
             db_prefix = f"DBS://{connection_id}"
             if database_name_for_uri:
                 db_prefix += f"/{database_name_for_uri}"
@@ -402,6 +408,7 @@ class SchemaImportHandler(TaskHandler):
                         for tbl_name, cnt in actual_row_counts.items():
                             update_db.query(DatabaseTable).filter(
                                 DatabaseTable.connection_id == connection_id,
+                                DatabaseTable.database_name == target_db_name,
                                 DatabaseTable.table_name == tbl_name
                             ).update({"row_count": cnt})
                         update_db.commit()

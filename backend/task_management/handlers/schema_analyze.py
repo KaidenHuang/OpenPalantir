@@ -20,7 +20,7 @@ class SchemaAnalyzeHandler(TaskHandler):
         )
         try:
             from config.database import SessionLocal
-            from content_extraction.database.store import schema_store
+            from content_extraction.database.store import normalize_db_name, schema_store
             from content_extraction.database.schema_reader import extract_schema_for_connection
             from source_registry.database.registry import database_source_registry
             from summary_generation.database import store
@@ -64,16 +64,17 @@ class SchemaAnalyzeHandler(TaskHandler):
             progress_callback(70)
 
             logger.info("步骤3: 保存分析结果到SQLite")
-            analyzed_db_name = None
             sess = SessionLocal()
             try:
-                schema_store.save_schema(sess, connection_id, annotated_schema)
-
                 conn = database_source_registry.get(sess, connection_id)
-                analyzed_db_name = database_name or (conn.database if conn else None)
-                if analyzed_db_name:
-                    schema_store.save_analyzed_database(sess, connection_id, analyzed_db_name)
-                    logger.info(f"已分析数据库已记录: {analyzed_db_name}")
+                conn_type = conn.type if conn else None
+                analyzed_db_name = normalize_db_name(
+                    database_name or (conn.database if conn else None), conn_type)
+
+                schema_store.save_schema(sess, connection_id, analyzed_db_name,
+                                         annotated_schema, conn_type)
+                schema_store.save_analyzed_database(sess, connection_id, analyzed_db_name)
+                logger.info(f"已分析数据库已记录: {analyzed_db_name}")
 
                 table_list = [
                     {k.lower(): v for k, v in t.items()}

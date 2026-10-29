@@ -28,7 +28,7 @@ class SchemaCache:
         db = SessionLocal()
         try:
             service = schema_store
-            schema = service.get_schema(db, self.connection_id)
+            schema = service.get_schema(db, self.connection_id, self.database_name)
 
             if not schema["tables"]:
                 raise ValueError(f"未找到 Schema 信息，请先对连接 {self.connection_id} 执行分析任务")

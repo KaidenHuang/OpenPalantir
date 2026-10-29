@@ -24,12 +24,12 @@ export const httpGet = <T = LooseJson>(
   opts?: { params?: Record<string, unknown>; signal?: AbortSignal }
 ): Promise<AxiosResponse<T>> => http.get<T>(url, { params: opts?.params, signal: opts?.signal });
 
-/** POST 请求，支持 signal */
+/** POST 请求，支持 signal 与查询参数 */
 export const httpPost = <T = LooseJson>(
   url: string,
   data?: unknown,
-  opts?: { signal?: AbortSignal }
-): Promise<AxiosResponse<T>> => http.post<T>(url, data, { signal: opts?.signal });
+  opts?: { signal?: AbortSignal; params?: Record<string, unknown> }
+): Promise<AxiosResponse<T>> => http.post<T>(url, data, { params: opts?.params, signal: opts?.signal });
 
 /** PUT 请求，支持 signal */
 export const httpPut = <T = LooseJson>(

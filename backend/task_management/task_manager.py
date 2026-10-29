@@ -160,8 +160,6 @@ def _datasource_uri_from_payload(payload: Dict[str, Any]) -> Optional[str]:
         database_name = payload.get("database_name")
         return f"DBS://{connection_id}/{database_name}" if database_name else f"DBS://{connection_id}"
     return None
-
-
 def _humanize_uri(uri: str, aliases: Dict[str, str]) -> str:
     """把数据源 URI 的 ID 段替换为注册名称（数据库名/文档源名），未知 ID 保留原值"""
     if not uri:
@@ -185,7 +183,8 @@ def _datasource_label_from_payload(
     - 文档批量任务（payload 带 files 键）→ 文档源名（N 个文件 / 全源）
     - 文档任务（file_path/file）→ 文件名
     - Wiki 任务（DOC:// datasource）→ 目标文件名
-    - 数据库任务（connection_id）→ 库名（连接名），库名缺失经连接记录补全
+    - 数据库任务（connection_id）→ 库名（连接名）；库名只取任务创建时 payload 锁定的
+      `database_name`，不回落到连接当前选中库（用户换库后标签会漂移）
     - 其他任务 → None（前端显示 '-'）
     """
     if payload.get("source_id") and "files" in payload:
@@ -213,7 +212,7 @@ def _datasource_label_from_payload(
     if not connection_id:
         return None
     conn = (conn_aliases or {}).get(connection_id, {})
-    database_name = payload.get("database_name") or conn.get("database")
+    database_name = payload.get("database_name")
     conn_name = conn.get("name") or ""
     if database_name:
         return f"{database_name}（{conn_name}）" if conn_name else database_name
@@ -237,7 +236,7 @@ class TaskManager:
         """为一批任务批量解析「数据源」标签与 URL。
 
         一次性批量查询文档源/连接注册表的别名映射；URL 中的 ID 段替换为注册名称，
-        数据库任务的库名缺失经连接记录补全（如 schema_import 不带 database_name）。
+        数据库任务的库名取任务创建时 payload 锁定的 `database_name`。
         """
         conn_aliases = _connection_alias_map()
         aliases: Dict[str, str] = {cid: c["name"] for cid, c in conn_aliases.items() if c["name"]}

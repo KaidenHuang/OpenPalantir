@@ -27,17 +27,17 @@ interface DatabaseState {
   fetchConnections: (showDeleted?: boolean, signal?: AbortSignal) => Promise<void>;
   setSelectedConnection: (conn: DatabaseConnection | null) => void;
   fetchDatabases: (connectionId: string, signal?: AbortSignal) => Promise<void>;
-  fetchSchema: (connectionId: string, signal?: AbortSignal) => Promise<void>;
-  fetchSummary: (connectionId: string, signal?: AbortSignal) => Promise<void>;
+  fetchSchema: (connectionId: string, database?: string | null, signal?: AbortSignal) => Promise<void>;
+  fetchSummary: (connectionId: string, database?: string | null, signal?: AbortSignal) => Promise<void>;
   createConnection: (data: Record<string, unknown>, signal?: AbortSignal) => Promise<void>;
   updateConnection: (id: string, data: Record<string, unknown>, signal?: AbortSignal) => Promise<void>;
   deleteConnection: (id: string, signal?: AbortSignal) => Promise<void>;
   restoreConnection: (id: string, signal?: AbortSignal) => Promise<void>;
   testConnection: (config: Record<string, unknown>, signal?: AbortSignal) => Promise<void>;
-  analyzeSchema: (connectionId: string, signal?: AbortSignal) => Promise<string>;
-  importToGraph: (connectionId: string, signal?: AbortSignal) => Promise<string>;
+  analyzeSchema: (connectionId: string, database?: string | null, signal?: AbortSignal) => Promise<string>;
+  importToGraph: (connectionId: string, database?: string | null, signal?: AbortSignal) => Promise<string>;
   configureCdc: (connectionId: string, signal?: AbortSignal) => Promise<void>;
-  startCdc: (connectionId: string, signal?: AbortSignal) => Promise<void>;
+  startCdc: (connectionId: string, database?: string | null, signal?: AbortSignal) => Promise<void>;
   setImportTaskId: (id: string | null) => void;
 }
 
@@ -71,19 +71,19 @@ export const useDatabaseStore = create<DatabaseState>()((set, get) => ({
     set({ databases: (response.data.databases || []) as DatabaseItem[] });
   },
 
-  fetchSchema: async (connectionId, signal?: AbortSignal) => {
+  fetchSchema: async (connectionId, database, signal?: AbortSignal) => {
     const response = await httpGet(
       API_CONFIG.endpoints.database.analysisResult(connectionId),
-      { signal }
+      { params: database ? { database } : {}, signal }
     );
     set({ schemaResult: response.data as SchemaResult });
   },
 
-  fetchSummary: async (connectionId, signal?: AbortSignal) => {
+  fetchSummary: async (connectionId, database, signal?: AbortSignal) => {
     try {
       const response = await httpGet(
         API_CONFIG.endpoints.database.summary(connectionId),
-        { signal }
+        { params: database ? { database } : {}, signal }
       );
       const data = response.data as Record<string, unknown>;
       set({ dbSummary: (data.summary ?? null) as DbSummary | null });
@@ -120,20 +120,22 @@ export const useDatabaseStore = create<DatabaseState>()((set, get) => ({
     await httpPost(API_CONFIG.endpoints.database.testConnectionConfig, config, { signal });
   },
 
-  analyzeSchema: async (connectionId, signal?: AbortSignal) => {
+  analyzeSchema: async (connectionId, database, signal?: AbortSignal) => {
     const response = await httpPost(
       API_CONFIG.endpoints.database.analyze(connectionId),
-      undefined,
+      { database: database ?? undefined },
       { signal }
     );
     return response.data.task_id as string;
   },
 
-  importToGraph: async (connectionId, signal?: AbortSignal) => {
+  importToGraph: async (connectionId, database, signal?: AbortSignal) => {
+    const params: Record<string, string> = {};
+    if (database) params.database_name = database;
     const response = await httpPost(
       API_CONFIG.endpoints.database.import(connectionId),
       undefined,
-      { signal }
+      { params, signal }
     );
     return response.data.task_id as string;
   },
@@ -142,8 +144,9 @@ export const useDatabaseStore = create<DatabaseState>()((set, get) => ({
     await httpPost(API_CONFIG.endpoints.cdc.configure(connectionId), undefined, { signal });
   },
 
-  startCdc: async (connectionId, signal?: AbortSignal) => {
-    await httpPost(API_CONFIG.endpoints.cdc.startTask(connectionId), undefined, { signal });
+  startCdc: async (connectionId, database, signal?: AbortSignal) => {
+    await httpPost(API_CONFIG.endpoints.cdc.startTask(connectionId),
+      { database_name: database ?? '' }, { signal });
   },
 
   setImportTaskId: (id) => set({ importTaskId: id }),

@@ -65,3 +65,6 @@ docker-compose.override.yml
 Desktop.ini
 $RECYCLE.BIN/
 dependencies/debezium/
+
+# ===== Pipeline output (local, not shipped) =====
+docs/研发产出/

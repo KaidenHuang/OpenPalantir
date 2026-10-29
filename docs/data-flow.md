@@ -142,7 +142,7 @@ Wiki），只在 ②③④ 三个阶段各换一条分支；下面三段就是�
 ```
 [用户填写连接配置] → [POST /api/database/connections] → 保存连接信息到 SQLite
                                                           ↓
-[选择目标数据库] → [POST /api/database/connections/{id}/analyze]
+[选择目标数据库] → [POST /api/database/connections/{id}/analyze  body: {database, domain}]
                                                           ↓
   ┌─────────────────────────────────────────────────────────────┐
   │ 1. DatabaseDialect 连接源数据库                                │
@@ -159,6 +159,8 @@ Wiki），只在 ②③④ 三个阶段各换一条分支；下面三段就是�
                           ↓
   [Schema 分析结果展示在 DatabaseManagement 页面]
 ```
+
+产物按 (连接, 库) 隔离：表/列/外键/推断关系都带 `database_name`，重分析只替换该库的产物；页面按左选中的库读取结果（`GET /api/database/{id}/analysis-result?database=`、`.../summary?database=`），同实例下先后分析多个库互不覆盖。任务的「数据源」标签取任务创建时 payload 锁定的 `database_name`，不回落到连接当前选中库。
 
 ### 2.2 阶段2：图谱导入
 

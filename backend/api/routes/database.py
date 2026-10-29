@@ -219,10 +219,17 @@ def analyze_database(connection_id: str, request: Optional[AnalyzeRequest] = Non
 
 
 @router.get("/{connection_id}/analysis-result", response_model=Dict)
-def get_analysis_result(connection_id: str, db: Session = Depends(get_db)):
-    """获取数据库分析结果（未分析时返回空结构）"""
+def get_analysis_result(connection_id: str, database: Optional[str] = None,
+                        db: Session = Depends(get_db)):
+    """获取指定库的数据库分析结果（未分析时返回空结构；database 缺省按连接配置库名解析）"""
     try:
-        schema = schema_store.get_schema(db, connection_id)
+        from content_extraction.database.store import normalize_db_name
+        from source_registry.database.registry import database_source_registry
+        if database is None:
+            conn = database_source_registry.get(db, connection_id)
+            database = normalize_db_name(conn.database if conn else None,
+                                         conn.type if conn else None)
+        schema = schema_store.get_schema(db, connection_id, database)
         analyzed = schema_store.get_analyzed_databases(db, connection_id)
         schema["analyzed_databases"] = [ad.database_name for ad in analyzed if ad.status == "extracted"]
         return schema
@@ -232,11 +239,12 @@ def get_analysis_result(connection_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{connection_id}/summary")
-def get_database_summary(connection_id: str, db: Session = Depends(get_db)):
-    """获取数据库概要信息（从本地概要文件读取）"""
+def get_database_summary(connection_id: str, database: Optional[str] = None,
+                         db: Session = Depends(get_db)):
+    """获取数据库概要信息（从本地概要文件读取；database 缺省按连接配置库名解析）"""
     try:
         from summary_generation.database import store
-        data = store.load(connection_id)
+        data = store.load(connection_id, database)
         if not data:
             raise HTTPException(status_code=404, detail="数据库概要不存在，请先执行分析任务")
         return {"status": "success", "summary": data}
@@ -248,7 +256,7 @@ def get_database_summary(connection_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{connection_id}/import", response_model=Dict)
-def import_to_graph(connection_id: str, batch_size: int = 5000, row_limit: int = 0, neo4j_batch_size: int = 20000, use_merge: bool = False, auto_start_cdc: bool = False):
+def import_to_graph(connection_id: str, batch_size: int = 5000, row_limit: int = 0, neo4j_batch_size: int = 20000, use_merge: bool = False, auto_start_cdc: bool = False, database_name: Optional[str] = None):
     """
     将分析结果导入知识图谱（阶段2）
     - batch_size: 每批从源数据库读取的行数（默认 5000）
@@ -256,9 +264,10 @@ def import_to_graph(connection_id: str, batch_size: int = 5000, row_limit: int =
     - neo4j_batch_size: 每批写入 Neo4j 的实体数（默认 20000），增加以减少往返次数
     - use_merge: 关系写入是否使用 MERGE（默认 False=使用 CREATE，更快；True=使用 MERGE，幂等安全）
     - auto_start_cdc: 导入完成后是否自动启动 CDC 增量同步（默认 False）
+    - database_name: 目标库名，缺省取该连接最早记录的已分析库
     """
     try:
-        payload = {"connection_id": connection_id, "batch_size": batch_size, "row_limit": row_limit, "neo4j_batch_size": neo4j_batch_size, "use_merge": use_merge, "auto_start_cdc": auto_start_cdc}
+        payload = {"connection_id": connection_id, "batch_size": batch_size, "row_limit": row_limit, "neo4j_batch_size": neo4j_batch_size, "use_merge": use_merge, "auto_start_cdc": auto_start_cdc, "database_name": database_name}
         task_id = task_manager.create_task(SchemaImportHandler.TASK_TYPE, payload)
         return {"task_id": task_id, "message": "导入任务已创建"}
     except Exception as e:

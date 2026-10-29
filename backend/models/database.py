@@ -1,12 +1,19 @@
 from sqlalchemy import Column, String, Integer, DateTime, Text, Boolean, UniqueConstraint
 from config.database import Base
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Optional
+import hashlib
 import uuid
 
 # 已分析数据库状态
 DB_STATUS_EXTRACTED = "extracted"
 DB_STATUS_DELETED = "deleted"
+
+
+def schema_scoped_id(connection_id: str, database_name: Optional[str], *parts: str) -> str:
+    """Schema 产物行主键：{connection}_{db哈希段}_{parts}，长度可控且按库隔离"""
+    db_seg = hashlib.md5((database_name or "").encode("utf-8")).hexdigest()[:8]
+    return "_".join([connection_id, db_seg, *[str(p) for p in parts]])
 
 
 class DatabaseConnection(Base):
@@ -49,6 +56,7 @@ class DatabaseTable(Base):
     
     id = Column(String(255), primary_key=True)
     connection_id = Column(String(36), nullable=False)
+    database_name = Column(String(255), nullable=False, default="", server_default="")
     table_name = Column(String(255), nullable=False)
     table_type = Column(String(50))
     engine = Column(String(50))
@@ -63,6 +71,7 @@ class DatabaseTable(Base):
         return {
             "id": self.id,
             "connection_id": self.connection_id,
+            "database_name": self.database_name,
             "table_name": self.table_name,
             "table_type": self.table_type,
             "engine": self.engine,
@@ -79,6 +88,7 @@ class DatabaseColumn(Base):
     
     id = Column(String(500), primary_key=True)
     connection_id = Column(String(36), nullable=False)
+    database_name = Column(String(255), nullable=False, default="", server_default="")
     table_name = Column(String(255), nullable=False)
     column_name = Column(String(255), nullable=False)
     data_type = Column(String(100))
@@ -99,6 +109,7 @@ class DatabaseColumn(Base):
         return {
             "id": self.id,
             "connection_id": self.connection_id,
+            "database_name": self.database_name,
             "table_name": self.table_name,
             "column_name": self.column_name,
             "data_type": self.data_type,
@@ -121,6 +132,7 @@ class DatabaseForeignKey(Base):
     
     id = Column(String(500), primary_key=True)
     connection_id = Column(String(36), nullable=False)
+    database_name = Column(String(255), nullable=False, default="", server_default="")
     table_name = Column(String(255), nullable=False)
     column_name = Column(String(255), nullable=False)
     referenced_table_name = Column(String(255), nullable=False)
@@ -132,6 +144,7 @@ class DatabaseForeignKey(Base):
         return {
             "id": self.id,
             "connection_id": self.connection_id,
+            "database_name": self.database_name,
             "table_name": self.table_name,
             "column_name": self.column_name,
             "referenced_table_name": self.referenced_table_name,
@@ -145,6 +158,7 @@ class InferredRelationship(Base):
 
     id = Column(String(500), primary_key=True)
     connection_id = Column(String(36), nullable=False, index=True)
+    database_name = Column(String(255), nullable=False, default="", server_default="")
     source_table = Column(String(255), nullable=False)
     source_column = Column(String(255))
     target_table = Column(String(255), nullable=False)
@@ -157,6 +171,7 @@ class InferredRelationship(Base):
         return {
             "id": self.id,
             "connection_id": self.connection_id,
+            "database_name": self.database_name,
             "source_table": self.source_table,
             "source_column": self.source_column,
             "target_table": self.target_table,

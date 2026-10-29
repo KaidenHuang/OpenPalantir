@@ -213,7 +213,7 @@ function DatabaseManagement() {
       setTaskStatus(status);
       if (status === 'completed' || status === 'failed') {
         if (status === 'completed') {
-          loadSchema(selectedConnection!.id, selectedConnection!.database);
+          loadSchema(selectedConnection!.id, selectedDatabase);
         }
         if (selectedConnection) {
           localStorage.removeItem(`analyze_task_${selectedConnection.id}`);
@@ -248,14 +248,16 @@ function DatabaseManagement() {
     } catch (error) {
       logger.error('DatabaseManagement', '设置数据库失败', error);
     }
+    // 切换库时按新库拉取分析结果与概要，避免展示上一个库的内容
+    loadSchema(selectedConnection.id, dbName);
   };
 
-  const loadSchema = async (connectionId: string, _dbName?: string, signal?: AbortSignal) => {
+  const loadSchema = async (connectionId: string, dbName?: string | null, signal?: AbortSignal) => {
     try {
       setIsLoading(true);
-      await storeFetchSchema(connectionId, signal);
+      await storeFetchSchema(connectionId, dbName, signal);
       setSelectedTable(null);
-      storeFetchSummary(connectionId, signal);
+      storeFetchSummary(connectionId, dbName, signal);
     } catch {
       // store 会保留旧数据，useMemo 会在 rawSchemaResult 变化时自动过滤
     } finally {
@@ -397,7 +399,7 @@ function DatabaseManagement() {
     if (!selectedConnection) return;
     try {
       const signal = getComponentSignal();
-      const newTaskId = await storeAnalyzeSchema(selectedConnection.id, signal);
+      const newTaskId = await storeAnalyzeSchema(selectedConnection.id, selectedDatabase, signal);
       localStorage.setItem(`analyze_task_${selectedConnection.id}`, newTaskId);
       setTaskId(newTaskId);
       setTaskStatus('running');
@@ -411,7 +413,7 @@ function DatabaseManagement() {
     setIsImporting(true);
     try {
       const signal = getComponentSignal();
-      const newTaskId = await storeImportToGraph(selectedConnection.id, signal);
+      const newTaskId = await storeImportToGraph(selectedConnection.id, selectedDatabase, signal);
       setImportTaskId(newTaskId);
       message.success(`导入任务已创建，任务ID: ${newTaskId}`);
     } catch (error) {
@@ -425,7 +427,7 @@ function DatabaseManagement() {
     if (!selectedConnection || !selectedDatabase) return;
     try {
       const signal = getComponentSignal();
-      await storeStartCdc(selectedConnection.id, signal);
+      await storeStartCdc(selectedConnection.id, selectedDatabase, signal);
       alert(`增量同步任务已创建，请到「任务管理」查看或停止`);
     } catch (error) {
       logger.error('DatabaseManagement', '启动增量同步失败', error);
